@@ -84,6 +84,7 @@ Definition nonempty_mem (m: mem) : Prop :=
 
 Lemma seq_ideal_nonspec
   p pc r m stk os stt
+  (WF: wf_stk p stk)
   (SEQ: p |- <(( S_Running (pc, r, m, stk) ))> -->^ os <(( stt ))>) :
   exists ds stt',
     p |- <(( S_Running (pc, r, m, stk, false) ))> -->i_ ds ^^ os <(( stt' ))>.
@@ -103,13 +104,9 @@ Proof.
     + esplits. econs; eauto.
     + esplits. eapply ISMI_Call_F; eauto. ii. ss; clarify. right. auto.
   - exists [DRet pc'].
-    esplits. econs; eauto.
-    admit. (* we can use wf_stk. *)
-Admitted.
-
-(* TODO: move this to MiniCET_Index.v, and unify it with call_return_targets. *)
-Definition wf_stk (p: prog) (stk: list cptr) : Prop :=
-  forall l o, In (l, o) stk -> exists e, p[[(l, o - 1)]] = Some <{{ call e }}> /\ o > 0.
+    esplits. econs; eauto. inv WF. auto.
+Unshelve. econs.
+Qed.
 
 Lemma wf_stk_preserve_ideal
   p pc r m stk ms pc' r' m' stk' ms' ds os
@@ -118,10 +115,11 @@ Lemma wf_stk_preserve_ideal
   wf_stk p stk'.
 Proof.
   inv STEP; eauto.
-  { red. ii. simpl in H. des; eauto.
-    destruct pc. simpl in H. clarify.
-    replace ((add n0 1) - 1) with n0 by lia. esplits; eauto. lia. }
-  red. i. eapply WFSTK. simpl. auto.
+  { econs; eauto. red. ii. des_ifs_safe.
+    destruct pc. simpl in Heq. clarify.
+    rewrite <- add_sub_assoc; [|lia].
+    rewrite sub_diag, add_0_r. esplits; eauto. lia. }
+  inv WFSTK. auto.
 Qed.
 
 Lemma nonempty_mem_preserve_ideal
@@ -184,12 +182,11 @@ Proof.
     eapply nth_error_In in H14. eapply H0 in H14. red in H14. des.
     red in H14. ss.
   - destruct pc' as [b' o'].
-    admit. (* use call_return_targets. *)
-    (* exploit block_always_terminator_prog; try eapply x0; eauto. *)
-    (* unfold inc. replace (add (o' - 1) 1) with o' by lia. *)
-    (* i. eauto. *)
+    red in H12. des.
+    exploit block_always_terminator_prog; try eapply H12; eauto.
+    simpl. replace (add (o' - 1) 1) with o' by lia. auto.
   - exploit block_always_terminator_prog; try eapply H11; eauto.
-Admitted.
+Qed.
 
 Lemma multi_ideal_res_pc_exists_aux :
   forall p ic1 ic2 ds os,
@@ -252,7 +249,8 @@ Proof.
   { red in SEQ.
     exploit multi_ideal_nonspec_seq; eauto. i.
     eapply SEQ in x0. des. eapply seq_ideal_nonspec in x0.
-    des. eauto. }
+    - des. eauto.
+    - eapply wf_stk_preserve_multi_ideal; eauto. }
   destruct (p[[pc']]) eqn:PC'; cycle 1.
   { eapply multi_ideal_res_pc_exists in H; eauto; des; clarify.
     ii. red in SEQ. exploit SEQ; [econs|]. i. des. inv x0; clarify. }
@@ -286,9 +284,9 @@ Proof.
     + exists [DRet c].
       esplits. eapply ISMI_Ret; eauto.
       hexploit wf_stk_preserve_multi_ideal; eauto. i.
-      admit. (* by H0 *)
-      Unshelve. all: repeat (econs).
-Admitted.
+      inv H0. eauto.
+Unshelve. econs.
+Qed.
 
 Lemma seq_spec_safety_preservation
   p b c c' pc r m stk
@@ -317,9 +315,15 @@ Proof.
       * exploit src_inv; eauto. i. des. inv x1. inv MATCH0.
         esplits. econs 2; eauto.
       * exploit src_inv; eauto. i. des. inv x1. inv MATCH0.
+        eapply unused_prog_lookup in UNUSED1; eauto.
+        eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
         esplits. econs 3; eauto.
-        { erewrite <- H9. admit. }
-        { erewrite <- H10. admit. }
+        { erewrite <- H9. simpl. inv REG.
+          rewrite H1. destruct ms; ss. f_equal.
+          symmetry. eapply eval_regs_eq; eauto. }
+        { erewrite <- H10. simpl. inv REG.
+          rewrite H1. destruct ms; ss. f_equal.
+          symmetry. eapply eval_regs_eq; eauto. }
       * exploit src_inv; eauto. i. des. inv x2; [ss|].
         eapply unused_prog_lookup in UNUSED1; eauto.
         eapply unused_prog_lookup in UNUSED2; eauto.

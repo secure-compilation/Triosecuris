@@ -652,12 +652,6 @@ Definition wf_direction (pc: cptr) (p: prog) (d: direction) : bool :=
 Definition wf_dirs (pc: cptr) (p: prog) (ds: dirs) : bool :=
   forallb (wf_direction pc p) ds.
 
-
-
-
-
-
-
 Definition nonempty_mem (m : mem) :Prop := (0 < Datatypes.length m)%nat.
 
 Fixpoint e_unused (x:string) (e:exp) : Prop :=

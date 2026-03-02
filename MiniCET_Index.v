@@ -97,6 +97,14 @@ Inductive multi_seq_inst (p : prog) (c : @state cfg) : @state cfg -> obs -> Prop
   where "p |- <(( c ))> -->*^ os <(( ct ))>" :=
       (multi_seq_inst p c ct os).
 
+(* TODO: move this to MiniCET_Index.v, and unify it with call_return_targets. *)
+Definition wf_ret (p: prog) (pc: cptr) : Prop :=
+  let '(l, o) := pc in
+  exists e, p[[(l, o - 1)]] = Some <{{ call e }}> /\ o > 0.
+
+Definition wf_stk (p: prog) (stk: list cptr) : Prop :=
+  Forall (fun pc => wf_ret p pc) stk.
+
 Definition call_return_targets (p: prog) : list cptr :=
   let ip := add_index p in
   List.concat
@@ -157,7 +165,7 @@ Inductive spec_eval_small_step (p:prog):
       p |- <(( S_Running ((pc, r, m, sk), ct, ms) ))> -->_[]^^[] <(( S_Running ((pc+1, r, m, sk), false, ms) ))>
   | SpecSMI_Ret : forall pc r m sk pc' pc'' ms ms',
       p[[pc]] = Some <{{ ret }}> ->
-      In pc'' (call_return_targets p) -> (* YH: Initially, I considered handling it in wf_dir', but I think it would be better to enforce it in the semantics. *)
+      wf_ret p pc'' ->
       ms' = ms || negb ((fst pc' =? fst pc'') && (snd pc' =? snd pc'')) ->
       p |- <(( S_Running ((pc, r, m, pc'::sk), false, ms) ))> -->_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), false, ms') ))>
   | SpecSMI_Peek : forall pc r m sk ms x,
@@ -252,7 +260,7 @@ Inductive ideal_eval_small_step_inst (p:prog) :
       p |- <(( S_Running ((pc, r, m, sk), ms) ))> -->i_[DCall pc']^^[OCall l] <(( S_Fault ))>
   | ISMI_Ret : forall pc r m sk pc' pc'' ms ms',
       p[[pc]] = Some <{{ ret }}> ->
-      In pc'' (call_return_targets p) -> (* YH: Initially, I considered handling it in wf_dir', but I think it would be better to enforce it in the semantics. *)
+      wf_ret p pc'' ->
       ms' = ms || negb ((fst pc' =? fst pc'') && (snd pc' =? snd pc'')) ->
       p |- <(( S_Running ((pc, r, m, pc'::sk), ms) ))> -->i_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), ms') ))>
   | ISMI_Peek : forall pc r m sk ms x, (* YH: Do we need this for source program? *)
@@ -1962,7 +1970,6 @@ Qed.
 Lemma ultimate_slh_bcc_single (p: prog) ic1 sc1 sc2 ds os
   (NCT: no_ct_prog p)
   (WFP: wf_prog p)
-  (* (WFDS: wf_ds' (uslh_prog p) ds) *)
   (UNUSED1: unused_prog msf p)
   (UNUSED2: unused_prog callee p)
   (MATCH: match_cfgs_ext p ic1 sc1)
@@ -2686,42 +2693,42 @@ Proof.
     + eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
       destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
       destruct H3 as [H3 | H3].
-    * repeat destruct H3 as [-> H3].
-      repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
-      all: change ds2 with ([] ++ ds2).
-      1: change os0 with ([] ++ os0).
-      2: change os3 with ([] ++ os3).
-      all: econstructor; eassumption.
-    * repeat eexists. 3: right; eassumption.
-      all: change x7 with ([] ++ x7).
-      1: change x8 with ([] ++ x8).
-      2: change x9 with ([] ++ x9).
-      all: econstructor; eassumption.
+      * repeat destruct H3 as [-> H3].
+        repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
+        all: change ds2 with ([] ++ ds2).
+        1: change os0 with ([] ++ os0).
+        2: change os3 with ([] ++ os3).
+        all: econstructor; eassumption.
+      * repeat eexists. 3: right; eassumption.
+        all: change x7 with ([] ++ x7).
+        1: change x8 with ([] ++ x8).
+        2: change x9 with ([] ++ x9).
+        all: econstructor; eassumption.
     + eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
       destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
       destruct H3 as [H3 | H3].
-    * repeat destruct H3 as [-> H3].
-      repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
-      all: change ds2 with ([] ++ ds2).
-      1: change os0 with ([] ++ os0).
-      2: change os3 with ([] ++ os3).
-      all: econstructor; eassumption.
-    * repeat eexists. 3: right; eassumption.
-      all: change x9 with ([] ++ x9).
-      1: change x10 with ([] ++ x10).
-      2: change x11 with ([] ++ x11).
-      all: econstructor; eassumption.
+      * repeat destruct H3 as [-> H3].
+        repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
+        all: change ds2 with ([] ++ ds2).
+        1: change os0 with ([] ++ os0).
+        2: change os3 with ([] ++ os3).
+        all: econstructor; eassumption.
+      * repeat eexists. 3: right; eassumption.
+        all: change x9 with ([] ++ x9).
+        1: change x10 with ([] ++ x10).
+        2: change x11 with ([] ++ x11).
+        all: econstructor; eassumption.
     + eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
       destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
       destruct H3 as [H3 | H3].
-    * repeat destruct H3 as [-> H3].
-      repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
-      all: change ds2 with ([] ++ ds2).
-      1: change (ODiv v1 v2 :: os0) with ([ODiv v1 v2] ++ os0).
-      2: change (ODiv v0 v3 :: os3) with ([ODiv v0 v3] ++ os3).
-      all: econstructor; eassumption.
-    * repeat eexists. 1, 2: econstructor.
-      admit.
+      * repeat destruct H3 as [-> H3].
+        repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
+        all: change ds2 with ([] ++ ds2).
+        1: change (ODiv v1 v2 :: os0) with ([ODiv v1 v2] ++ os0).
+        2: change (ODiv v0 v3 :: os3) with ([ODiv v0 v3] ++ os3).
+        all: econstructor; eassumption.
+      * repeat eexists. 1, 2: econstructor.
+        admit.
     + rewrite H6 in H19. inv H19. inv x.
       assert (not_zero n' = not_zero n'0).
       {
@@ -2738,72 +2745,72 @@ Proof.
       }
       rewrite H1 in *. clear H1.
       destruct (Bool.eqb (not_zero n'0) b').
-    * cbn in *.
-      eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
-      destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
-      repeat eexists.
-      1,2: change (DBranch b' :: ds2) with ([DBranch b'] ++ ds2).
-      1: change (OBranch (not_zero n'0) :: os0) with ([OBranch (not_zero n'0)] ++ os0).
-      2: change (OBranch (not_zero n'0) :: os3) with ([OBranch (not_zero n'0)] ++ os3).
-      1,2: econstructor 2; eassumption.
-      destruct H3 as [H3 | H3].
-      -- repeat destruct H3 as [-> H3]. left. repeat split; try reflexivity; apply H3.
-      -- right. repeat destruct H3 as [? H3]. subst.
-         repeat eexists. 2: exact H3.
-         simpl. f_equal. assumption.
-    * repeat eexists. 1, 2: econstructor.
-      right. repeat eexists.
-      right.
-      repeat eexists. all: eassumption.
+      * cbn in *.
+        eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
+        destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
+        repeat eexists.
+        1,2: change (DBranch b' :: ds2) with ([DBranch b'] ++ ds2).
+        1: change (OBranch (not_zero n'0) :: os0) with ([OBranch (not_zero n'0)] ++ os0).
+        2: change (OBranch (not_zero n'0) :: os3) with ([OBranch (not_zero n'0)] ++ os3).
+        1,2: econstructor 2; eassumption.
+        destruct H3 as [H3 | H3].
+        -- repeat destruct H3 as [-> H3]. left. repeat split; try reflexivity; apply H3.
+        -- right. repeat destruct H3 as [? H3]. subst.
+           repeat eexists. 2: exact H3.
+           simpl. f_equal. assumption.
+      * repeat eexists. 1, 2: econstructor.
+        right. repeat eexists.
+        right.
+        repeat eexists. all: eassumption.
     + rewrite H9 in H18. inv H18.
       eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
       destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
       destruct H3 as [H3 | H3].
-    * repeat destruct H3 as [-> H3].
-      repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
-      all: change ds2 with ([] ++ ds2).
-      1: change os0 with ([] ++ os0).
-      2: change os3 with ([] ++ os3).
-      all: econstructor; eassumption.
-    * repeat eexists. 3: right; eassumption.
-      all: change x7 with ([] ++ x7).
-      1: change x8 with ([] ++ x8).
-      2: change x9 with ([] ++ x9).
-      all: econstructor; eassumption.
+      * repeat destruct H3 as [-> H3].
+        repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
+        all: change ds2 with ([] ++ ds2).
+        1: change os0 with ([] ++ os0).
+        2: change os3 with ([] ++ os3).
+        all: econstructor; eassumption.
+      * repeat eexists. 3: right; eassumption.
+        all: change x7 with ([] ++ x7).
+        1: change x8 with ([] ++ x8).
+        2: change x9 with ([] ++ x9).
+        all: econstructor; eassumption.
     + eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
       destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
       destruct H3 as [H3 | H3].
       * repeat destruct H3 as [-> H3].
-      repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
-      all: change ds2 with ([] ++ ds2).
-      1: change (OLoad n :: os0) with ([OLoad n] ++ os0).
-      2: change (OLoad n0 :: os3) with ([OLoad n0] ++ os3).
-      all: econstructor; eassumption.
-    * repeat destruct H3 as [? H3]. subst. repeat eexists. 3: {
-      right. do 3 eexists. repeat (match goal with | |- ?A /\ ?B => split end). 7: eassumption. 2, 3: rewrite app_comm_cons; reflexivity. all: try reflexivity. simpl. f_equal. assumption.
-    }
-      all: change x9 with ([] ++ x9).
-      1: change (OLoad n :: x10) with ([OLoad n] ++ x10).
-      2: change (OLoad n0 :: x11) with ([OLoad n0] ++ x11).
-      all: econstructor; eassumption.
+        repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
+        all: change ds2 with ([] ++ ds2).
+        1: change (OLoad n :: os0) with ([OLoad n] ++ os0).
+        2: change (OLoad n0 :: os3) with ([OLoad n0] ++ os3).
+        all: econstructor; eassumption.
+      * repeat destruct H3 as [? H3]. subst. repeat eexists. 3: {
+                                                             right. do 3 eexists. repeat (match goal with | |- ?A /\ ?B => split end). 7: eassumption. 2, 3: rewrite app_comm_cons; reflexivity. all: try reflexivity. simpl. f_equal. assumption.
+                                                           }
+                                                           all: change x9 with ([] ++ x9).
+        1: change (OLoad n :: x10) with ([OLoad n] ++ x10).
+        2: change (OLoad n0 :: x11) with ([OLoad n0] ++ x11).
+        all: econstructor; eassumption.
     + eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
       destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
       destruct H3 as [H3 | H3].
-    * repeat destruct H3 as [-> H3].
-      repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
-      all: change ds2 with ([] ++ ds2).
-      1: change (OStore n :: os0) with ([OStore n] ++ os0).
-      2: change (OStore n0 :: os3) with ([OStore n0] ++ os3).
-      all: econstructor; eassumption.
-    * repeat destruct H3 as [? H3]. subst. repeat eexists. 3: {
-      right. do 3 eexists. repeat (match goal with |- ?A /\ ?B => split end). 7: eassumption. 2, 3: rewrite app_comm_cons; reflexivity.
-      all: try reflexivity.
-      simpl. f_equal. assumption.
-    }
-      all: change x7 with ([] ++ x7).
-      1: change (OStore n :: x8) with ([OStore n] ++ x8).
-      2: change (OStore n0 :: x9) with ([OStore n0] ++ x9).
-      all: econstructor; eassumption.
+      * repeat destruct H3 as [-> H3].
+        repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
+        all: change ds2 with ([] ++ ds2).
+        1: change (OStore n :: os0) with ([OStore n] ++ os0).
+        2: change (OStore n0 :: os3) with ([OStore n0] ++ os3).
+        all: econstructor; eassumption.
+      * repeat destruct H3 as [? H3]. subst. repeat eexists. 3: {
+                                                             right. do 3 eexists. repeat (match goal with |- ?A /\ ?B => split end). 7: eassumption. 2, 3: rewrite app_comm_cons; reflexivity.
+                                                             all: try reflexivity.
+                                                             simpl. f_equal. assumption.
+                                                           }
+                                                           all: change x7 with ([] ++ x7).
+        1: change (OStore n :: x8) with ([OStore n] ++ x8).
+        2: change (OStore n0 :: x9) with ([OStore n0] ++ x9).
+        all: econstructor; eassumption.
     + admit.
     (*   inv x. rewrite H20 in H6. inv H6. *)
     (*   assert (l = l0). *)
