@@ -97,7 +97,6 @@ Inductive multi_seq_inst (p : prog) (c : @state cfg) : @state cfg -> obs -> Prop
   where "p |- <(( c ))> -->*^ os <(( ct ))>" :=
       (multi_seq_inst p c ct os).
 
-(* TODO: move this to MiniCET_Index.v, and unify it with call_return_targets. *)
 Definition wf_ret (p: prog) (pc: cptr) : Prop :=
   let '(l, o) := pc in
   exists e, p[[(l, o - 1)]] = Some <{{ call e }}> /\ o > 0.
@@ -442,7 +441,7 @@ Definition get_pc_ic (ic: ideal_cfg) : cptr :=
 Definition wf_dir' (p: prog) (d: direction) : Prop :=
   match d with
   | DCall pc' => is_some p[[pc']] = true
-  | DRet pc' => In pc' (call_return_targets p)
+  (* | DRet pc' => wf_ret p pc' *)
   | _ => True
   end.
 

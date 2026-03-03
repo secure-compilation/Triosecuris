@@ -97,6 +97,11 @@ Inductive multi_seq_inst (p : prog) (c : @state cfg) : @state cfg -> obs -> Prop
   where "p |- <(( c ))> -->*^ os <(( ct ))>" :=
       (multi_seq_inst p c ct os).
 
+Definition wf_ret (p: prog) (len: nat) (pc: nat) : Prop :=
+  exists e, fetch p len (pc - 1) = Some <{{ call e }}> /\ pc > 0.
+
+Definition wf_stk (p: prog) (len: nat) (stk: list nat) : Prop :=
+  Forall (fun pc => wf_ret p len pc) stk.
 
 Definition call_return_targets (p: prog) : list nat :=
   let ip := add_index p in
@@ -104,7 +109,6 @@ Definition call_return_targets (p: prog) : list nat :=
                              | ICall _ => [(add o 1)]
                              | _ => []
                              end) ip.
-
 
 Reserved Notation
   "p '|-' '<((' sc '))>' '-->m_' ds '^^' os '<((' sct '))>'"
@@ -157,7 +161,7 @@ Inductive spec_eval_small_step (p:prog):
       p |- <(( S_Running ((pc, r, m, sk), ct, ms) ))> -->m_[]^^[] <(( S_Running ((add pc 1, r, m, sk), false, ms) ))>
   | SpecSMI_Ret : forall pc r m sk pc' pc'' ms ms',
       fetch p (Datatypes.length m) pc = Some <{{ ret }}> ->
-      In pc'' (call_return_targets p) -> (* YH: Initially, I considered handling it in wf_dir', but I think it would be better to enforce it in the semantics. *)
+      wf_ret p (Datatypes.length m) pc'' ->
       ms' = ms || negb (pc' =? pc'') ->
       p |- <(( S_Running ((pc, r, m, pc'::sk), false, ms) ))> -->m_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), false, ms') ))>
   | SpecSMI_Peek : forall pc r m sk ms x,
@@ -177,8 +181,6 @@ Inductive spec_eval_small_step (p:prog):
 
   where "p |- <(( sc ))> -->m_ ds ^^ os  <(( sct ))>" :=
     (spec_eval_small_step p sc sct ds os).
-
-
 
 Reserved Notation
   "p '|-' '<((' sc '))>' '-->m*_' ds '^^' os '^^' n '<((' sct '))>'"
@@ -331,18 +333,34 @@ Definition match_pc (p: MiniCET.prog) (len: nat) (pc: cptr) (pc': nat) : Prop :=
 Definition match_stk (p: MiniCET.prog) (len: nat) (stk: list cptr) (stk': list nat) : Prop :=
   Forall2 (match_pc p len) stk stk'.
 
-Variant match_states (p: MiniCET.prog) (len: nat) : state MCC.spec_cfg -> state spec_cfg -> Prop :=
-| match_states_intro pc r m stk ct ms pc' r' m' stk'
+Variant match_states (p: MiniCET.prog) (tp: prog) (len: nat) : state MCC.spec_cfg -> state spec_cfg -> Prop :=
+| match_states_intro pc r m stk ms pc' r' m' stk'
   (PC: p[[pc]] <> None -> pc_inj p len pc = Some pc')
   (MLEN: len = Datatypes.length m')
   (REG: match_reg p len r r')
   (MEM: match_mem p len m m')
   (STK: match_stk p len stk stk') :
-  match_states p len (S_Running (pc, r, m, stk, ct, ms)) (S_Running (pc', r', m', stk', ct, ms))
+  match_states p tp len (S_Running (pc, r, m, stk, false, ms)) (S_Running (pc', r', m', stk', false, ms))
 | match_states_term :
-  match_states p len S_Term S_Term
+  match_states p tp len S_Term S_Term
 | match_states_fault :
-  match_states p len S_Fault S_Fault.
+  match_states p tp len S_Fault S_Fault
+| match_states_call_fault pc r m stk ms pc' r' m' stk'
+  (PC: p[[pc]] <> Some ICTarget)
+  (TPC: fetch tp len pc' <> Some ICTarget)
+  (MLEN: len = Datatypes.length m')
+  (REG: match_reg p len r r')
+  (MEM: match_mem p len m m')
+  (STK: match_stk p len stk stk') :
+  match_states p tp len (S_Running (pc, r, m, stk, true, ms)) (S_Running (pc', r', m', stk', true, ms))
+| match_states_call pc r m stk ms pc' r' m' stk'
+  (PC: p[[pc]] = Some ICTarget)
+  (TPC: fetch tp len pc' = Some ICTarget)
+  (MLEN: len = Datatypes.length m')
+  (REG: match_reg p len r r')
+  (MEM: match_mem p len m m')
+  (STK: match_stk p len stk stk') :
+  match_states p tp len (S_Running (pc, r, m, stk, true, ms)) (S_Running (pc', r', m', stk', true, ms)).
 
 Definition match_dir (p: MiniCET.prog) (len: nat) (d: MiniCET.direction) (d': direction) : Prop :=
   match d, d' with
@@ -372,7 +390,7 @@ Definition match_obs (p: MiniCET.prog) (len: nat) (ds: MiniCET.obs) (ds': obs) :
 Definition wf_dir (p: prog) (len: nat) (d: direction) : Prop :=
   match d with
   | DCall pc' => is_some (nth_error p (pc' - len)) && (len <=? pc')%nat
-  | DRet pc' => In pc' (call_return_targets p)
+  (* | DRet pc' => wf_ret p len pc' *)
   | _ => True
   end.
 
@@ -499,11 +517,10 @@ Lemma wf_dir_inj
   wf_dir' p d.
 Proof.
   unfold wf_dir, wf_dir' in *. des_ifs.
-  - red in MATCH. unfold is_some in *. des_ifs_safe.
-    exploit tgt_inv; eauto.
-    i. des; clarify.
-  - admit.
-Admitted.
+  red in MATCH. unfold is_some in *. des_ifs_safe.
+  exploit tgt_inv; eauto.
+  i. des; clarify.
+Qed.
 
 Lemma wf_ds_inj
   (p: MiniCET.prog) len (tp: prog) ds tds
@@ -528,8 +545,10 @@ Proof.
   - assert (l >= len).
     { unfold pc_inj in *. des_ifs. lia. }
     rewrite pc_inj_iff in *; clarify.
-  - admit.
-Admitted.
+  - assert (l >= len).
+    { unfold pc_inj in *. des_ifs. lia. }
+    rewrite pc_inj_iff in *; clarify.
+Qed.
 
 Lemma match_dirs_unique p len ds1 ds2 dst
   (MATCH1: match_dirs p len ds1 dst)
@@ -623,18 +642,21 @@ Lemma minicet_linear_bcc_single
   (p: MiniCET.prog) len (tp: prog) sc tc tct tds tos
   (TRANSL: machine_prog p len = Some tp)
   (SAFE: exists ds os sct, p |- <(( S_Running sc ))> -->_ ds ^^ os  <(( sct ))>)
-  (MATCH: match_states p len (S_Running sc) (S_Running tc))
+  (MATCH: match_states p tp len (S_Running sc) (S_Running tc))
   (WFDS: wf_ds tp len tds)
   (TGT: tp |- <(( S_Running tc ))> -->m_ tds ^^ tos  <(( tct ))>) :
   exists ds os sct, p |- <(( S_Running sc ))> -->_ ds ^^ os  <(( sct ))>
-             /\ match_states p len sct tct
+             /\ match_states p tp len sct tct
              /\ match_dirs p len ds tds /\ match_obs p len os tos.
 Proof.
-  inv MATCH.
+  inv MATCH; cycle 1.
+  (* fault *)
+  { inv TGT; clarify.
+    esplits; try sfby econs. }
+  (* call *)
+  { admit. }
   destruct (p[[pc0]]) eqn:ISRC.
-  2:{ des. inv SAFE; clarify. inv TGT; clarify.
-      - admit. (* contradiction *)
-      - esplits; try sfby econs. }
+  2:{ des. inv SAFE; clarify. }
   des. exploit PC; [ii; clarify|]. clear PC. intros PC. inv TGT.
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     esplits; econs; eauto. unfold pc_inj. intro PC'.
@@ -653,7 +675,7 @@ Proof.
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1.
     destruct i0; ss; clarify; try sfby des_ifs. des_ifs_safe.
     esplits.
-    { econs 4; eauto. rewrite <- H9.
+    { econs 4; eauto. rewrite <- H8.
       exploit eval_inject; eauto. i.
       red in x1. des_ifs; ss.
       { inv SAFE; clarify. rewrite Heq1 in H10. ss. }
@@ -755,7 +777,7 @@ Proof.
     esplits; eauto. 3-4: repeat econs.
     { eapply MiniCET_Index.SpecSMI_Ret; eauto. }
     + admit.
-    + red. eauto.
+    + admit. (* red. eauto. *)
 
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x0. des_ifs.
     esplits; try sfby econs.
@@ -777,25 +799,25 @@ Proof.
     clear SAFE. inv STK.
     esplits; eauto. 2-4: repeat econs.
     { eapply MiniCET_Index.SpecSMI_Term. eauto. }
-  - destruct (fetch tp (Datatypes.length m') pc') eqn:ITGT.
-    2:{ admit. } (* TODO: YH *)
-    exploit tgt_inv; eauto. i. des.
-    clear SAFE.
-    assert (i1 <> <{{ ctarget }}>).
-    { ii. eapply H8. subst. unfold machine_inst in x1. clarify. }
-    esplits; eauto. 2-4: repeat econs.
-    eapply MiniCET_Index.SpecSMI_Fault; eauto. ii. clarify.
+  (* - destruct (fetch tp (Datatypes.length m') pc') eqn:ITGT. *)
+  (*   2:{ admit. } (* TODO: YH *) *)
+  (*   exploit tgt_inv; eauto. i. des. *)
+  (*   clear SAFE. *)
+  (*   assert (i1 <> <{{ ctarget }}>). *)
+  (*   { ii. eapply H8. subst. unfold machine_inst in x1. clarify. } *)
+  (*   esplits; eauto. 2-4: repeat econs. *)
+  (*   eapply MiniCET_Index.SpecSMI_Fault; eauto. ii. clarify. *)
 Admitted.
 
 Lemma minicet_linear_bcc
   (p: MiniCET.prog) len (tp: prog) sc tc tct tds tos n
   (TRANSL: machine_prog p len = Some tp)
   (SAFE: spec_exec_safe p sc)
-  (MATCH: match_states p len (S_Running sc) (S_Running tc))
+  (MATCH: match_states p tp len (S_Running sc) (S_Running tc))
   (WFDS: wf_ds tp len tds)
   (TGT: tp |- <(( S_Running tc ))> -->m*_ tds ^^ tos ^^ n  <(( tct ))>) :
   exists ds os sct, p |- <(( S_Running sc ))> -->*_ ds ^^ os ^^ n  <(( sct ))>
-             /\ match_states p len sct tct
+             /\ match_states p tp len sct tct
              /\ match_dirs p len ds tds /\ match_obs p len os tos.
 Proof.
   ginduction n; ii.
