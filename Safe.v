@@ -110,6 +110,7 @@ Qed.
 
 Lemma wf_stk_preserve_ideal
   p pc r m stk ms pc' r' m' stk' ms' ds os
+  (WFP: wf_prog p)
   (WFSTK: wf_stk p stk)
   (STEP: p |- <(( S_Running (pc, r, m, stk, ms) ))> -->i_ ds ^^ os <((S_Running (pc', r', m', stk', ms') ))>):
   wf_stk p stk'.
@@ -118,7 +119,9 @@ Proof.
   { econs; eauto. red. ii. des_ifs_safe.
     destruct pc. simpl in Heq. clarify.
     rewrite <- add_sub_assoc; [|lia].
-    rewrite sub_diag, add_0_r. esplits; eauto. lia. }
+    rewrite sub_diag, add_0_r. esplits; eauto; try lia.
+    ii. exploit block_always_terminator_prog; eauto.
+    i. des. ss. clarify. }
   inv WFSTK. auto.
 Qed.
 
@@ -134,6 +137,7 @@ Require Import Stdlib.Program.Equality.
 
 Lemma wf_stk_preserve_multi_ideal
   p pc r m stk ms pc' r' m' stk' ms' ds os
+  (WFP: wf_prog p)
   (WFSTK: wf_stk p stk)
   (STEP: p |- <(( S_Running (pc, r, m, stk, ms) ))> -->i*_ ds ^^ os <((S_Running (pc', r', m', stk', ms') ))>):
   wf_stk p stk'.

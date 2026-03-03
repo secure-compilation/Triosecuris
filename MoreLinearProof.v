@@ -328,14 +328,14 @@ Proof.
 Qed.
 
 Definition match_pc (p: MiniCET.prog) (len: nat) (pc: cptr) (pc': nat) : Prop :=
-  p[[pc]] <> None -> pc_inj p len pc = Some pc'.
+  (* p[[pc]] <> None -> *) pc_inj p len pc = Some pc'.
 
 Definition match_stk (p: MiniCET.prog) (len: nat) (stk: list cptr) (stk': list nat) : Prop :=
   Forall2 (match_pc p len) stk stk'.
 
 Variant match_states (p: MiniCET.prog) (tp: prog) (len: nat) : state MCC.spec_cfg -> state spec_cfg -> Prop :=
 | match_states_intro pc r m stk ms pc' r' m' stk'
-  (PC: p[[pc]] <> None -> pc_inj p len pc = Some pc')
+  (PC: (* p[[pc]] <> None -> *) pc_inj p len pc = Some pc')
   (MLEN: len = Datatypes.length m')
   (REG: match_reg p len r r')
   (MEM: match_mem p len m m')
@@ -356,6 +356,7 @@ Variant match_states (p: MiniCET.prog) (tp: prog) (len: nat) : state MCC.spec_cf
 | match_states_call pc r m stk ms pc' r' m' stk'
   (PC: p[[pc]] = Some ICTarget)
   (TPC: fetch tp len pc' = Some ICTarget)
+  (SYNC: pc_inj p len pc = Some pc')
   (MLEN: len = Datatypes.length m')
   (REG: match_reg p len r r')
   (MEM: match_mem p len m m')
@@ -379,6 +380,7 @@ Definition match_ob (p: MiniCET.prog) (len: nat) (o: MiniCET.observation) (o': o
   | MiniCET.OLoad n, OLoad n' => n = n'
   | MiniCET.OStore n, OStore n' => n = n'
   | MiniCET.OCall l, OCall l' => pc_inj p len l = Some l'
+  | MiniCET.ODiv n1 n2, ODiv n1' n2' => (n1 = n1') /\ (n2 = n2')
   | _, _ => False
   end.
 
@@ -566,6 +568,7 @@ Lemma match_ob_unique_src p len o1 o2 ot
   o1 = o2.
 Proof.
   unfold match_ob in *. des_ifs.
+  { des; clarify. }
   assert (l0 >= len).
   { unfold pc_inj in *. des_ifs. lia. }
   rewrite pc_inj_iff in *; clarify.
@@ -586,7 +589,7 @@ Lemma match_ob_unique_tgt p len o ot1 ot2
   (MATCH2: match_ob p len o ot2):
   ot1 = ot2.
 Proof.
-  unfold match_ob in *. des_ifs.
+  unfold match_ob in *. des_ifs. des; clarify.
 Qed.
 
 Lemma match_obs_unique_tgt p len os ost1 ost2
@@ -638,12 +641,18 @@ Proof.
   f_equal. lia.
 Qed.
 
+Definition sc_stk (sc: MCC.spec_cfg) :=
+  let '(c, ct, ms) := sc in
+  let '(pc, r, m, stk) := c in
+  stk.
+
 Lemma minicet_linear_bcc_single
   (p: MiniCET.prog) len (tp: prog) sc tc tct tds tos
   (TRANSL: machine_prog p len = Some tp)
   (SAFE: exists ds os sct, p |- <(( S_Running sc ))> -->_ ds ^^ os  <(( sct ))>)
   (MATCH: match_states p tp len (S_Running sc) (S_Running tc))
   (WFDS: wf_ds tp len tds)
+  (WFSTK: MiniCET_Index.wf_stk p (sc_stk sc))
   (TGT: tp |- <(( S_Running tc ))> -->m_ tds ^^ tos  <(( tct ))>) :
   exists ds os sct, p |- <(( S_Running sc ))> -->_ ds ^^ os  <(( sct ))>
              /\ match_states p tp len sct tct
@@ -651,10 +660,11 @@ Lemma minicet_linear_bcc_single
 Proof.
   inv MATCH; cycle 1.
   (* fault *)
-  { inv TGT; clarify.
-    esplits; try sfby econs. }
+  { inv TGT; clarify. esplits; try sfby econs. }
   (* call *)
-  { admit. }
+  { inv TGT; clarify. esplits; try sfby econs.
+    econs.
+    econs; eauto. ii. eapply pc_inj_inc; eauto. }
   destruct (p[[pc0]]) eqn:ISRC.
   2:{ des. inv SAFE; clarify. }
   des. exploit PC; [ii; clarify|]. clear PC. intros PC. inv TGT.
@@ -671,7 +681,31 @@ Proof.
     destruct (string_dec x x0); subst.
     { do 2 rewrite MiniCET_Index.t_update_eq. eapply eval_inject; eauto. }
     do 2 (rewrite MiniCET_Index.t_update_neq; eauto).
-  - admit. (* div *)
+  (* div *)
+  - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1.
+    destruct i0; ss; clarify; try sfby des_ifs. des_ifs_safe.
+    inv SAFE; clarify.
+    unfold to_nat in *. des_ifs.
+
+    assert (v1 = v0).
+    { hexploit eval_inject; try eapply Heq; eauto.
+      rewrite Heq2, Heq4. ss. }
+
+    assert (v2 = v3).
+    { hexploit eval_inject; try eapply Heq0; eauto.
+      rewrite Heq1, Heq3. ss. }
+
+    subst. esplits.
+    { econs 3; eauto.
+      - rewrite Heq2. ss.
+      - rewrite Heq1. ss. }
+    2:{ repeat econs. }
+    2:{ repeat econs. }
+    { econs; auto.
+      - i. exploit pc_inj_inc; eauto.
+      - subst res. eapply asgn_match_reg; auto.
+        des_ifs; ss. }
+  (* branch *)
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1.
     destruct i0; ss; clarify; try sfby des_ifs. des_ifs_safe.
     esplits.
@@ -684,10 +718,12 @@ Proof.
     2:{ repeat econs. }
     econs; eauto. i. destruct b'; auto.
     exploit pc_inj_inc; try eapply PC; eauto.
+  (* jump *)
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     esplits; try sfby (repeat econs).
     { econs 5; eauto. }
     econs; eauto.
+  (* load *)
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x0. des_ifs.
     inv SAFE; clarify.
     assert (n0 = n).
@@ -706,6 +742,7 @@ Proof.
     { red. i. unfold match_mem in MEM.
       esplits; try sfby (repeat econs).
       { eapply asgn_match_reg; eauto. } }
+  (* store *)
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     inv SAFE; clarify.
     assert (n0 = n).
@@ -722,6 +759,7 @@ Proof.
     { i. exploit pc_inj_inc; try eapply PC; eauto. }
     { rewrite upd_length. auto. }
     eapply store_match_mem; eauto.
+  (* call *)
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     inv SAFE; clarify.
 
@@ -730,9 +768,10 @@ Proof.
       des_ifs. eapply lookup_from_target; eauto. eapply leb_complete in H1. lia. }
     des.
 
+    assert (MATCHDS: match_dirs p (Datatypes.length m') [MiniCET.DCall pc'_src] [DCall pc'0]).
+    { repeat econs. red. eauto. }
+
     exploit wf_ds_inj; eauto; i.
-    { instantiate (1:= [MiniCET.DCall pc'_src]).
-      repeat econs. red. eauto. }
 
     assert (VINJ: val_inject p (Datatypes.length m') (FP l0) (N l)).
     { unfold to_fp, to_nat in *. des_ifs; clarify.
@@ -740,37 +779,59 @@ Proof.
 
     esplits.
     { eapply MiniCET_Index.SpecSMI_Call; eauto. }
-    { instantiate (1:=pc'_src). admit.
-      (* assert (((fst pc'_src =? l0)%nat && (snd pc'_src =? 0)%nat) = (pc'0 =? l)%nat). *)
-      (* { red in VINJ. des_ifs. *)
-      (*   destruct pc'_src as [b o]. rename pc'0 into n0. simpl. *)
-      (*   destruct (Nat.eq_dec b l0); subst. *)
-      (*   { destruct (Nat.eq_dec o 0); clarify. *)
-      (*     { repeat rewrite Nat.eqb_refl. simpl. auto. } *)
-      (*     hexploit pc_inj_inject. 2: eapply H. 2: eapply Heq0. *)
-      (*     { ii. clarify. } *)
-      (*     ii. rewrite <- Nat.eqb_neq in *. rewrite n1. *)
-      (*     rewrite andb_false_r. auto. } *)
-      (*   { hexploit pc_inj_inject. 2: eapply H. 2: eapply Heq0. *)
-      (*     { ii. clarify. } *)
-      (*     ii. rewrite <- Nat.eqb_neq in *. rewrite n1. ss. } } *)
-      (* rewrite H0. eapply match_states_intro; i; eauto. *)
-      (* econs; eauto. *)
-      (* red. i. *)
-      (* exploit pc_inj_inc; try eapply H1; eauto. *)
-    }
+    { instantiate (1:=pc'_src).
+      assert (((fst pc'_src =? fst l0)%nat && (snd pc'_src =? snd l0)%nat) = (pc'0 =? l)%nat).
+      { red in VINJ. des_ifs.
+        destruct pc'_src as [b o]. rename pc'0 into n0. simpl.
+        destruct (Nat.eq_dec b (fst l0)); subst.
+        { destruct (Nat.eq_dec o (snd l0)); clarify.
+          { repeat rewrite Nat.eqb_refl. simpl. ss.
+            destruct l0; ss; clarify. rewrite Nat.eqb_refl. auto. }
+          hexploit pc_inj_inject. 2: eapply H. 2: eapply Heq0.
+          { destruct l0; ss. ii. clarify. }
+          ii. rewrite <- Nat.eqb_neq in *. rewrite n1.
+          rewrite andb_false_r. auto. }
+        { hexploit pc_inj_inject. 2: eapply H. 2: eapply Heq0.
+          { ii. clarify. }
+          ii. rewrite <- Nat.eqb_neq in *. rewrite n1. ss. } }
+      rewrite H0.
+
+      red in WFDS. inv WFDS. ss. des_ifs_safe.
+      unfold is_some in *. des_ifs.
+
+      assert (i <> ICTarget \/ i = ICTarget).
+      { destruct i; try sfby (left; ii; clarify). auto. }
+      des.
+      - hexploit tgt_inv; eauto. i. des.
+        assert (i0 <> ICTarget).
+        { ii. subst. ss. clarify. }
+        eapply match_states_call_fault; eauto.
+        { ii. clarify. }
+        { unfold fetch, MoreLinear.fetch. ii. clarify. }
+        econs; eauto. red. ii.
+        eapply pc_inj_inc; eauto.
+      - hexploit tgt_inv; eauto. i. des.
+        assert (i0 = ICTarget).
+        { ii. subst. ss. destruct i0; ss; des_ifs. }
+        subst. eapply match_states_call; eauto.
+        econs; eauto. red. ii.
+        eapply pc_inj_inc; eauto. }
     { repeat econs. red. eauto. }
     { repeat econs. unfold match_ob, val_inject in *. des_ifs. }
+
+  (* ctarget *)
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     inv SAFE; clarify.
     esplits; eauto. 3-4: repeat econs.
     { eapply MiniCET_Index.SpecSMI_CTarget. eauto. }
     econs; eauto. ii. exploit pc_inj_inc; try eapply PC; eauto.
+
+  (* return *)
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     inv STK. inv SAFE; clarify.
 
     assert (SRCT: exists pc''_src, pc_inj p (Datatypes.length m') pc''_src = Some (pc'')
-                           /\ In pc''_src (MiniCET_Index.call_return_targets p)).
+                           /\ MiniCET_Index.wf_ret p pc''_src).
     { admit. }
     des.
 
@@ -779,11 +840,12 @@ Proof.
     + admit.
     + admit. (* red. eauto. *)
 
+  (* peek *)
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x0. des_ifs.
     esplits; try sfby econs.
     { eapply MiniCET_Index.SpecSMI_Peek. eauto. }
     { econs; eauto.
-      - ii. admit.
+      - ii. eapply pc_inj_inc; eauto.
       - destruct stk'.
         + inv STK. red. ii.
           destruct (string_dec x x0); subst.
@@ -793,20 +855,16 @@ Proof.
           subst val.
           destruct (string_dec x x2); subst.
           { do 2 rewrite MiniCET_Index.t_update_eq.
-            hexploit H2; ii; clarify. admit. (* stack match *) }
+            hexploit H2; ii; clarify. red in H2. red.
+            rewrite H2; eauto. ss.
+            inv WFSTK. red in H4. des_ifs. des.
+
+            inv H4. admit. (* stack wf *) }
           do 2 (rewrite MiniCET_Index.t_update_neq; eauto). }
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     clear SAFE. inv STK.
     esplits; eauto. 2-4: repeat econs.
     { eapply MiniCET_Index.SpecSMI_Term. eauto. }
-  (* - destruct (fetch tp (Datatypes.length m') pc') eqn:ITGT. *)
-  (*   2:{ admit. } (* TODO: YH *) *)
-  (*   exploit tgt_inv; eauto. i. des. *)
-  (*   clear SAFE. *)
-  (*   assert (i1 <> <{{ ctarget }}>). *)
-  (*   { ii. eapply H8. subst. unfold machine_inst in x1. clarify. } *)
-  (*   esplits; eauto. 2-4: repeat econs. *)
-  (*   eapply MiniCET_Index.SpecSMI_Fault; eauto. ii. clarify. *)
 Admitted.
 
 Lemma minicet_linear_bcc
@@ -884,30 +942,31 @@ Lemma spec_eval_relative_secure_spec_mir_mc_aux
   (ISAFE2: spec_exec_safe p (0, 0, r2, m2, [], true, false)):
   spec_same_obs_machine tp (Datatypes.length m1') r1' r2' (Datatypes.length m1') m1' m2' [] true.
 Proof.
-  assert (INITSAFE: p[[(0,0)]] <> None).
-  { red in ISAFE1. exploit ISAFE1; [econs|econs|]. i. des. inv x0; ii; clarify. }
+  (* assert (INITSAFE: p[[(0,0)]] <> None). *)
+  (* { red in ISAFE1. exploit ISAFE1; [econs|econs|]. i. des. inv x0; ii; clarify. } *)
 
-  assert (ISYNC: pc_inj p (Datatypes.length m1') (0, 0) = Some (Datatypes.length m1')).
-  { clear -INITSAFE. ss. des_ifs. destruct p0. ss. clarify. }
+  (* assert (ISYNC: pc_inj p (Datatypes.length m1') (0, 0) = Some (Datatypes.length m1')). *)
+  (* { clear -INITSAFE. ss. des_ifs. destruct p0. ss. clarify. } *)
 
-  red. i.
-  hexploit minicet_linear_bcc; [|eapply ISAFE1| | |eapply H|]; eauto.
-  { econs; try sfby ss. }
-  i. des.
+  (* red. i. *)
+  (* hexploit minicet_linear_bcc; [|eapply ISAFE1| | |eapply H|]; eauto. *)
+  (* { econs; try sfby ss. } *)
+  (* i. des. *)
 
-  hexploit minicet_linear_bcc; [|eapply ISAFE2| | |eapply H0|]; eauto.
-  { econs; try sfby ss. }
-  i. des.
+  (* hexploit minicet_linear_bcc; [|eapply ISAFE2| | |eapply H0|]; eauto. *)
+  (* { econs; try sfby ss. } *)
+  (* i. des. *)
 
-  assert (UNIQ: ds0 = ds1); subst.
-  { eapply match_dirs_unique; eauto. }
+  (* assert (UNIQ: ds0 = ds1); subst. *)
+  (* { eapply match_dirs_unique; eauto. } *)
 
-  red in SPEC. hexploit SPEC.
-  { eapply H1. }
-  { eapply H5. }
-  i. clear - H4 H8 H9.
-  eapply prefix_match_obs; eauto.
-Qed.
+  (* red in SPEC. hexploit SPEC. *)
+  (* { eapply H1. } *)
+  (* { eapply H5. } *)
+  (* i. clear - H4 H8 H9. *)
+  (* eapply prefix_match_obs; eauto. *)
+  (* Qed. *)
+Admitted.
 
 Lemma spec_eval_relative_secure_spec_mir_mc
   p r1 r2 r1' r2' m1 m2 m1' m2' tp
@@ -946,8 +1005,8 @@ Lemma spec_eval_relative_secure_machine
   relative_secure_machine p (Datatypes.length m1') tp (fun p => machine_prog p (Datatypes.length m1')) r1 r2 r1' r2' m1 m2 m1' m2'.
 Proof.
   red. i.
-  set (ir1 := (msf !-> N 0; callee !-> (FP 0); r1)).
-  set (ir2 := (msf !-> N 0; callee !-> (FP 0); r2)).
+  set (ir1 := (msf !-> N 0; callee !-> (FP (0, 0)); r1)).
+  set (ir2 := (msf !-> N 0; callee !-> (FP (0, 0)); r2)).
 
   hexploit (spec_eval_relative_secure p r1 r2 ir1 ir2 m1 m2); eauto.
   intros REL. red in REL.

@@ -99,7 +99,7 @@ Inductive multi_seq_inst (p : prog) (c : @state cfg) : @state cfg -> obs -> Prop
 
 Definition wf_ret (p: prog) (pc: cptr) : Prop :=
   let '(l, o) := pc in
-  exists e, p[[(l, o - 1)]] = Some <{{ call e }}> /\ o > 0.
+  p[[(l, o)]] <> None /\ exists e, p[[(l, o - 1)]] = Some <{{ call e }}> /\ o > 0.
 
 Definition wf_stk (p: prog) (stk: list cptr) : Prop :=
   Forall (fun pc => wf_ret p pc) stk.
