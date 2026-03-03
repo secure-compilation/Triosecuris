@@ -1391,7 +1391,7 @@ Proof.
         unfold add_block_M, add_block in x1. clarify.
         rewrite uslh_blk_np_length.
         f_equal. f_equal.
-        erewrite <- uslh_inst_np_length_same.
+        erewrite <- uslh_inst_np_length_same with (opc := 0). (* opc does not matter, so it would not be resolved by anything *)
         2:{ eapply offset_uslh_length. }
         erewrite uslh_inst_np_length; eauto. }
       econs 2; eauto.
@@ -1440,8 +1440,36 @@ Proof.
     replace (prefix_offset a0 o 2) with (S (S (prefix_offset a0 o 0))); simpl; eauto.
     unfold prefix_offset at 2. rewrite fold_left_init_0 at 1. unfold prefix_offset. lia.
   (* ret *)
-  - admit.
-Admitted.
+  - dup Heq0. rename Heq2 into TRNTH.
+    rewrite nth_error_map in Heq0. unfold option_map in Heq0.
+    des_ifs_safe. unfold offset_uslh in Heq1.
+
+    exploit mapM_nth_error_strong; eauto.
+    { eapply _offset_uslh_combine; eauto. }
+    i. des.
+
+    assert (exists i', nth_error (List.concat a0) (prefix_offset a0 o 0) = Some i'
+                /\ match_inst_uslh p (l, o) <{{ ret }}> i').
+    {
+        replace (prefix_offset a0 o 0) with (prefix_offset a0 o 0 + 0) by lia.
+        ss. unfold MiniCET.uslh_ret in *. clarify.
+
+        exploit (concat_nth_error a0 _ _ 0); eauto; [ss|]. i.
+        esplits; eauto.
+        econs 4; eauto.
+        { ss. rewrite TRNTH. unfold offset_uslh. ss. rewrite Heq1. eauto. } 
+        {
+            simpl. rewrite H. simpl. des_ifs.
+            - replace (prefix_offset a0 o 2) with (S (S (prefix_offset a0 o 0))); simpl.
+              2:{ unfold prefix_offset at 2. rewrite fold_left_init_0 at 1. unfold prefix_offset. lia. }
+              eapply concat_nth_error; eauto.
+            - eapply concat_nth_error; eauto. 
+        }
+    }
+    des_ifs; eauto.
+    replace (prefix_offset a0 o 2) with (S (S (prefix_offset a0 o 0))); simpl; eauto.
+    unfold prefix_offset at 2. rewrite fold_left_init_0 at 1. unfold prefix_offset. lia.  
+Qed.
 
 Lemma firstnth_error : forall (l: list inst) (n: nat) (i: inst),
   nth_error l n = Some i ->
@@ -2016,7 +2044,33 @@ Proof.
         { rewrite t_update_eq. rewrite eval_unused_update; eauto.
           exploit unused_prog_lookup; try eapply x1; eauto. i. ss. }
     (* div *)
-    + admit.
+    + exploit tgt_inv; eauto. i. des. inv x0.
+      inv MATCH.
+      replace (@nil direction) with ((@nil direction) ++ []) by ss. 
+      replace ([ODiv v1 v2]) with (([ODiv v1 v2]) ++ []) by ss.
+      esplits.
+      { econs 2; econs. 1: eassumption.
+          - inv REG. simpl in H1. rewrite H3 in H1. simpl in H1. rewrite <- H1. destruct ms; simpl; [reflexivity|].
+            eapply unused_prog_lookup in UNUSED1; eauto.
+            eapply unused_prog_lookup in UNUSED2; eauto.
+            inv UNUSED1. inv UNUSED2. des.
+            exploit (eval_regs_eq r0 r e0); eauto. i.
+            now f_equal.
+          - inv REG. simpl in H2. rewrite H3 in H2. simpl in H2. rewrite <- H2. destruct ms; simpl; [reflexivity|].
+            eapply unused_prog_lookup in UNUSED1, UNUSED2; eauto.
+            inv UNUSED1. inv UNUSED2. des.
+            exploit (eval_regs_eq r0 r e3); eauto. i.
+            now f_equal. }
+      { fold res. econs. econs. 3: assumption.
+          - exploit block_always_terminator_prog; try eapply x1; eauto. i. des.
+            exploit pc_sync_next; eauto. now destruct pc. 
+          - econs. (* This seems like it would be needed more often, extract as lemma? *)
+            + i. destruct (string_dec x x0). 
+              * subst; now do 2 rewrite t_update_eq.
+              * do 2 (rewrite t_update_neq; [|assumption]). now apply REG.
+            + eapply unused_prog_lookup in UNUSED1; eauto.
+              inv UNUSED1. rewrite t_update_neq; [|easy]. now apply REG.
+      }
     + exploit tgt_inv; eauto. i. des. inv x1.
       { inv MATCH. }
       clarify.
@@ -2110,12 +2164,34 @@ Proof.
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
 
     (* ret *)
-    + admit.
+    + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH. 
 
     (* peek *)
-    + admit.
+    + exploit tgt_inv; eauto. i. des. inv x0.
+      { inv MATCH.
+          replace (@nil direction) with ((@nil direction) ++ []) by ss. 
+          replace (@nil observation) with ((@nil observation) ++ []) by ss.
+          esplits.
+          { econs 2; econs; eassumption. }
+          admit. (* Does not hold currently. Need to adjust Rsync to apply pc_sync on FP values*)
+          (*{ fold val. econs. econs. 3: assumption.*)
+              (*- exploit block_always_terminator_prog; try eapply x1; eauto. i. des.*)
+                (*exploit pc_sync_next; eauto. now destruct pc. *)
+              (*- econs. [> This seems like it would be needed more often, extract as lemma? <]*)
+                (*+ i. destruct (string_dec x x0). *)
+                  (** subst; now do 2 rewrite t_update_eq.*)
+                  (** do 2 (rewrite t_update_neq; [|assumption]). now apply REG.*)
+                (*+ eapply unused_prog_lookup in UNUSED1; eauto.*)
+                  (*inv UNUSED1. rewrite t_update_neq; [|easy]. now apply REG.*)
+          (*}*)
+      }
+      { clarify. esplits; [econs|] .
+          eapply match_cfgs_ext_ret1; eauto. 2: rewrite t_update_eq; unfold val; destruct sk; [|destruct c]; reflexivity.
+          econs. 2: rewrite t_update_neq; [now apply REG | discriminate].
+          i; rewrite t_update_neq; [now apply REG | des; symmetry; eauto].
+      }
 
-    (* ret - termination *)
+(* ret - termination *)
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
 
   (* procedure entry - ctarget *)
@@ -2298,6 +2374,21 @@ Proof.
       * split; ii.
         { des. rewrite t_update_neq; eauto. }
         { rewrite t_update_eq. eauto. }
+  - inv TGT; clarify; esplits.
+    + admit.
+    + admit.
+    + 
+      replace (@nil direction) with ((@nil direction) ++ []) by ss. 
+      replace (@nil observation) with ((@nil observation) ++ []) by ss.
+      assert (stk = []) as ->.
+      { clear - STK. destruct stk; [reflexivity|]. inv STK. destruct (ret_sync p c); [|discriminate]. 
+          destruct (map_opt (ret_sync p) stk); discriminate. }
+      econs 2. 2: econs. econs 12.
+      exploit tgt_inv. 3: eassumption. 1, 2: eassumption. i. des. inv x1.
+      * inv MATCH. eapply unused_prog_lookup in UNUSED2; eauto. now destruct UNUSED2.
+      * assumption.
+    + econs.
+  - 
 Admitted.
 
 Lemma multi_ideal_inst_trans2
