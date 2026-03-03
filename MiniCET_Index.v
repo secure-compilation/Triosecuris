@@ -2949,25 +2949,25 @@ Proof.
     + eapply IHHexec1; try eassumption. reflexivity.
     + inv H10. inv H11. inv H12. inv H13.
       edestruct IHHexec1. 1: reflexivity. 1: eassumption. 
-      * left. destruct H. exists x. cbn. f_equal. assumption.
-      * right. destruct H. exists x. cbn. f_equal. assumption.
+      * left. now apply prefix_cons.
+      * right. now apply prefix_cons.
     + inv x. rewrite H6 in H5; inv H5. inv H10. inv  H11.
       edestruct IHHexec1. 1: reflexivity. 1: eassumption.
-      * left. destruct H. exists x. cbn. f_equal. assumption.
-      * right. destruct H. exists x. cbn. f_equal. assumption.
+      * left. now apply prefix_cons.
+      * right. now apply prefix_cons.
     + eapply IHHexec1; try eassumption. rewrite H9 in H8. inv H8. reflexivity.
     + rewrite H9 in H8. inv H8. inv H11. inv H13.
       edestruct IHHexec1. 1: reflexivity. 1: eassumption.
-      * left. destruct H. exists x. cbn. f_equal. assumption.
-      * right. destruct H. exists x. cbn. f_equal. assumption.
+      * left. now apply prefix_cons.
+      * right. now apply prefix_cons.
     + rewrite H9 in H8. inv H8. inv H11. inv H12.
       edestruct IHHexec1. 1: reflexivity. 1: eassumption.
-      * left. destruct H. exists x. cbn. f_equal. assumption.
-      * right. destruct H. exists x. cbn. f_equal. assumption.
+      * left. now apply prefix_cons.
+      * right. now apply prefix_cons.
     + inv x. rewrite H6 in H5. inv H5. inv H7. inv H8.
       edestruct IHHexec1. 1: reflexivity. 1: eassumption.
-      * left. destruct H. exists x. cbn. f_equal. assumption.
-      * right. destruct H. exists x. cbn. f_equal. assumption.
+      * left. now apply prefix_cons.
+      * right. now apply prefix_cons.
     + inv H7. inv H11. inv Hexec2.
       * right. exists os0. reflexivity.
       * inv H.
@@ -3026,8 +3026,8 @@ Proof.
       - reflexivity. 
     }
     edestruct (ideal_misspec_unwinding Hspec1 Hspec2).
-    + left. destruct H. exists x. rewrite <- app_assoc. f_equal. cbn. rewrite <- app_assoc. f_equal. assumption.
-    + right. destruct H. exists x. rewrite <- app_assoc. f_equal. cbn. rewrite <- app_assoc. f_equal. assumption.
+    + left. now do 2 apply prefix_append_front.
+    + right. now do 2 apply prefix_append_front.
 Qed.
 
 Lemma spec_eval_relative_secure_aux

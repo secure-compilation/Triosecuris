@@ -128,12 +128,13 @@ Proof.
 Qed.
 
 Lemma prefix_append_front : forall {X:Type} {ds1 ds2 ds3 : list X},
-  prefix (ds1 ++ ds2) (ds1 ++ ds3) ->
+  prefix (ds1 ++ ds2) (ds1 ++ ds3) <->
   prefix ds2 ds3.
 Proof.
-  intros X ds1. induction ds1 as [| d1 ds1' IH]; intros ds2 ds3 H.
-  - auto.
-  - simpl in H; apply prefix_cons in H. apply IH in H. assumption.
+  intros X ds1. induction ds1 as [| d1 ds1' IH]; intros ds2 ds3; split; intro H; cbn in *.
+  1, 2: assumption.
+  - apply prefix_cons in H. apply -> IH in H. assumption.
+  - apply prefix_cons, IH. assumption.
 Qed.
 
 Lemma app_eq_prefix : forall {X:Type} {ds1 ds2 ds1' ds2' : list X},
