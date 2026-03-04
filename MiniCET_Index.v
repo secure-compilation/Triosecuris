@@ -383,10 +383,16 @@ Fixpoint map_opt {S T} (f: S -> option T) l : option (list T):=
   end.
 
 Definition ret_sync (p: prog) (pc: cptr) : option cptr :=
-  match pc_sync p pc with
-  | Some (l, o) => Some (l, o - 1)
-  | _ => None
-  end.
+    match pc with 
+    | (l, S o) => match p[[(l, o)]] with 
+                  | Some (ICall _) => match (pc_sync p (l, o)) with 
+                               | Some (l', o') => Some (l', o'+2)
+                               | None => None
+                               end
+                  | _ => None
+                  end
+    | _ => None
+    end.
 
 Definition val_match (p: prog) (v1 v2: val) : Prop :=
   match v1, v2 with
@@ -1520,6 +1526,71 @@ Proof.
     rewrite IHl. simpl. rewrite firstn_nil. simpl. rewrite sub_0_r. auto.
 Qed.
 
+Lemma ret_sync_same_label p l1 o1 l2 o2:
+    ret_sync p (l1, o1) = Some (l2, o2) ->
+    l1 = l2.
+Proof.
+    unfold ret_sync, pc_sync. i.
+    destruct o1. 1: discriminate.
+    destruct (p [[(l1, o1)]]). 2: discriminate.
+    destruct i; try discriminate.
+    destruct (nth_error (map offset_uslh p) l1). 2: discriminate.
+    destruct (nth_error l o1). 2: discriminate.
+    now inv H.
+Qed.
+
+Lemma ret_sync_nonzero p l1 o1 l2 o2:
+    ret_sync p (l1, o1) = Some (l2, o2) ->
+    o2 <> 0.
+Proof.
+    unfold ret_sync, pc_sync. i.
+    destruct o1. 1: discriminate.
+    destruct (p [[(l1, o1)]]). 2: discriminate.
+    destruct i; try discriminate.
+    destruct (nth_error (map offset_uslh p) l1). 2: discriminate.
+    destruct (nth_error l o1). 2: discriminate.
+    inv H. lia.
+Qed.
+
+Lemma ret_sync_inj p l1 o1 l1' o1' l2 o2:
+    ret_sync p (l1, o1) = Some (l2, o2) ->
+    ret_sync p (l1', o1') = Some (l2, o2) ->
+    l1 = l1' /\ o1 = o1'.
+Proof.
+    i. dup H. dup H0.
+    apply ret_sync_same_label in H1 as ->, H2 as ->. split; [reflexivity|].
+    unfold ret_sync in *.
+    destruct o1, o1'; try discriminate. f_equal.
+    destruct (p [[(l2, o1)]]), (p [[(l2, o1')]]); try discriminate.
+    destruct i, i0; try discriminate.
+    unfold pc_sync in *. rewrite nth_error_map in H, H0.
+    destruct (nth_error p l2). 2: discriminate.
+    ss.
+    assert (o1 < Datatypes.length (offset_uslh p0)).
+    { clear - H. apply nth_error_Some. destruct (nth_error (offset_uslh p0) o1); discriminate. }
+    rewrite <- H0 in H. clear H0.
+    assert (nth_error (offset_uslh p0) o1 = nth_error (offset_uslh p0) o1').
+    { destruct (nth_error (offset_uslh p0) o1), (nth_error (offset_uslh p0) o1'); try discriminate. 2: reflexivity. inv H. f_equal. lia. }
+    exploit NoDup_nth_error. i. des. apply x0; eauto.
+    clear.
+    destruct p0. unfold offset_uslh.
+    generalize (if snd (l, b) then 2 else 0) as x.
+    enough (forall x, NoDup (_offset_uslh l x) /\ Forall (fun y => y >= x) (_offset_uslh l x)).
+    { i. now apply H. }
+    induction l.
+    - i. split; constructor.
+    - i. cbn. split.
+      + constructor. 2: apply IHl.
+        specialize (IHl (x + uslh_inst_sz a)) as [_ IHl]. rewrite Forall_forall in IHl.
+        intro H. apply IHl in H. 
+        assert (uslh_inst_sz a > 0). { destruct a; ss; lia. }
+        lia.
+      + specialize (IHl (x + uslh_inst_sz a)) as [_ IHl].
+        constructor. 1: auto.
+        eapply Forall_impl. 2: eassumption.
+        ss. lia.
+Qed.
+
 Lemma eval_regs_eq : forall p (r r': reg) (e: exp),
    e_unused msf e ->
    e_unused callee e ->
@@ -1530,20 +1601,42 @@ Proof.
   intros. ginduction e; ss; ii.
   - ss. assert (x <> msf /\ x <> callee) by (split; auto).
     apply H2 in H3. simpl. eauto.
-  - simpl in *. destruct H, H0.
-    (* { apply IHe1; clarify. } *)
-  (* { apply IHe2; clarify. } *)
-    admit.
+  - apply andb_prop in H1. des.
+    exploit IHe1; eauto. i.
+    exploit IHe2; eauto. i.
+    unfold eval_binop.
+    destruct (eval r e1), (eval r e2), (eval r' e1), (eval r' e2); ss; subst. 
+    all: try (destruct pc; contradiction). 1: reflexivity.
+    + destruct pc0; contradiction.
+    + destruct o; ss. destruct pc, pc0, pc1, pc2. ss. destruct (n0 =? 0)%nat eqn:?, (n2 =? 0)%nat eqn:?; des; subst.
+      * apply Nat.eqb_eq in Heqb, Heqb0. subst. reflexivity.
+* assert ((n0 =? n2)%nat = false) as ->. { destruct n0, n2; ss. }
+        rewrite andb_false_r. apply ret_sync_nonzero in x1.
+        destruct n6; ss. now rewrite andb_false_r.
+      * assert ((n0 =? n2)%nat = false) as ->. { destruct n0, n2; ss. }
+        rewrite andb_false_r. apply ret_sync_nonzero in x0.
+        destruct n4; ss. now rewrite andb_false_r.
+      * destruct (n =? n1)%nat eqn:?, (n0 =? n2)%nat eqn:?; ss.
+        { apply Nat.eqb_eq in Heqb1, Heqb2. subst. rewrite x1 in x0. inv x0. rewrite! Nat.eqb_refl. reflexivity. }
+        { assert ((n3, n4) <> (n5, n6)).
+          - intro. clarify. eapply ret_sync_inj in x1. 2: exact x0.
+            des. clarify. rewrite Nat.eqb_refl in Heqb2. discriminate.
+          - destruct (n3 =? n5)%nat eqn: ?. 2: reflexivity.
+            destruct (n4 =? n6)%nat eqn: ?. 2: reflexivity.
+            rewrite Nat.eqb_eq in Heqb3, Heqb4. clarify.
+        }
+        { apply ret_sync_same_label in x0, x1. clarify. }
+        { apply ret_sync_same_label in x0, x1. clarify. }
+    + destruct pc0; contradiction.
   - ss. destruct H, H0, H3, H4.
     eapply andb_prop in H1. des. eapply andb_prop in H1. des.
     exploit IHe1; eauto. exploit IHe2; eauto. exploit IHe3; eauto. i.
-    admit.
-    (* rewrite x0, x1, x2. eauto. *)
+    destruct (eval r e1), (eval r' e1); ss; subst.
+    2: (destruct pc; contradiction).
+    destruct (not_zero n0); assumption.
   - des_ifs.
     { split; auto. rewrite Nat.eqb_eq in Heq. auto. }
-    ss. eapply andb_prop in H1. des.
-    rewrite H1 in Heq. ss.
-Admitted.
+Qed.
 
 Lemma eval_regs_eq_nat : forall p (r r': reg) (e: exp),
    e_unused msf e ->
@@ -2446,6 +2539,28 @@ Proof.
       * split; ii.
         { des. rewrite t_update_neq; eauto. }
         { rewrite t_update_eq. eauto. }
+
+  - inv TGT; clarify. 1: destruct stk. 1: cbn in STK; inv STK.
+    all: esplits.
+    + replace ([DRet pc'']) with ([DRet pc''] ++ []) by ss.
+      replace (@nil observation) with (@nil observation ++ []) by ss.
+      econs. 2: econs.
+      econs 10.
+      * exploit tgt_inv; try eapply FROM; eauto. i. des. inv x1. 2: assumption.
+        inv MATCH. eapply unused_prog_lookup in UNUSED2; eauto. now destruct UNUSED2.
+      * admit.
+      * reflexivity.  
+    + admit. (*TODO: currently does not hold, because the directives need to be different*) 
+    + 
+      replace (@nil direction) with ((@nil direction) ++ []) by ss. 
+      replace (@nil observation) with ((@nil observation) ++ []) by ss.
+      assert (stk = []) as ->.
+      { clear - STK. destruct stk; [reflexivity|]. inv STK. destruct (ret_sync p c); [|discriminate]. 
+          destruct (map_opt (ret_sync p) stk); discriminate. }
+      econs 2. 2: econs. econs 12.
+      exploit tgt_inv. 3: eassumption. 1, 2: eassumption. i. des. inv x1.
+      * inv MATCH. eapply unused_prog_lookup in UNUSED2; eauto. now destruct UNUSED2.
+      * assumption.
     + econs.
   - (* inv TGT; clarify; esplits. *)
   (*   + admit. *)
