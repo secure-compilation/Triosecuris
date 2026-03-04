@@ -596,7 +596,8 @@ Definition wf_label (p:prog) (is_proc:bool) (l:nat) : bool :=
 Fixpoint wf_exp (p:prog) (e : exp) : bool :=
   match e with
   | ANum _ | AId _ => true
-  | ABin _ e1 e2  | <{_ ? e1 : e2}> => wf_exp p e1 && wf_exp p e2
+  | ABin _ e1 e2 => wf_exp p e1 && wf_exp p e2
+  | <{b ? e1 : e2}> => wf_exp p b && wf_exp p e1 && wf_exp p e2
   | <{&l}> => (snd l =? 0) && wf_label p true (fst l)
   end.
 
