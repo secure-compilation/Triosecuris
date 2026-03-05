@@ -11,6 +11,7 @@ From Stdlib Require Import List. Import ListNotations.
 Require Import ExtLib.Data.Monads.OptionMonad.
 From SECF Require Import Maps.
 From SECF Require Import MapsFunctor.
+From SECF Require Import sflib.
 
 Set Default Goal Selector "!".
 
@@ -157,7 +158,7 @@ Inductive spec_eval_small_step (p:prog):
   | SpecSMI_Call : forall pc pc' r m sk e l ms ms',
       p[[pc]] = Some <{{ call e }}> ->
       to_fp (eval r e) = Some l ->
-      ms' = ms || negb ((fst pc' =? fst l) && (snd pc' =? snd l)) ->
+      ms' = ms || negb ((fst pc' =? fst l)%nat && (snd pc' =? snd l)%nat) ->
       p |- <(( S_Running ((pc, r, m, sk), false, ms) ))> -->_[DCall pc']^^[OCall l] <(( S_Running ((pc', r, m, (pc + 1)::sk), true, ms') ))>
   | SpecSMI_CTarget : forall pc r m sk ct ms,
       p[[pc]] = Some <{{ ctarget }}> ->
@@ -165,7 +166,7 @@ Inductive spec_eval_small_step (p:prog):
   | SpecSMI_Ret : forall pc r m sk pc' pc'' ms ms',
       p[[pc]] = Some <{{ ret }}> ->
       wf_ret p pc'' ->
-      ms' = ms || negb ((fst pc' =? fst pc'') && (snd pc' =? snd pc'')) ->
+      ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) ->
       p |- <(( S_Running ((pc, r, m, pc'::sk), false, ms) ))> -->_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), false, ms') ))>
   | SpecSMI_Peek : forall pc r m sk ms x,
       p[[pc]] = Some <{{x <- peek}}> ->
@@ -247,7 +248,7 @@ Inductive ideal_eval_small_step_inst (p:prog) :
   | ISMI_Call : forall pc pc' r m sk e l (ms ms' : bool) blk,
       p[[pc]] = Some <{{ call e }}> ->
       (if ms then Some (0,0) else to_fp (eval r e)) = Some l ->
-      ms' = ms || negb ((fst pc' =? fst l) && (snd pc' =? snd l)) ->
+      ms' = ms || negb ((fst pc' =? fst l)%nat && (snd pc' =? snd l)%nat) ->
       nth_error p (fst pc') = Some blk ->
       snd blk = true ->
       snd pc' = 0 ->
@@ -260,7 +261,7 @@ Inductive ideal_eval_small_step_inst (p:prog) :
   | ISMI_Ret : forall pc r m sk pc' pc'' ms ms',
       p[[pc]] = Some <{{ ret }}> ->
       wf_ret p pc'' ->
-      ms' = ms || negb ((fst pc' =? fst pc'') && (snd pc' =? snd pc'')) ->
+      ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) ->
       p |- <(( S_Running ((pc, r, m, pc'::sk), ms) ))> -->i_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), ms') ))>
   | ISMI_Peek : forall pc r m sk ms x, (* YH: Do we need this for source program? *)
       p[[pc]] = Some <{{x <- peek}}> ->
@@ -514,9 +515,20 @@ Definition wf_lbl (p: prog) (is_proc: bool) (l: nat) : Prop :=
 Fixpoint wf_expr (p: prog) (e: exp) : Prop :=
   match e with
   | ANum _ | AId _ => True
-  | ABin _ e1 e2  | <{_ ? e1 : e2}> => wf_expr p e1 /\ wf_expr p e2
+  | ABin _ e1 e2 => wf_expr p e1 /\ wf_expr p e2
+  | <{b ? e1 : e2}> => wf_expr p b /\ wf_expr p e1 /\ wf_expr p e2
   | <{&l}> => snd l = 0 /\ wf_lbl p true (fst l)
   end.
+
+Lemma wf_expr_wf_exp p e:
+    wf_expr p e <-> wf_exp p e = true.
+Proof.
+    induction e; ss; rewrite! andb_true_iff; firstorder.
+    1, 3: now apply Nat.eqb_eq.
+    all: unfold wf_lbl, wf_label in *; destruct (nth_error p (fst l)).
+    2: contradiction. 3: discriminate.
+    all: destruct p0; ss; clarify. now destruct b.
+Qed.
 
 Definition wf_instr (p: prog) (i: inst) : Prop :=
   match i with
@@ -537,7 +549,6 @@ Definition nonempty_program (p: prog) : Prop :=
 Definition wf_prog (p: prog) : Prop :=
   nonempty_program p /\ Forall (wf_block p) p.
 
-From SECF Require Import sflib.
 
 Lemma wf_ds_app p ds1 ds2
     (WF: wf_ds' p (ds1 ++ ds2)) :
@@ -2423,7 +2434,11 @@ Proof.
          { eapply unused_prog_lookup in UNUSED1; eauto.
            eapply unused_prog_lookup in UNUSED2; eauto. ss; des.
            inv REG. econs.
-           - i. admit.
+           - i. exploit eval_regs_eq; eauto.
+             { exploit wf_prog_lookup; eauto. ss. clear. apply wf_expr_wf_exp. }
+             i. destruct (x =? x0) eqn:Heq; [apply eqb_eq in Heq | apply eqb_neq in Heq].
+             { subst. now rewrite! t_update_eq. }
+             { rewrite t_update_neq; eauto. rewrite t_update_neq; eauto. }
            - erewrite t_update_neq; eauto. } }
         { ss. }
       * clarify. esplits; [econs| | ss].
@@ -2445,18 +2460,19 @@ Proof.
             eapply unused_prog_lookup in UNUSED2; eauto.
             inv UNUSED1. inv UNUSED2. des.
             eapply eval_regs_eq_nat; eauto.
-            admit.
+            apply wf_expr_wf_exp. exploit wf_prog_lookup; eauto. i. ss. apply x2.
           - inv REG. simpl in H2. rewrite H3 in H2. simpl in H2. rewrite <- H2. destruct ms; simpl; [reflexivity|].
             eapply unused_prog_lookup in UNUSED1, UNUSED2; eauto.
             inv UNUSED1. inv UNUSED2. des.
             eapply eval_regs_eq_nat; eauto.
-            admit. }
+            apply wf_expr_wf_exp. exploit wf_prog_lookup; eauto. i. ss. apply x2.
+      }
       { fold res. econs. econs. 3: assumption.
           - exploit block_always_terminator_prog; try eapply x1; eauto. i. des.
             exploit pc_sync_next; eauto. now destruct pc. 
           - econs. (* This seems like it would be needed more often, extract as lemma? *)
             + i. destruct (string_dec x x0). 
-              * subst. admit.
+              * subst. rewrite! t_update_eq. destruct v2; ss.
               * do 2 (rewrite t_update_neq; [|assumption]). now apply REG.
             + eapply unused_prog_lookup in UNUSED1; eauto.
               inv UNUSED1. rewrite t_update_neq; [|easy]. now apply REG.
@@ -2475,7 +2491,8 @@ Proof.
       esplits; cycle 2.
       { repeat econs. }
       { econs; econs; eauto. simpl in H1. inv REG. rewrite H2 in H1.
-        ss. rewrite <- H1. destruct ms; ss. erewrite eval_regs_eq_nat; eauto. admit. }
+        ss. rewrite <- H1. destruct ms; ss. erewrite eval_regs_eq_nat; eauto.
+        apply wf_expr_wf_exp. exploit wf_prog_lookup; eauto. i. apply x1. }
       destruct pc as [b o]. destruct pc0 as [b0 o0].
       destruct b'.
 
@@ -2516,6 +2533,7 @@ Proof.
 
       eapply unused_prog_lookup in UNUSED1; eauto.
       eapply unused_prog_lookup in UNUSED2; eauto. ss; des.
+      exploit wf_prog_lookup; eauto. i.
       destruct pc as [b o]. destruct pc0 as [b0 o0].
       replace (@nil direction) with ((@nil direction) ++ []) by ss.
       replace [OLoad n] with ([OLoad n] ++ []) by ss.
@@ -2523,7 +2541,8 @@ Proof.
       * econs; eauto.
         inv REG. rewrite <- H1. ss.
         rewrite H3. ss. destruct ms; ss.
-        erewrite eval_regs_eq_nat; eauto. admit.
+        erewrite eval_regs_eq_nat; eauto.
+        now apply wf_expr_wf_exp.
       * econs; eauto.
         { exploit block_always_terminator_prog; try eapply x1; eauto. i. des.
           exploit pc_sync_next; eauto.
@@ -2532,12 +2551,13 @@ Proof.
         { red. splits; i.
           - destruct (string_dec x x0); subst.
             { do 2 rewrite t_update_eq; eauto. }
-            { admit. }
+            { rewrite t_update_neq; eauto. rewrite t_update_neq; eauto. now apply REG. }
           - inv REG. ss. des. rewrite t_update_neq; eauto. }
 
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
       eapply unused_prog_lookup in UNUSED1; eauto.
       eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
+      exploit wf_prog_lookup; eauto. i.
 
       exists ([] ++ []), (S_Running (pc0+1, r0, (upd n m0 (eval r0 e')), stk, ms)).
 
@@ -2548,13 +2568,30 @@ Proof.
       splits.
       * econs; [|econs]. simpl. eapply ISMI_Store; eauto.
         inv REG. rewrite <- H1. rewrite H2. destruct ms; ss.
-        erewrite eval_regs_eq_nat; eauto. admit.
+        erewrite eval_regs_eq_nat; eauto. apply wf_expr_wf_exp. apply x1.
       * dup REG. inv REG. econs.
         (* erewrite <- eval_regs_eq with (r := r0) (r' := r); eauto. *)
         econs; eauto.
         { exploit block_always_terminator_prog; try eapply x0; eauto. i. des.
           exploit pc_sync_next; eauto. }
-        { admit. }
+        { exploit eval_regs_eq; eauto. 1: apply wf_expr_wf_exp, x1. i.
+          unfold Msync. i. destruct (i =? n)%nat eqn:Heq.
+          - apply Nat.eqb_eq in Heq.  subst.
+            assert (Datatypes.length (upd n m (eval r e')) = Datatypes.length (upd n m0 (eval r0 e'))).
+            { clear - MSC. rewrite! upd_length. unfold Msync in MSC. 
+              induction m in m0, MSC |-*; i; destruct m0; ss. 1, 2: specialize (MSC 0); ss.
+              f_equal. apply IHm. i. specialize (MSC (S i)); ss. }
+            pose proof (ge_dec n (Datatypes.length (upd n m (eval r e')))) as [Hlen | Hlen].
+            + exploit nth_error_None. i. dup Hlen. apply x3 in Hlen.
+              rewrite H3 in Hlen0. exploit nth_error_None. i. apply x4 in Hlen0.
+              now rewrite Hlen, Hlen0.
+            + apply not_ge in Hlen.
+              rewrite upd_eq. 2: erewrite <- upd_length, <- H3; eauto.
+              rewrite upd_eq. 2: erewrite <- upd_length; eauto.
+              apply eval_regs_eq; auto. apply wf_expr_wf_exp. apply wf_prog_lookup in x0; eauto. apply x0.
+          - apply Nat.eqb_neq in Heq. rewrite! upd_neq; eauto.
+            apply MSC.
+        }
       * econs.
 
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.

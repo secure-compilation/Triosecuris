@@ -45,6 +45,27 @@ Proof.
   intros. simpl. now f_equal.
 Qed.
 
+Lemma upd_eq: forall {A} (l: list A) i a,
+  i < length l ->
+  nth_error (upd i l a) i = Some a.
+Proof.
+  intros. induction l in i, H |-*. 1: inversion H.
+  destruct i; cbn in *. 1: reflexivity.
+  apply IHl. now apply PeanoNat.lt_S_n.
+Qed.
+
+Lemma upd_neq: forall {A} (l: list A) i a j,
+  i <> j ->
+  nth_error (upd i l a) j = nth_error l j.
+Proof.
+  intros. induction l in i, j, H |-*; destruct i; try reflexivity.
+  - cbn. destruct j; [contradiction|].
+    cbn. reflexivity.
+  - cbn. destruct j.
+    + cbn. reflexivity.
+    + cbn. apply IHl. now apply Nat.succ_inj_wd_neg.
+Qed.
+
 Definition add_index {a:Type} (xs:list a) : list (nat * a) :=
   combine (seq 0 (length xs)) xs.
 
