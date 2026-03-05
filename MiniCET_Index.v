@@ -2608,18 +2608,25 @@ Proof.
           replace (@nil observation) with ((@nil observation) ++ []) by ss.
           esplits.
           { econs 2; econs; eassumption. }
-          { admit. } (* Does not hold currently. Need to adjust Rsync to apply pc_sync on FP values*)
+          { unfold val. econs. econs; eauto. 
+              1: exploit block_always_terminator_prog; eauto; i; des.
+              1: exploit pc_sync_next; eauto; destruct pc; ss.
+              unfold Rsync. split.
+              - i. destruct stk.
+                + ss. inv STK. destruct (string_dec x x0).
+                  * subst. rewrite! t_update_eq. ss.
+                  * rewrite! t_update_neq; eauto. now apply REG.
+                + ss. destruct (ret_sync p c) eqn:?; [|discriminate].
+                  destruct (map_opt (ret_sync p) stk) eqn:?; [|discriminate].
+                  inv STK.
+                  destruct (string_dec x x0).
+                  * subst. rewrite! t_update_eq. destruct c, c0. ss.  
+                    destruct n0; [discriminate|]. ss.
+                  * rewrite! t_update_neq; eauto. now apply REG.
+              - rewrite t_update_neq. 2: eapply unused_prog_lookup in UNUSED1; eauto; apply UNUSED1. 
+                apply REG.
+          }
           { econs. }
-          (*{ fold val. econs. econs. 3: assumption.*)
-              (*- exploit block_always_terminator_prog; try eapply x1; eauto. i. des.*)
-                (*exploit pc_sync_next; eauto. now destruct pc. *)
-              (*- econs. [> This seems like it would be needed more often, extract as lemma? <]*)
-                (*+ i. destruct (string_dec x x0). *)
-                  (** subst; now do 2 rewrite t_update_eq.*)
-                  (** do 2 (rewrite t_update_neq; [|assumption]). now apply REG.*)
-                (*+ eapply unused_prog_lookup in UNUSED1; eauto.*)
-                  (*inv UNUSED1. rewrite t_update_neq; [|easy]. now apply REG.*)
-          (*}*)
       }
       { clarify. esplits; [econs| |econs].
           eapply match_cfgs_ext_ret1; eauto. 2: rewrite t_update_eq; unfold val; destruct sk; [|destruct c]; reflexivity.
@@ -2662,8 +2669,14 @@ Proof.
         exists ([DCall (l', o')] ++ []). esplits.
         { econs; [|econs].
           eapply ISMI_Call_F; eauto.
-          - unfold cptr in *. rewrite <- H8. inv REG. ss. rewrite H0. destruct ms; ss.
+          -unfold cptr in *. rewrite <- H8. inv REG. ss. rewrite H0. destruct ms; ss.
+            rewrite H0 in *. ss.
+            f_equal. exploit (eval_regs_eq); eauto. 
+            1: apply wf_expr_wf_exp; eapply wf_prog_lookup in WFP; eauto; apply WFP.
+            
+            unfold val_match. i. 
             admit. (* zero offset *)
+            (* This currently does not hold: A program might attempt to call a register that holds a value produced by peek. Unless we want to disallow peek in the source program, this means that we need to map val_match onto observations as well*)
           - i. simpl in H, NXT. des_ifs.
             2:{ clear - H Heq. exploit label_inv; eauto. i. des; clarify. }
             simpl. right. ii. subst. clear -Heq NXT WFP.
