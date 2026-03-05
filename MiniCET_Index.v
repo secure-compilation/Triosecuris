@@ -479,6 +479,17 @@ Definition wf_dir' (p: prog) (d: direction) : Prop :=
 Definition wf_ds' (p: prog) (ds: dirs) : Prop :=
   Forall (wf_dir' p) ds.
 
+Definition match_ob (p: prog) (o1 o2: observation) : Prop :=
+  match o1, o2 with
+  | ODiv _ _, ODiv _ _ | OBranch _, OBranch _ | OLoad _, OLoad _ | OStore _, OStore _ => o1 = o2
+  | OCall (l1, 0), OCall (l2, 0) => l1 = l2
+  | OCall (l1, S o1), OCall (l2, S o2) => ret_sync p (l1, S o1) = Some (l2, S o2)
+  | _, _ => False
+  end.
+
+Definition match_obs (p: prog) (os1 os2: obs) : Prop :=
+  Forall2 (match_ob p) os1 os2.
+
 Definition match_dir (p: prog) (d1 d2: direction) : Prop :=
   match d1, d2 with
   | DBranch b1, DBranch b2 => b1 = b2
@@ -2254,10 +2265,6 @@ Proof.
   simpl in WFR, WFR0. des_ifs_safe.
   destruct p0 as [tblk is_proc]. simpl in WFR, WFR0.
   rename Heq into TBLK.
-  (* TBLK: nth_error (uslh_prog p) l = Some (tblk, is_proc) *)
-  (* WFR0: exists e, nth_error tblk (o-1) = Some (ICall e) *)
-  (* WFR: nth_error tblk o <> None *)
-  (* WFR1: o > 0 *)
   des. rename WFR0 into CALL_AT. rename WFR1 into OGT0.
 
   (* Step 1: show l < length p *)
@@ -2309,9 +2316,6 @@ Proof.
 
   des.
   exploit concat_call_find; eauto. i. des.
-
-  (* x0: nth_error sbl o_src = Some (ICall src_e) *)
-  (* x1: pos' = add (prefix_offset a0 o_src 0) 1 *)
 
   (* Step 5: establish pc_sync *)
   assert (OFS: exists io, nth_error (_offset_uslh sbl (if s_proc then 2 else 0)) o_src = Some io).
@@ -2404,8 +2408,8 @@ Lemma ultimate_slh_bcc_single (p: prog) ic1 sc1 sc2 ds os
   (UNUSED2: unused_prog callee p)
   (MATCH: match_cfgs_ext p ic1 sc1)
   (TGT: uslh_prog p |- <(( sc1 ))> -->_ ds^^os <(( sc2 ))>) :
-  exists ds' ic2, p |- <(( ic1 ))> -->i*_ ds' ^^ os <(( ic2 ))>
-      /\ match_cfgs_ext p ic2 sc2 /\ match_ds p ds' ds.
+  exists ds' os' ic2, p |- <(( ic1 ))> -->i*_ ds' ^^ os <(( ic2 ))>
+      /\ match_cfgs_ext p ic2 sc2 /\ match_ds p ds' ds /\ match_obs p os' os.
 Proof.
   inv MATCH; try sfby inv TGT.
   (* pc_sync match *)
@@ -2419,6 +2423,7 @@ Proof.
         exploit block_always_terminator_prog; try eapply x0; eauto. i. des.
         destruct pc0.
         exploit pc_sync_next; [exact PC | exact x0 | exact x1 | i; rewrite x2; destruct pc; ss]. }
+      { ss. }
       { ss. }
     + exploit tgt_inv; eauto. i. des. inv x0.
       * inv MATCH.
@@ -2441,7 +2446,8 @@ Proof.
              { rewrite t_update_neq; eauto. rewrite t_update_neq; eauto. }
            - erewrite t_update_neq; eauto. } }
         { ss. }
-      * clarify. esplits; [econs| | ss].
+        { ss. }
+      * clarify. esplits; [econs| |ss|ss].
         eapply match_cfgs_ext_call; eauto.
         { inv REG. split; i.
           - des. rewrite t_update_neq; eauto.
@@ -2479,6 +2485,7 @@ Proof.
           - eauto.
       }
       { ss. }
+      { repeat econs. instantiate (1:= ODiv v1 v2). econs. }
     + exploit tgt_inv; eauto. i. des. inv x1.
       { inv MATCH. }
       clarify.
@@ -2487,8 +2494,9 @@ Proof.
 
       replace [DBranch b'] with ([DBranch b'] ++ []) by ss.
       replace [OBranch (not_zero n)] with ([OBranch (not_zero n)] ++ []) by ss.
-      exists ([DBranch b'] ++ []).
+      exists ([DBranch b'] ++ []), ([OBranch (not_zero n)] ++ []).
       esplits; cycle 2.
+      { repeat econs. }
       { repeat econs. }
       { econs; econs; eauto. simpl in H1. inv REG. rewrite H2 in H1.
         ss. rewrite <- H1. destruct ms; ss. erewrite eval_regs_eq_nat; eauto.
@@ -2514,7 +2522,7 @@ Proof.
       replace (@nil direction) with ((@nil direction) ++ []) by ss.
       replace (@nil observation) with ((@nil observation) ++ []) by ss.
       
-      exists ([] ++ []), (S_Running (l, 0, r0, m0, stk, ms)). splits; econs; [|econs|].
+      exists ([] ++ []), ([] ++ []), (S_Running (l, 0, r0, m0, stk, ms)). splits; econs; [|econs|].
       * eapply ISMI_Jump; eauto.
       * econs; eauto.
         exploit wf_prog_lookup; try eapply x0; eauto. i.
@@ -2529,7 +2537,7 @@ Proof.
         rewrite nth_error_map. rewrite BLK. ss.
     + exploit tgt_inv; eauto. i. des. inv x0. inv MATCH.
       dup MSC. specialize (MSC0 n). rewrite H2 in MSC0. des_ifs_safe.
-      exists ([] ++ []), (S_Running ((pc0 + 1), x !-> v; r0, m0, stk, ms)).
+      exists ([] ++ []), ([OLoad n] ++ []), (S_Running ((pc0 + 1), x !-> v; r0, m0, stk, ms)).
 
       eapply unused_prog_lookup in UNUSED1; eauto.
       eapply unused_prog_lookup in UNUSED2; eauto. ss; des.
@@ -2537,7 +2545,7 @@ Proof.
       destruct pc as [b o]. destruct pc0 as [b0 o0].
       replace (@nil direction) with ((@nil direction) ++ []) by ss.
       replace [OLoad n] with ([OLoad n] ++ []) by ss.
-      splits; econs; eauto; [|econs|].
+      splits; econs; eauto; [|econs| |econs].
       * econs; eauto.
         inv REG. rewrite <- H1. ss.
         rewrite H3. ss. destruct ms; ss.
@@ -2553,19 +2561,18 @@ Proof.
             { do 2 rewrite t_update_eq; eauto. }
             { rewrite t_update_neq; eauto. rewrite t_update_neq; eauto. now apply REG. }
           - inv REG. ss. des. rewrite t_update_neq; eauto. }
-
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
       eapply unused_prog_lookup in UNUSED1; eauto.
       eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
       exploit wf_prog_lookup; eauto. i.
 
-      exists ([] ++ []), (S_Running (pc0+1, r0, (upd n m0 (eval r0 e')), stk, ms)).
+      exists ([] ++ []), ([OStore n] ++ []), (S_Running (pc0+1, r0, (upd n m0 (eval r0 e')), stk, ms)).
 
       destruct pc as [b o]. destruct pc0 as [b0 o0].
       replace (@nil direction) with ((@nil direction) ++ []) by ss.
       replace [OStore n] with ([OStore n] ++ []) by ss.
 
-      splits.
+      splits; [ | |econs|repeat econs].
       * econs; [|econs]. simpl. eapply ISMI_Store; eauto.
         inv REG. rewrite <- H1. rewrite H2. destruct ms; ss.
         erewrite eval_regs_eq_nat; eauto. apply wf_expr_wf_exp. apply x1.
@@ -2628,10 +2635,10 @@ Proof.
           }
           { econs. }
       }
-      { clarify. esplits; [econs| |econs].
-          eapply match_cfgs_ext_ret1; eauto. 2: rewrite t_update_eq; unfold val; destruct sk; [|destruct c]; reflexivity.
-          econs. 2: rewrite t_update_neq; [now apply REG | discriminate].
-          i; rewrite t_update_neq; [now apply REG | des; symmetry; eauto].
+      { clarify. esplits; [econs| |econs|econs].
+        eapply match_cfgs_ext_ret1; eauto. 2: rewrite t_update_eq; unfold val; destruct sk; [|destruct c]; reflexivity.
+        econs. 2: rewrite t_update_neq; [now apply REG | discriminate].
+        i; rewrite t_update_neq; [now apply REG | des; symmetry; eauto].
       }
 
     (* ret - termination *)
@@ -2642,6 +2649,7 @@ Proof.
     + econs.
     + eapply match_cfgs_ext_ct2; eauto.
       exploit head_call_target; eauto. i. des; clarify; eauto.
+    + econs.
     + econs.
 
   (* procedure entry - msf update *)
@@ -2666,6 +2674,7 @@ Proof.
         replace [OCall l] with ([OCall l] ++ []) by ss.
         exploit unused_prog_lookup; try eapply UNUSED1; eauto.
         exploit unused_prog_lookup; try eapply UNUSED2; eauto. i.
+        destruct o'.
         exists ([DCall (l', o')] ++ []). esplits.
         { econs; [|econs].
           eapply ISMI_Call_F; eauto.
@@ -2683,7 +2692,9 @@ Proof.
             exploit uslh_prog_nonempty_block; eauto. i.
             rewrite nth_error_None in NXT. lia. }
         { econs. ii. clarify. }
-        { repeat econs. } }
+        { repeat econs. }
+        { 
+    }
     assert (i = ICTarget \/ i <> ICTarget).
     { destruct i; try (sfby (right; ii; clarify)). auto. }
     des; subst.
@@ -2899,41 +2910,7 @@ Proof.
           { (* CMP = false: eval gives N 1 *)
             destruct ms; auto. } }
       { repeat econs. unfold match_dir. simpl. eauto. }
-    + econs. econs.
-      2: econs.
-      econs 10.
-      * exploit tgt_inv; try eapply FROM; eauto. i. des. inv x1. 2: assumption.
-        inv MATCH. eapply unused_prog_lookup in UNUSED2; eauto. now destruct UNUSED2.
-      * admit.
-      * reflexivity.  
-    + admit. (*TODO: currently does not hold, because the directives need to be different*) 
-    + 
-      replace (@nil direction) with ((@nil direction) ++ []) by ss. 
-      replace (@nil observation) with ((@nil observation) ++ []) by ss.
-      assert (stk = []) as ->.
-      { clear - STK. destruct stk; [reflexivity|]. inv STK. destruct (ret_sync p c); [|discriminate]. 
-          destruct (map_opt (ret_sync p) stk); discriminate. }
-      econs 2. 2: econs. econs 12.
-      exploit tgt_inv. 3: eassumption. 1, 2: eassumption. i. des. inv x1.
-      * inv MATCH. eapply unused_prog_lookup in UNUSED2; eauto. now destruct UNUSED2.
-      * assumption.
-    + econs.
-  - (* inv TGT; clarify; esplits. *)
-  (*   + admit. *)
-  (*   + admit. *)
-  (*   + replace (@nil direction) with ((@nil direction) ++ []) by ss.  *)
-  (*     replace (@nil observation) with ((@nil observation) ++ []) by ss. *)
-  (*     assert (stk = []) as ->. *)
-  (*     { clear - STK. destruct stk; [reflexivity|]. inv STK. destruct (ret_sync p c); [|discriminate].  *)
-  (*         destruct (map_opt (ret_sync p) stk); discriminate. } *)
-  (*     econs 2. 2: econs. econs 12. *)
-  (*     exploit tgt_inv. 3: eassumption. 1, 2: eassumption. i. des. inv x1. *)
-  (*     * inv MATCH. eapply unused_prog_lookup in UNUSED2; eauto. now destruct UNUSED2. *)
-  (*     * assumption. *)
-  (*   + econs. *)
-    (* -  *)
-    admit.
-  - admit.
+    + admit.
 Admitted.
 
 Lemma multi_ideal_inst_trans2
