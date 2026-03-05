@@ -2204,24 +2204,29 @@ Proof.
   - (* ICall is in the expansion of instruction a *)
     rewrite nth_error_app1 in NTH; auto.
     destruct a; ss; unfold MiniCET.uslh_ret in *; clarify;
-    try (exfalso; destruct pos; ss; clarify; destruct pos; ss; clarify; fail).
+    try (exfalso;
+         destruct pos; simpl in NTH; try discriminate NTH;
+         destruct pos; simpl in NTH; try discriminate NTH;
+         rewrite nth_error_nil in NTH; discriminate NTH).
     (* branch case *)
     + exfalso. eapply bind_inv in MAP. des.
       unfold add_block_M, add_block in MAP. clarify.
       destruct pos; simpl in NTH; [discriminate NTH|].
-      (* destruct pos; simpl in NTH; discriminate NTH.
+      destruct pos; simpl in NTH; [discriminate NTH|].
+      rewrite nth_error_nil in NTH. discriminate NTH.
     (* call case *)
     + exists 0, fp. split; [auto|].
       destruct pos; [exfalso; simpl in NTH; discriminate NTH|].
       destruct pos; [simpl in NTH; clarify; auto|].
-      exfalso. destruct pos; simpl in NTH; discriminate NTH.
+      exfalso. destruct pos; simpl in NTH; [discriminate NTH|].
+      rewrite nth_error_nil in NTH. discriminate NTH.
   - (* ICall is in the rest *)
     rewrite nth_error_app2 in NTH; [|lia].
     exploit IHblk; eauto. i. des.
     exists (S o_src), src_e. split; [auto|].
     unfold prefix_offset in *. simpl firstn. simpl fold_left.
-    rewrite fold_left_init_0. lia. *)
-Admitted.
+    rewrite fold_left_init_0. lia.
+Qed.
 
 Lemma wf_ret_uslh_src p pc
   (WFP: wf_prog p)
@@ -2236,11 +2241,149 @@ Lemma wf_ret_uslh_src p pc
 Proof.
   destruct pc as [l o]. red in WFR. des.
   simpl in WFR, WFR0. des_ifs_safe.
-  destruct p0 as [blk is_proc]. simpl in WFR, WFR0.
+  destruct p0 as [tblk is_proc]. simpl in WFR, WFR0.
+  rename Heq into TBLK.
+  (* TBLK: nth_error (uslh_prog p) l = Some (tblk, is_proc) *)
+  (* WFR0: exists e, nth_error tblk (o-1) = Some (ICall e) *)
+  (* WFR: nth_error tblk o <> None *)
+  (* WFR1: o > 0 *)
+  des. rename WFR0 into CALL_AT. rename WFR1 into OGT0.
 
-  
-  admit.
-Admitted.
+  (* Step 1: show l < length p *)
+  assert (LBD: l < Datatypes.length p).
+  { unfold uslh_prog in TBLK. des_ifs_safe.
+    exploit mapM_perserve_len; eauto. i.
+    destruct (lt_dec l (Datatypes.length p)); auto.
+    exfalso.
+    assert (LEN: Datatypes.length l0 = Datatypes.length p).
+    { rewrite <- x0. unfold add_index. rewrite length_combine, length_seq, min_id. auto. }
+    rewrite nth_error_app2 in TBLK; [|lia].
+    eapply nth_error_In in TBLK.
+    eapply (new_prog_no_call _ _ _ _ Heq) in TBLK.
+    eapply TBLK. simpl. eauto. }
+
+  (* Step 2: get source block *)
+  assert (SRC_BLK: exists sblk, nth_error p l = Some sblk).
+  { destruct (nth_error p l) eqn:E; [eauto|].
+    exfalso. eapply nth_error_None in E. lia. }
+  des.
+
+  (* Step 3: use label_inv *)
+  hexploit label_inv; eauto. i. des.
+  rename H into TBLK'. rename H0 into USLH_BLK. rename H1 into C_EQ.
+
+  (* TBLK': nth_error (uslh_prog p) l = Some blk' *)
+  (* USLH_BLK: uslh_blk (l, sblk) c = (blk', np') *)
+  rewrite TBLK in TBLK'. injection TBLK' as TBLK'. subst.
+
+  (* Now unfold uslh_blk *)
+  destruct sblk as [sbl s_proc]. simpl in USLH_BLK.
+  eapply bind_inv in USLH_BLK. des. subst.
+  unfold concatM in USLH_BLK. eapply bind_inv in USLH_BLK. des.
+  ss. unfold MiniCET.uslh_ret in *. clarify.
+  erewrite uslh_offset_uslh_add_index in USLH_BLK; eauto.
+
+  (* Now tblk = (if s_proc then [ctarget; msf_init] ++ concat a else concat a, s_proc)
+     CALL_AT: nth_error tblk (o-1) = Some (ICall e) *)
+  (* The ICall must be in concat a (not in ctarget/msf_init header) *)
+
+  (* Step 4: use concat_call_find *)
+  assert (CALL_IN_CONCAT: exists pos', nth_error (List.concat a0) pos' = Some (ICall e) /\
+          (if s_proc then add pos' 2 = o - 1 else pos' = o - 1)).
+  { des_ifs; simpl in CALL_AT.
+    - destruct (o - 1) eqn:EQ; [simpl in CALL_AT; discriminate|].
+      destruct n eqn:EQ2; [simpl in CALL_AT; discriminate|].
+      simpl in CALL_AT. exists n0. split; auto. lia.
+    - exists (o - 1). split; auto. }
+
+  des.
+  exploit concat_call_find; eauto. i. des.
+
+  (* x0: nth_error sbl o_src = Some (ICall src_e) *)
+  (* x1: pos' = add (prefix_offset a0 o_src 0) 1 *)
+
+  (* Step 5: establish pc_sync *)
+  assert (OFS: exists io, nth_error (_offset_uslh sbl (if s_proc then 2 else 0)) o_src = Some io).
+  { destruct (nth_error (_offset_uslh sbl (if s_proc then 2 else 0)) o_src) eqn:E; [eauto|].
+    exfalso. eapply nth_error_None in E. rewrite _offset_uslh_length in E.
+    simpl in x0. assert (o_src < Datatypes.length sbl) by (eapply nth_error_Some; ii; clarify). lia. }
+  des.
+
+  hexploit offset_eq_aux; eauto.
+  { pose proof (proj1 (nth_error_Some (_offset_uslh sbl (if s_proc then 2 else 0)) o_src)) as HH. rewrite _offset_uslh_length in HH. simpl. apply HH. rewrite OFS. discriminate. }
+  i. (* H: prefix_offset a0 o_src (if s_proc then 2 else 0) = io *)
+
+  (* From prefix_offset a0 o_src base = io and pos' = prefix_offset a0 o_src 0 + 1 *)
+  assert (IO_EQ: io = (if s_proc then add (prefix_offset a0 o_src 0) 2 else prefix_offset a0 o_src 0)).
+  { unfold prefix_offset in H |- *. rewrite fold_left_init_0 in H.
+    destruct s_proc.
+    - rewrite <- H. simpl. lia.
+    - rewrite <- H. simpl. lia. }
+
+  (* The ICall in tblk is at position o-1 which equals io+1 *)
+  assert (O_EQ: o - 1 = add io 1).
+  { subst. des_ifs; lia. }
+
+  (* So o = io + 2 *)
+  assert (O_EQ2: o = add io 2).
+  { lia. }
+
+  (* pc_sync p (l, o_src) maps to (l, io) *)
+  assert (PCSYNC: pc_sync p (l, o_src) = Some (l, io)).
+  { unfold pc_sync. simpl. rewrite nth_error_map. rewrite SRC_BLK.
+    simpl. unfold offset_uslh. simpl. rewrite OFS. auto. }
+
+  (* ret_sync p (l, S o_src) = Some (l, io + 2) = Some (l, o) *)
+  assert (RETSYNC: ret_sync p (l, S o_src) = Some (l, o)).
+  { simpl in x0. unfold ret_sync. simpl.
+    change (p[[(l, o_src)]]) with (fetch p (l, o_src)).
+    unfold fetch. rewrite SRC_BLK. simpl. rewrite x0.
+    fold (pc_sync p (l, o_src)). rewrite PCSYNC. f_equal. f_equal. lia. }
+
+  (* wf_ret p (l, S o_src) *)
+  assert (WF_RET_SRC: wf_ret p (l, S o_src)).
+  { red. simpl. split.
+    - (* p[[(l, S o_src)]] <> None *)
+      assert (FETCH_SRC: fetch p (l, o_src) = Some (ICall src_e)).
+      { unfold fetch. rewrite SRC_BLK. simpl. auto. }
+      exploit (block_always_terminator_prog p (l, o_src) (ICall src_e) WFP FETCH_SRC).
+      { simpl. intro HH; exact HH. }
+      intros [next_i NEXT]. unfold inc in NEXT.
+      replace (Nat.add o_src 1) with (S o_src) in NEXT by lia.
+      unfold fetch in NEXT |- *. rewrite SRC_BLK in NEXT |- *. simpl in NEXT |- *.
+      rewrite NEXT. discriminate.
+    - exists src_e. simpl. split; [|lia].
+      unfold fetch. rewrite SRC_BLK. simpl. simpl in x0. rewrite Nat.sub_0_r. exact x0. }
+
+  (* (uslh_prog p)[[l, o]] *)
+  assert (TGT_FETCH: (uslh_prog p)[[(l, o)]] =
+    Some <{{ msf := (callee = (& (l, o))) ? msf : 1 }}>).
+  { rename H into PFX. clear O_EQ2 RETSYNC PCSYNC.
+    exploit mapM_nth_error_strong; eauto.
+    { eapply _offset_uslh_combine; eauto. }
+    i. des.
+    ss. unfold MiniCET.uslh_ret in *. clarify.
+    exploit (concat_nth_error a0 _ _ 2); eauto; [ss|]. intro CNE. des.
+    destruct s_proc; ss; unfold MiniCET.uslh_ret in *; clarify.
+    + (* s_proc = true: header [ctarget; msf_init] ++ concat a0 *)
+      unfold fetch. rewrite TBLK. simpl.
+      destruct o; [lia|]. destruct o; [lia|]. simpl.
+        assert (OO: o = prefix_offset a0 o_src 0 + 2) by lia.
+        rewrite OO. rewrite CNE.
+        assert (PP: prefix_offset a0 o_src 2 + 2 = S (S (prefix_offset a0 o_src 0 + 2))) by
+          (unfold prefix_offset; rewrite fold_left_init_0; lia).
+        rewrite PP. reflexivity.
+    + (* s_proc = false *)
+      unfold fetch. rewrite TBLK. simpl.
+      assert (OO: o = prefix_offset a0 o_src 0 + 2) by lia.
+      rewrite OO. rewrite CNE. reflexivity. }
+
+  (* Now assemble *)
+  exists o_src.
+  refine (conj WF_RET_SRC (conj RETSYNC (conj _ (conj TGT_FETCH _)))).
+  - unfold pc_sync in PCSYNC. rewrite PCSYNC. do 2 f_equal. lia.
+  - simpl. lia.
+Qed.
 
 
 Lemma ultimate_slh_bcc_single (p: prog) ic1 sc1 sc2 ds os
