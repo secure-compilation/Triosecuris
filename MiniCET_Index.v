@@ -102,6 +102,29 @@ Definition wf_ret (p: prog) (pc: cptr) : Prop :=
   let '(l, o) := pc in
   p[[(l, o)]] <> None /\ exists e, p[[(l, o - 1)]] = Some <{{ call e }}> /\ o > 0.
 
+Definition wf_retb (p: prog) (pc: cptr) : bool :=
+  let '(l, o) := pc in
+  match p[[(l, o)]] with
+  | Some _ => match o with
+             | 0 => false
+             | S o' => match p[[(l, o')]] with
+                      | Some (ICall e) => true
+                      | _ => false
+                      end
+             end
+  | _ => false
+  end.
+
+Lemma wf_ret_wf_retb p pc:
+  wf_ret p pc <-> wf_retb p pc = true.
+Proof.
+  destruct pc as [l o]. ss. split; i.
+  - des_ifs; des; ss; try lia; clarify.
+    all : rewrite sub_0_r in *; clarify.
+  - des_ifs; des; ss; try lia; clarify.
+    rewrite sub_0_r. esplits; eauto; ii; clarify. lia.
+Qed.
+
 Definition wf_stk (p: prog) (stk: list cptr) : Prop :=
   Forall (fun pc => wf_ret p pc) stk.
 
@@ -384,16 +407,16 @@ Fixpoint map_opt {S T} (f: S -> option T) l : option (list T):=
   end.
 
 Definition ret_sync (p: prog) (pc: cptr) : option cptr :=
-    match pc with 
-    | (l, S o) => match p[[(l, o)]] with 
-                  | Some (ICall _) => match (pc_sync p (l, o)) with 
-                               | Some (l', o') => Some (l', o'+2)
-                               | None => None
-                               end
-                  | _ => None
-                  end
-    | _ => None
-    end.
+  match pc with
+  | (l, S o) => match p[[(l, o)]] with
+               | Some (ICall _) => match (pc_sync p (l, o)) with
+                                  | Some (l', o') => Some (l', o'+2)
+                                  | None => None
+                                  end
+               | _ => None
+               end
+  | _ => None
+  end.
 
 Definition val_match (p: prog) (v1 v2: val) : Prop :=
   match v1, v2 with
@@ -484,6 +507,9 @@ Definition match_ob (p: prog) (o1 o2: observation) : Prop :=
   | ODiv _ _, ODiv _ _ | OBranch _, OBranch _ | OLoad _, OLoad _ | OStore _, OStore _ => o1 = o2
   | OCall (l1, 0), OCall (l2, 0) => l1 = l2
   | OCall (l1, S o1), OCall (l2, S o2) => ret_sync p (l1, S o1) = Some (l2, S o2)
+                                         (* if (wf_retb (uslh_prog p) (l2, S o2)) *)
+                                         (* then ret_sync p (l1, S o1) = Some (l2, S o2) *)
+                                         (* else o1 = o2 *)
   | _, _ => False
   end.
 
@@ -532,7 +558,7 @@ Fixpoint wf_expr (p: prog) (e: exp) : Prop :=
   end.
 
 Lemma wf_expr_wf_exp p e:
-    wf_expr p e <-> wf_exp p e = true.
+  wf_expr p e <-> wf_exp p e = true.
 Proof.
     induction e; ss; rewrite! andb_true_iff; firstorder.
     1, 3: now apply Nat.eqb_eq.
@@ -2085,17 +2111,15 @@ Variant match_cfgs_ext (p: prog) : state ideal_cfg -> state spec_cfg -> Prop :=
   match_cfgs_ext p (S_Running ((pc, r, m, stk), ms))
                    (S_Running ((pc' + 1, r', m', stk'), false, ms))
 | match_cfgs_ext_ret2 (* after return *)
-  l o l' o' r r' m m' stk stk' (ms:bool)
+  l o l' o' r r' m m' stk stk' (ms:bool) e
   (PC: pc_sync p (l, o - 1) = Some (l', o')) (* call - callee asgn match *)
+  (FROM: p[[(l, o - 1)]] = Some (ICall e))
+  (POS: o > 0)
   (TO: (uslh_prog p) [[(l', o' + 2)]] = Some <{{ msf := (callee = (& (l', o' + 2))) ? msf : 1 }}>)
   (REG: Rsync1 p r r')
   (MSC: Msync p m m')
   (STK: map_opt (ret_sync p) stk = Some stk')
-  (MS: eval r' <{{ (callee = (& (l', o' + 2))) ? msf : 1 }}> = N (if ms then 1 else 0))
-  (* (MS: r' ! callee = match stk' with
-                     | [] => UV
-                     | (l, o)::sttl => FP (l, o)
-                     end) *) :
+  (MS: eval r' <{{ (callee = (& (l', o' + 2))) ? msf : 1 }}> = N (if ms then 1 else 0)) :
   match_cfgs_ext p (S_Running (((l, o), r, m, stk), ms))
                    (S_Running (((l', o' + 2), r', m', stk'), false, ms))
 | match_cfgs_ext_fault :
@@ -2400,6 +2424,143 @@ Proof.
   - simpl. lia.
 Qed.
 
+Lemma pc_sync_same_label p l o l' o'
+  (PC: pc_sync p (l, o) = Some (l', o')) :
+  l = l'.
+Proof. ss. des_ifs. Qed.
+
+Lemma wf_ret_src p pc tpc
+  (WFP: wf_prog p)
+  (* (NCT: no_ct_prog p) *)
+  (RET: ret_sync p pc = Some tpc) :
+  wf_ret p pc.
+Proof.
+  destruct pc as [l o]. unfold ret_sync in RET. des_ifs_safe.
+  red. split.
+  { hexploit block_always_terminator_prog; eauto. i. des.
+    replace (S n) with (add n 1) by lia. ss. ii. clarify. }
+  esplits; [|lia]. replace (S n - 1) with n by lia. eauto.
+Qed.
+
+Lemma wf_ret_tgt p pc tpc
+  (WFP: wf_prog p)
+  (NCT: no_ct_prog p)
+  (RET: ret_sync p pc = Some tpc) :
+  wf_ret (uslh_prog p) tpc.
+Proof.
+  destruct pc as [l o]. unfold ret_sync in RET. des_ifs_safe.
+  hexploit src_inv; eauto. i. des.
+  inv H0; [inv SIMPL|]. clarify.
+  hexploit pc_sync_same_label; eauto. i. subst.
+  red. split.
+  { ii. simpl in *. clarify. }
+  esplits; [|lia]. replace (n1 + 2 - 1) with (add n1 1) by lia.
+  ss. eauto.
+Qed.
+
+Lemma wf_ret_rsync_src p sr tr b x l o
+  (WFP: wf_prog p)
+  (RET: Rsync p sr tr b)
+  (MSF: x <> msf)
+  (CALLEE: x <> callee)
+  (PTR: sr ! x = FP (l, o))
+  (NZR: o <> 0) :
+  wf_ret p (l, o).
+Proof.
+  unfold Rsync in *. des.
+  hexploit RET; eauto. i. rewrite PTR in H.
+  unfold val_match in H. des_ifs_safe.
+  clear RET0. des_ifs.
+  { des; subst. rewrite Nat.eqb_eq in Heq0. subst. clarify. }
+  eapply wf_ret_src; eauto.
+Qed.
+
+Lemma wf_ret_rsync_tgt p sr tr b x l o
+  (WFP: wf_prog p)
+  (NCT: no_ct_prog p)
+  (RET: Rsync p sr tr b)
+  (MSF: x <> msf)
+  (CALLEE: x <> callee)
+  (PTR: tr ! x = FP (l, o))
+  (NZR: o <> 0) :
+  wf_ret (uslh_prog p) (l, o).
+Proof.
+  unfold Rsync in *. des.
+  hexploit RET; eauto. i. rewrite PTR in H.
+  unfold val_match in H. des_ifs_safe.
+  clear RET0. des_ifs.
+  { des; subst. clarify. }
+  eapply wf_ret_tgt; eauto.
+Qed.
+
+
+Lemma wf_ret_msync_src p m m' i l o
+  (WFP: wf_prog p)
+  (MREL: Msync p m m')
+  (PTR: nth_error m i = Some (FP (l, o)))
+  (NZR: o <> 0) :
+  wf_ret p (l, o).
+Proof.
+  specialize (MREL i). rewrite PTR in MREL. des_ifs.
+  unfold val_match in MREL. des_ifs.
+  { des; subst. rewrite Nat.eqb_eq in Heq0. subst. clarify. }
+  eapply wf_ret_src; eauto.
+Qed.
+
+Lemma wf_ret_msync_tgt p m m' i l o
+  (WFP: wf_prog p)
+  (NCT: no_ct_prog p)
+  (MREL: Msync p m m')
+  (PTR: nth_error m' i = Some (FP (l, o)))
+  (NZR: o <> 0) :
+  wf_ret (uslh_prog p) (l, o).
+Proof.
+  specialize (MREL i). rewrite PTR in MREL. des_ifs.
+  unfold val_match in MREL. des_ifs.
+  { des; subst. clarify. }
+  eapply wf_ret_tgt; eauto.
+Qed.
+
+Lemma wf_ret_expr_src p sr tr b e l o
+  (WFP: wf_prog p)
+  (RET: Rsync p sr tr b)
+  (WFE: wf_expr p e)
+  (UNUSED1: e_unused msf e)
+  (UNUSED2: e_unused callee e )
+  (PTR: eval sr e = FP (l, o))
+  (NZR: o <> 0) :
+  wf_ret p (l, o).
+Proof.
+  ginduction e; (try sfby ss); i.
+  - eapply wf_ret_rsync_src; eauto.
+  - ss. exfalso. unfold eval_binop in PTR. clear -PTR.
+    des_ifs.
+  - simpl in UNUSED1, UNUSED2, PTR, WFE. des. des_ifs.
+    + hexploit IHe2; eauto.
+    + hexploit IHe3; eauto.
+  - simpl in PTR, WFE. clarify. ss. des; clarify.
+Qed.
+
+Lemma wf_ret_expr_tgt p sr tr b e l o
+  (WFP: wf_prog p)
+  (NCT: no_ct_prog p)
+  (RET: Rsync p sr tr b)
+  (WFE: wf_expr p e)
+  (UNUSED1: e_unused msf e)
+  (UNUSED2: e_unused callee e )
+  (PTR: eval tr e = FP (l, o))
+  (NZR: o <> 0) :
+  wf_ret (uslh_prog p) (l, o).
+Proof.
+  ginduction e; (try sfby ss); i.
+  - eapply wf_ret_rsync_tgt; eauto.
+  - ss. exfalso. unfold eval_binop in PTR. clear -PTR.
+    des_ifs.
+  - simpl in UNUSED1, UNUSED2, PTR, WFE. des. des_ifs.
+    + hexploit IHe2; eauto.
+    + hexploit IHe3; eauto.
+  - simpl in PTR, WFE. clarify. ss. des; clarify.
+Qed.
 
 Lemma ultimate_slh_bcc_single (p: prog) ic1 sc1 sc2 ds os
   (NCT: no_ct_prog p)
@@ -2408,8 +2569,10 @@ Lemma ultimate_slh_bcc_single (p: prog) ic1 sc1 sc2 ds os
   (UNUSED2: unused_prog callee p)
   (MATCH: match_cfgs_ext p ic1 sc1)
   (TGT: uslh_prog p |- <(( sc1 ))> -->_ ds^^os <(( sc2 ))>) :
-  exists ds' os' ic2, p |- <(( ic1 ))> -->i*_ ds' ^^ os <(( ic2 ))>
-      /\ match_cfgs_ext p ic2 sc2 /\ match_ds p ds' ds /\ match_obs p os' os.
+  exists ds' os' ic2, p |- <(( ic1 ))> -->i*_ ds' ^^ os' <(( ic2 ))>
+               /\ match_cfgs_ext p ic2 sc2
+               /\ match_ds p ds' ds
+               /\ match_obs p os' os.
 Proof.
   inv MATCH; try sfby inv TGT.
   (* pc_sync match *)
@@ -2460,32 +2623,34 @@ Proof.
       replace (@nil direction) with ((@nil direction) ++ []) by ss. 
       replace ([ODiv v1 v2]) with (([ODiv v1 v2]) ++ []) by ss.
       esplits.
-      { econs 2; econs. 1: eassumption.
-          - inv REG. simpl in H1. rewrite H3 in H1. simpl in H1. rewrite <- H1. destruct ms; simpl; [reflexivity|].
-            eapply unused_prog_lookup in UNUSED1; eauto.
-            eapply unused_prog_lookup in UNUSED2; eauto.
-            inv UNUSED1. inv UNUSED2. des.
-            eapply eval_regs_eq_nat; eauto.
-            apply wf_expr_wf_exp. exploit wf_prog_lookup; eauto. i. ss. apply x2.
-          - inv REG. simpl in H2. rewrite H3 in H2. simpl in H2. rewrite <- H2. destruct ms; simpl; [reflexivity|].
-            eapply unused_prog_lookup in UNUSED1, UNUSED2; eauto.
-            inv UNUSED1. inv UNUSED2. des.
-            eapply eval_regs_eq_nat; eauto.
-            apply wf_expr_wf_exp. exploit wf_prog_lookup; eauto. i. ss. apply x2.
+      { econs 2; [|econs].
+        eapply ISMI_Div. 1: eassumption.
+        - inv REG. simpl in H1. rewrite H3 in H1. simpl in H1. rewrite <- H1. destruct ms; simpl; [reflexivity|].
+          eapply unused_prog_lookup in UNUSED1; eauto.
+          eapply unused_prog_lookup in UNUSED2; eauto.
+          inv UNUSED1. inv UNUSED2. des.
+          eapply eval_regs_eq_nat; eauto.
+          apply wf_expr_wf_exp. exploit wf_prog_lookup; eauto. i. ss. apply x2.
+        - inv REG. simpl in H2. rewrite H3 in H2. simpl in H2. rewrite <- H2. destruct ms; simpl; [reflexivity|].
+          eapply unused_prog_lookup in UNUSED1, UNUSED2; eauto.
+          inv UNUSED1. inv UNUSED2. des.
+          eapply eval_regs_eq_nat; eauto.
+          apply wf_expr_wf_exp. exploit wf_prog_lookup; eauto. i. ss. apply x2.
       }
       { fold res. econs. econs. 3: assumption.
-          - exploit block_always_terminator_prog; try eapply x1; eauto. i. des.
-            exploit pc_sync_next; eauto. now destruct pc. 
-          - econs. (* This seems like it would be needed more often, extract as lemma? *)
-            + i. destruct (string_dec x x0). 
-              * subst. rewrite! t_update_eq. destruct v2; ss.
-              * do 2 (rewrite t_update_neq; [|assumption]). now apply REG.
-            + eapply unused_prog_lookup in UNUSED1; eauto.
-              inv UNUSED1. rewrite t_update_neq; [|easy]. now apply REG.
-          - eauto.
+        - exploit block_always_terminator_prog; try eapply x1; eauto. i. des.
+          exploit pc_sync_next; eauto. now destruct pc. 
+        - econs. (* This seems like it would be needed more often, extract as lemma? *)
+          + i. destruct (string_dec x x0). 
+            * subst. rewrite! t_update_eq. destruct v2; ss.
+            * do 2 (rewrite t_update_neq; [|assumption]). now apply REG.
+          + eapply unused_prog_lookup in UNUSED1; eauto.
+            inv UNUSED1. rewrite t_update_neq; [|easy]. now apply REG.
+        - eauto.
       }
       { ss. }
-      { repeat econs. instantiate (1:= ODiv v1 v2). econs. }
+      { repeat econs. }
+    (* branch *)
     + exploit tgt_inv; eauto. i. des. inv x1.
       { inv MATCH. }
       clarify.
@@ -2503,7 +2668,6 @@ Proof.
         apply wf_expr_wf_exp. exploit wf_prog_lookup; eauto. i. apply x1. }
       destruct pc as [b o]. destruct pc0 as [b0 o0].
       destruct b'.
-
       * eapply match_cfgs_ext_br_true1; eauto.
         { simpl. rewrite IN. ss. }
         { clear -H1 REG. inv REG. rewrite H0 in H1. ss. rewrite H0. ss.
@@ -2511,13 +2675,12 @@ Proof.
           destruct n; ss; clarify. }
         { ss. rewrite IN. ss. }
         { inv REG. red. eauto. }
-
       * eapply match_cfgs_ext_br_false; try eapply H0; eauto.
         { clear -H1 REG. inv REG. rewrite H0 in H1. ss. rewrite H0. ss.
           destruct ms; ss. unfold to_nat in H1. des_ifs_safe.
           destruct n; ss; clarify. }
         { inv REG. red. eauto. }
-
+    (* jump *)
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
       replace (@nil direction) with ((@nil direction) ++ []) by ss.
       replace (@nil observation) with ((@nil observation) ++ []) by ss.
@@ -2535,6 +2698,7 @@ Proof.
         destruct l0; [ss; lia|].
         unfold pc_sync. ss.
         rewrite nth_error_map. rewrite BLK. ss.
+    (* load *)
     + exploit tgt_inv; eauto. i. des. inv x0. inv MATCH.
       dup MSC. specialize (MSC0 n). rewrite H2 in MSC0. des_ifs_safe.
       exists ([] ++ []), ([OLoad n] ++ []), (S_Running ((pc0 + 1), x !-> v; r0, m0, stk, ms)).
@@ -2561,6 +2725,7 @@ Proof.
             { do 2 rewrite t_update_eq; eauto. }
             { rewrite t_update_neq; eauto. rewrite t_update_neq; eauto. now apply REG. }
           - inv REG. ss. des. rewrite t_update_neq; eauto. }
+    (* store *)
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
       eapply unused_prog_lookup in UNUSED1; eauto.
       eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
@@ -2599,10 +2764,11 @@ Proof.
           - apply Nat.eqb_neq in Heq. rewrite! upd_neq; eauto.
             apply MSC.
         }
-      * econs.
 
+    (* call - asgn *)
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
 
+    (* 0th - ctarget *)
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
 
     (* ret *)
@@ -2611,29 +2777,31 @@ Proof.
     (* peek *)
     + exploit tgt_inv; eauto. i. des. inv x0.
       { inv MATCH.
-          replace (@nil direction) with ((@nil direction) ++ []) by ss. 
-          replace (@nil observation) with ((@nil observation) ++ []) by ss.
-          esplits.
-          { econs 2; econs; eassumption. }
-          { unfold val. econs. econs; eauto. 
-              1: exploit block_always_terminator_prog; eauto; i; des.
-              1: exploit pc_sync_next; eauto; destruct pc; ss.
-              unfold Rsync. split.
-              - i. destruct stk.
-                + ss. inv STK. destruct (string_dec x x0).
-                  * subst. rewrite! t_update_eq. ss.
-                  * rewrite! t_update_neq; eauto. now apply REG.
-                + ss. destruct (ret_sync p c) eqn:?; [|discriminate].
-                  destruct (map_opt (ret_sync p) stk) eqn:?; [|discriminate].
-                  inv STK.
-                  destruct (string_dec x x0).
-                  * subst. rewrite! t_update_eq. destruct c, c0. ss.  
-                    destruct n0; [discriminate|]. ss.
-                  * rewrite! t_update_neq; eauto. now apply REG.
-              - rewrite t_update_neq. 2: eapply unused_prog_lookup in UNUSED1; eauto; apply UNUSED1. 
-                apply REG.
-          }
-          { econs. }
+        replace (@nil direction) with ((@nil direction) ++ []) by ss.
+        replace (@nil observation) with ((@nil observation) ++ []) by ss.
+        esplits.
+        { econs 2; econs; eassumption. }
+        { unfold val. econs. econs; eauto.
+          1: exploit block_always_terminator_prog; eauto; i; des.
+          1: exploit pc_sync_next; eauto; destruct pc; ss.
+          unfold Rsync. split.
+          - i. destruct stk.
+            + ss. inv STK. destruct (string_dec x x0).
+              * subst. rewrite! t_update_eq. ss.
+              * rewrite! t_update_neq; eauto. now apply REG.
+            + ss. destruct (ret_sync p c) eqn:?; [|discriminate].
+              destruct (map_opt (ret_sync p) stk) eqn:?; [|discriminate].
+              inv STK.
+              destruct (string_dec x x0).
+              * subst. rewrite! t_update_eq. destruct c, c0. ss.
+                destruct n0; [discriminate|]. ss.
+              * rewrite! t_update_neq; eauto. now apply REG.
+          - rewrite t_update_neq.
+            2: eapply unused_prog_lookup in UNUSED1; eauto; apply UNUSED1.
+            apply REG.
+        }
+        { econs. }
+        { econs. }
       }
       { clarify. esplits; [econs| |econs|econs].
         eapply match_cfgs_ext_ret1; eauto. 2: rewrite t_update_eq; unfold val; destruct sk; [|destruct c]; reflexivity.
@@ -2669,32 +2837,63 @@ Proof.
   (* call - call *)
   - inv TGT; clarify.
     destruct pc'0 as [l' o'].
+    exploit unused_prog_lookup; try eapply UNUSED1; eauto.
+    exploit unused_prog_lookup; try eapply UNUSED2; eauto. i.
     destruct ((uslh_prog p)[[(l', o')]]) eqn:NXT.
+    (* Fault *)
     2:{ replace [DCall(l', o')] with ([DCall (l', o')] ++ []) by ss.
         replace [OCall l] with ([OCall l] ++ []) by ss.
-        exploit unused_prog_lookup; try eapply UNUSED1; eauto.
-        exploit unused_prog_lookup; try eapply UNUSED2; eauto. i.
-        destruct o'.
-        exists ([DCall (l', o')] ++ []). esplits.
-        { econs; [|econs].
-          eapply ISMI_Call_F; eauto.
-          -unfold cptr in *. rewrite <- H8. inv REG. ss. rewrite H0. destruct ms; ss.
-            rewrite H0 in *. ss.
-            f_equal. exploit (eval_regs_eq); eauto. 
-            1: apply wf_expr_wf_exp; eapply wf_prog_lookup in WFP; eauto; apply WFP.
-            
-            unfold val_match. i. 
-            admit. (* zero offset *)
+        destruct l as [l o]. destruct o.
+        - exists ([DCall (l', o')] ++ []), ([OCall (l, 0)] ++ []). esplits.
+          { econs; [|econs].
+            eapply ISMI_Call_F; eauto.
+            - unfold cptr in *. rewrite <- H8. inv REG. ss. rewrite H0. destruct ms; ss.
+              rewrite H0 in *. ss.
+              f_equal. exploit (eval_regs_eq); eauto.
+              { apply wf_expr_wf_exp; eapply wf_prog_lookup in WFP; eauto; apply WFP. }
+              i. unfold to_fp in H8. des_ifs_safe. red in x2.
+              des_ifs_safe; des; subst; auto. clear NXT.
+              des_ifs.
+              { des. rewrite Nat.eqb_eq in Heq1. subst. auto. }
+              { eapply ret_sync_nonzero in x2. clarify. }
             (* This currently does not hold: A program might attempt to call a register that holds a value produced by peek. Unless we want to disallow peek in the source program, this means that we need to map val_match onto observations as well*)
-          - i. simpl in H, NXT. des_ifs.
-            2:{ clear - H Heq. exploit label_inv; eauto. i. des; clarify. }
-            simpl. right. ii. subst. clear -Heq NXT WFP.
-            exploit uslh_prog_nonempty_block; eauto. i.
-            rewrite nth_error_None in NXT. lia. }
-        { econs. ii. clarify. }
-        { repeat econs. }
-        { 
-    }
+            - i. simpl in H, NXT. des_ifs.
+              2:{ clear - H Heq. exploit label_inv; eauto. i. des. clarify. }
+              simpl. right. ii. subst. clear -Heq NXT WFP.
+              exploit uslh_prog_nonempty_block; eauto. i.
+              rewrite nth_error_None in NXT. lia. }
+          { econs. ii. clarify. }
+          { repeat econs. }
+          { repeat econs. }
+        - assert (WFRT: wf_ret (uslh_prog p) (l, S o)).
+          { dup REG. inv REG. simpl in H8. rewrite H0 in H8.
+            unfold to_fp in H8. des_ifs.
+            eapply wf_ret_expr_tgt; eauto.
+            exploit wf_prog_lookup; eauto. }
+          hexploit wf_ret_uslh_src; eauto. i. des.
+          assert (ms = false); subst.
+          { destruct ms; auto. inv REG. des. simpl in H8.
+            rewrite H5 in H8. ss. }
+
+          exists ([DCall (l', o')] ++ []), ([OCall (l, S o_src)] ++ []).
+          esplits.
+          { econs; [|econs].
+            eapply ISMI_Call_F; eauto.
+            - dup REG. inv REG. simpl in H8. rewrite H5 in H8. simpl in H8.
+              simpl in x1, x0. hexploit eval_regs_eq; eauto.
+              { exploit wf_prog_lookup; eauto. ss. clear. apply wf_expr_wf_exp. }
+              i. unfold to_fp in *. des_ifs_safe. red in H6.
+              destruct pc0. des_ifs.
+              { des; clarify. }
+              hexploit ret_sync_inj; [eapply H0|eapply H6|]. i. des. clarify.
+            - i. simpl in H4, NXT. des_ifs.
+              2:{ clear - H4 Heq. exploit label_inv; eauto. i. des. clarify. }
+              simpl. right. ii. subst. clear -Heq NXT WFP.
+              exploit uslh_prog_nonempty_block; eauto. i.
+              rewrite nth_error_None in NXT. lia. }
+          { econs. ii. clarify. }
+          { repeat econs. }
+          { repeat econs. red. eauto. } }
     assert (i = ICTarget \/ i <> ICTarget).
     { destruct i; try (sfby (right; ii; clarify)). auto. }
     des; subst.
@@ -2717,94 +2916,85 @@ Proof.
 
       destruct p0 as [blk' b']. destruct b'; cycle 1.
       { eapply no_ctarget_exists with (o:=0) in CTSRC; eauto. clarify. }
+      i. des.
+      destruct l as [l o]. destruct o.
+      * exists ([DCall (l0, 0)] ++ []), ([OCall (l, 0)] ++ []). esplits.
+        { econs; [|econs].
+          eapply ISMI_Call; eauto.
+          - unfold cptr in *. rewrite <- H8. inv REG. ss. rewrite H0. destruct ms; ss.
+            rewrite H0 in *. ss.
+            f_equal. exploit (eval_regs_eq); eauto.
+            { apply wf_expr_wf_exp; eapply wf_prog_lookup in WFP; eauto; apply WFP. }
+            i. unfold to_fp in H8. des_ifs_safe. red in x6.
+            des_ifs; cycle 1.
+            { eapply ret_sync_nonzero in x6. clarify. }
+            des; subst. rewrite Nat.eqb_eq in Heq3. subst. auto. }
+        { eapply match_cfgs_ext_ct1; eauto.
+          { red. inv REG. eauto. }
+          { inv REG. simpl. rewrite STK.
+            exploit block_always_terminator_prog; try eapply CALL; eauto. i. des.
+            destruct pc as [b o].
+            hexploit pc_sync_next; eauto. i. unfold ret_sync.
+            ss. rewrite add_1_r. des_ifs_safe. ss.
+            do 3 f_equal. lia. }
+          inv REG. simpl. rewrite MS. ss. rewrite H0.
+          destruct ms; ss.
+          { des_ifs. }
+          { rewrite H0 in H8. ss. unfold to_fp in H8. des_ifs_safe.
+            ss. clarify. do 2 rewrite andb_true_r. unfold not_zero.
+            destruct (l =? l0)%nat eqn:EQUIV; ss.
+            { rewrite Nat.eqb_sym, EQUIV. auto. }
+            { rewrite Nat.eqb_sym, EQUIV. auto. } } }
+        { repeat econs. }
+        { repeat econs. }
+      * admit.
+    + admit.
+      (* replace [DCall(l', o')] with ([DCall (l', o')] ++ []) by ss. *)
+      (* replace [OCall l] with ([OCall l] ++ []) by ss. *)
 
-      i. des. exists ([DCall (l0, 0)] ++ []). esplits.
-      * do 2 econs; eauto.
-        inv REG. unfold cptr in *.
-        rewrite <- H8. simpl. rewrite H0. destruct ms; ss.
-        admit. (* zero offset *)
-      * simpl.
-        destruct (dec_eq_nat (snd l) 0) as [SND|SND].
-        (* mispeculation *)
-        2:{ des_ifs_safe.
-            rewrite andb_false_r. simpl. rewrite orb_true_r.
-            eapply match_cfgs_ext_ct1; eauto.
-            { red. inv REG. eauto. }
-            { inv REG. simpl. rewrite STK.
-              exploit block_always_terminator_prog; try eapply CALL; eauto. i. des.
-              destruct pc as [b o].
-              hexploit pc_sync_next; eauto. i. unfold ret_sync.
-              ss. rewrite add_1_r. des_ifs_safe. ss.
-              do 3 f_equal. lia. }
-            inv REG. simpl. rewrite MS. ss. rewrite H0.
-            destruct ms; ss.
-            { des_ifs. }
-            { rewrite H0 in H8. ss. unfold to_fp in H8. des_ifs_safe.
-              destruct l. ss. clarify. rewrite andb_false_r in Heq4. ss. } }
-        rewrite SND. rewrite andb_true_r.
-        eapply match_cfgs_ext_ct1; eauto.
-        { red. inv REG. eauto. }
-        { inv REG. simpl. rewrite STK.
-          exploit block_always_terminator_prog; try eapply CALL; eauto. i. des.
-          destruct pc as [b o].
-          hexploit pc_sync_next; eauto. i. unfold ret_sync.
-          ss. rewrite add_1_r. des_ifs_safe. ss.
-          do 3 f_equal. lia. }
-        inv REG. simpl. rewrite MS. ss. rewrite H0.
-        destruct ms; ss.
-        { des_ifs. }
-        { rewrite H0 in H8. ss. unfold to_fp in H8. des_ifs_safe.
-          simpl in Heq2. clarify. rewrite SND.
-          destruct (fst l =? l0)%nat eqn:JMP; ss.
-          + rewrite Nat.eqb_sym. rewrite JMP. auto.
-          + rewrite Nat.eqb_sym. rewrite JMP. auto. }
-      * repeat econs.
-    + replace [DCall(l', o')] with ([DCall (l', o')] ++ []) by ss.
-      replace [OCall l] with ([OCall l] ++ []) by ss.
+      (* exploit unused_prog_lookup; try eapply UNUSED1; eauto. *)
+      (* exploit unused_prog_lookup; try eapply UNUSED2; eauto. *)
 
-      exploit unused_prog_lookup; try eapply UNUSED1; eauto.
-      exploit unused_prog_lookup; try eapply UNUSED2; eauto.
-
-      destruct (p[[(l', o')]]) eqn:ISRC; cycle 1.
-      { simpl in ISRC. des_ifs.
-        - destruct o'.
-          + destruct p0 as [blk' b']. simpl in ISRC.
-            assert (blk' = []) by des_ifs. clear ISRC. subst.
-            eapply nth_error_In in Heq.
-            inv WFP. rewrite Forall_forall in H1. eapply H1 in Heq.
-            inv Heq. red in H2. ss. lia.
-          + i. exists ([DCall (l', S o')] ++ []). esplits.
-            { econs; [|econs]. unfold cptr in *. eapply ISMI_Call_F; eauto.
-              - rewrite <- H8. inv REG. simpl.
-                rewrite H1. destruct ms; ss.
-                (* erewrite eval_regs_eq; eauto. *)
-                admit. (* zero offset *)
-              - ii. ss. right. ss. }
-            { econs; eauto. ii. clarify. }
-            { repeat econs. }
-        - i. exists ([DCall (l', o')] ++ []). esplits.
-          { econs; [|econs]. unfold cptr in *. eapply ISMI_Call_F; eauto.
-            - rewrite <- H8. inv REG. simpl.
-              rewrite H1. destruct ms; ss.
-              (* erewrite eval_regs_eq; eauto. *)
-              admit. (* zero offset *)
-            - ii. ss. clarify. }
-          { econs; eauto. ii. clarify. }
-          { repeat econs. } }
-      i. exists ([DCall (l', o')] ++ []). esplits.
-      { econs.
-        - unfold cptr in *. eapply ISMI_Call_F; eauto.
-          + rewrite <- H8. inv REG. simpl.
-            rewrite H1. destruct ms; ss.
-            (* erewrite eval_regs_eq; eauto. *)
-            admit. (* zero offset *)
-          + ii. simpl in H0.
-            destruct blk as [blk b]. simpl.
-            destruct b; auto. destruct o'; auto.
-            eapply ctarget_exists in H0. clarify.
-        - econs. }
-      { econs; eauto. ii. clarify. }
-      { repeat econs. }
+      (* destruct (p[[(l', o')]]) eqn:ISRC; cycle 1. *)
+      (* { simpl in ISRC. des_ifs. *)
+      (*   - destruct o'. *)
+      (*     + destruct p0 as [blk' b']. simpl in ISRC. *)
+      (*       assert (blk' = []) by des_ifs. clear ISRC. subst. *)
+      (*       eapply nth_error_In in Heq. *)
+      (*       inv WFP. rewrite Forall_forall in H1. eapply H1 in Heq. *)
+      (*       inv Heq. red in H2. ss. lia. *)
+      (*     + i. exists ([DCall (l', S o')] ++ []). esplits. *)
+      (*       { econs; [|econs]. unfold cptr in *. eapply ISMI_Call_F; eauto. *)
+      (*         - rewrite <- H8. inv REG. simpl. *)
+      (*           rewrite H1. destruct ms; ss. *)
+      (*           (* erewrite eval_regs_eq; eauto. *) *)
+      (*           admit. (* zero offset *) *)
+      (*         - ii. ss. right. ss. } *)
+      (*       { econs; eauto. ii. clarify. } *)
+      (*       { repeat econs. } *)
+      (*   - i. exists ([DCall (l', o')] ++ []). esplits. *)
+      (*     { econs; [|econs]. unfold cptr in *. eapply ISMI_Call_F; eauto. *)
+      (*       - rewrite <- H8. inv REG. simpl. *)
+      (*         rewrite H1. destruct ms; ss. *)
+      (*         (* erewrite eval_regs_eq; eauto. *) *)
+      (*         admit. (* zero offset *) *)
+      (*       - ii. ss. clarify. } *)
+      (*     { econs; eauto. ii. clarify. } *)
+      (*     { repeat econs. } } *)
+      (* i. exists ([DCall (l', o')] ++ []). esplits. *)
+      (* { econs. *)
+      (*   - unfold cptr in *. eapply ISMI_Call_F; eauto. *)
+      (*     + rewrite <- H8. inv REG. simpl. *)
+      (*       rewrite H1. destruct ms; ss. *)
+      (*       (* erewrite eval_regs_eq; eauto. *) *)
+      (*       admit. (* zero offset *) *)
+      (*     + ii. simpl in H0. *)
+      (*       destruct blk as [blk b]. simpl. *)
+      (*       destruct b; auto. destruct o'; auto. *)
+      (*       eapply ctarget_exists in H0. clarify. *)
+      (*   - econs. } *)
+      (* { econs; eauto. ii. clarify. } *)
+      (* { repeat econs. } *)
   - inv TGT; clarify. esplits; econs.
   - inv TGT; clarify.
     esplits.
@@ -2813,6 +3003,7 @@ Proof.
       red. split.
       * ii. des. rewrite t_update_neq; eauto.
       * rewrite t_update_eq. simpl. ss.
+    + econs.
     + econs.
   - inv TGT; clarify. esplits.
     + econs.
@@ -2834,6 +3025,7 @@ Proof.
         red in H2. ss; lia. }
       simpl. auto.
     + econs.
+    + econs.
   - inv TGT; clarify. esplits.
     + econs.
     + econs. econs; eauto.
@@ -2846,6 +3038,7 @@ Proof.
       * split; ii.
         { des. rewrite t_update_neq; eauto. }
         { rewrite t_update_eq. eauto. }
+    + econs.
     + econs.
 
   (* ret after peek *)
@@ -2883,7 +3076,7 @@ Proof.
              apply CF1 in H_eq; congruence);
         try (assert (H_eq: (l_tgt, o_tgt) = (l_tgt, o_tgt)) by auto;
              apply CF2 in H_eq; congruence). }
-      exists ([DRet (l_tgt, S o_src)]).
+      exists ([DRet (l_tgt, S o_src)]), [].
       exists (S_Running ((l_tgt, S o_src), r, m, stk,
                ms || negb ((fst c =? l_tgt)%nat && (snd c =? S o_src)%nat))).
       split; [|split].
@@ -2892,8 +3085,11 @@ Proof.
         econs; [eapply ISMI_Ret; eauto | econs]. }
       { rewrite MS_EQ.
         replace o_tgt with ((o_tgt - 2) + 2) at 2 by lia.
+        destruct x1 as [A SCALL]. des.
         eapply match_cfgs_ext_ret2.
         - simpl. rewrite Nat.sub_0_r. exact x3.
+        - replace (S o_src - 1) with (o_src - 0) by lia. eauto.
+        - lia.
         - replace (o_tgt - 2 + 2) with o_tgt by lia. exact x4.
         - inv REG. eauto.
         - exact MSC.
@@ -2910,7 +3106,20 @@ Proof.
           { (* CMP = false: eval gives N 1 *)
             destruct ms; auto. } }
       { repeat econs. unfold match_dir. simpl. eauto. }
+    (* termination *)
     + admit.
+  (* after return *)
+  - inv TGT; clarify.
+    exists [], []. esplits; try sfby (repeat econs).
+    econs. econs.
+    + hexploit block_always_terminator_prog; eauto. i. des.
+      hexploit pc_sync_next; eauto. i. simpl in H0.
+      replace o with (add (o - 1) 1) by lia. simpl.
+      replace (add (o' + 2) 1) with (o' + 3) by lia. auto.
+    + split; [|ss].
+      i. des. rewrite t_update_neq; eauto.
+    + eauto.
+    + eauto.
 Admitted.
 
 Lemma multi_ideal_inst_trans2
@@ -2931,8 +3140,8 @@ Lemma ultimate_slh_bcc' (p: prog) ic1 sc1 sc2 ds os
   (MATCH: match_cfgs_ext p ic1 sc1)
   n
   (TGT: uslh_prog p |- <(( sc1 ))> -->*_ ds^^os^^n <(( sc2 ))>) :
-  exists ds' ic2, p |- <(( ic1 ))> -->i*_ ds' ^^ os <(( ic2 ))>
-      /\ match_cfgs_ext p ic2 sc2 /\ match_ds p ds' ds.
+  exists os' ds' ic2, p |- <(( ic1 ))> -->i*_ ds' ^^ os' <(( ic2 ))>
+      /\ match_cfgs_ext p ic2 sc2 /\ match_ds p ds' ds /\ match_obs p os' os.
 Proof.
   ginduction n; ii.
   { inv TGT. esplits; eauto; econs. }
@@ -2940,8 +3149,10 @@ Proof.
   exploit ultimate_slh_bcc_single; try eapply H0; eauto.
   i. des.
   exploit IHn; try eapply H5; eauto.
-  i. des. esplits; eauto.
+  i. des. esplits.
   - eapply multi_ideal_inst_trans2; eauto.
+  - eauto.
+  - admit.
   - admit.
 Admitted.
 
@@ -2953,11 +3164,12 @@ Lemma ultimate_slh_bcc (p: prog) : forall n ic1 sc1 sc2 ds os,
   msf_lookup_sc sc1 = N (if (ms_true_sc sc1) then 1 else 0) ->
   match_cfgs p ic1 sc1 ->
   uslh_prog p |- <(( S_Running sc1 ))> -->*_ds^^os^^n <(( sc2 ))> ->
-  exists ds' ic2, p |- <(( S_Running ic1 ))> -->i*_ ds' ^^ os <(( ic2 ))>.
+  exists os' ds' ic2, p |- <(( S_Running ic1 ))> -->i*_ ds' ^^ os' <(( ic2 ))>
+               /\ match_ds p ds' ds /\ match_obs p os' os.
 Proof.
   ii. exploit ultimate_slh_bcc'; try eapply H5; eauto.
   { econs. eauto. }
-  i. des. eauto.
+  i. des. esplits; eauto.
 Qed.
 
 Definition first_blk_call (p: prog) : Prop :=
@@ -2978,14 +3190,15 @@ Lemma ultimate_slh_bcc_init
   (INIT2: sr ! callee = FP (0,0))
   (INIT3: Msync p im sm)
   (TGT: uslh_prog p |- <(( S_Running sc1 ))> -->*_ds^^os^^n <(( sc2 ))>) :
-  exists ds' ic2, p |- <(( S_Running ((0,0), ir, im, [], false) ))> -->i*_ ds' ^^ os <(( ic2 ))>.
+  exists os' ds' ic2, p |- <(( S_Running ((0,0), ir, im, [], false) ))> -->i*_ ds' ^^ os' <(( ic2 ))>
+               /\ match_ds p ds' ds /\ match_obs p os' os.
 Proof.
   destruct n.
-  { inv TGT. esplits. econs. }
+  { inv TGT. esplits; econs. }
   assert (CT: (uslh_prog p)[[(0, 0)]] = Some <{{ ctarget }}>).
   { red in FST. des_ifs. eapply ctarget_exists; eauto. }
   destruct n.
-  { inv TGT. inv H5. inv H0; clarify. ss. do 3 econs. }
+  { inv TGT. inv H5. inv H0; clarify. ss. esplits; do 3 econs. }
   exploit head_call_target; eauto. i. des; clarify.
   replace ((0,0) + 1) with (0, 1) in x2 by ss.
   inv TGT. inv H0; clarify. inv H5. inv H0; clarify. simpl.
