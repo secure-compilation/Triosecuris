@@ -103,6 +103,12 @@ Definition wf_ret (p: prog) (len: nat) (pc: nat) : Prop :=
 Definition wf_stk (p: prog) (len: nat) (stk: list nat) : Prop :=
   Forall (fun pc => wf_ret p len pc) stk.
 
+Definition prog_terminator (p: prog) : Prop :=
+  match rev p with
+  | [] => False
+  | h :: _ => is_terminator h
+  end.
+
 Definition call_return_targets (p: prog) : list nat :=
   let ip := add_index p in
   List.flat_map (fun '(o, i) => match i with
@@ -438,6 +444,254 @@ Proof.
   { simpl in *. clarify. esplits; eauto. }
   simpl in *. exploit IHblk; eauto.
 Unshelve. econs.
+Qed.
+
+Lemma not_terminator_has_next blk ct n i
+  (TERM: last_inst_terminator (blk, ct))
+  (NTH: nth_error blk n = Some i)
+  (NT: ~ is_terminator i) :
+  S n < Datatypes.length blk.
+Proof.
+  assert (NLEN: n < Datatypes.length blk).
+  { eapply nth_error_Some. rewrite NTH. discriminate. }
+  unfold last_inst_terminator in TERM. simpl in TERM.
+  destruct (rev blk) as [|hd tl] eqn:Heq; [contradiction|].
+  destruct (Nat.eq_dec n (Datatypes.length blk - 1)).
+  - exfalso. subst.
+    assert (BLK: blk = rev tl ++ [hd]).
+    { rewrite <- (rev_involutive blk). rewrite Heq. ss. }
+    assert (BLEN: Datatypes.length blk = S (Datatypes.length tl)).
+    { rewrite BLK. rewrite app_length. simpl. rewrite length_rev. lia. }
+    replace (Datatypes.length blk - 1) with (Datatypes.length tl) in NTH by lia.
+    rewrite BLK in NTH.
+    rewrite nth_error_app2 in NTH; [|rewrite length_rev; lia].
+    rewrite length_rev in NTH.
+    replace (Datatypes.length tl - Datatypes.length tl) with 0 in NTH by lia.
+    ss. clarify.
+  - lia.
+Qed.
+
+Lemma _machine_prog_call_has_next p_ctx p len ttp n e
+  (MC: _machine_prog p_ctx p len = Some ttp)
+  (BLKS: Forall last_inst_terminator p)
+  (NTH: nth_error ttp n = Some (ICall e)) :
+  exists i, nth_error ttp (S n) = Some i.
+Proof.
+  ginduction p; ii.
+  { unfold _machine_prog in MC. ss. clarify.
+    rewrite nth_error_nil in NTH. clarify. }
+  unfold _machine_prog in MC. simpl in MC. des_ifs_safe.
+  inv BLKS. destruct a as [blk ct_a].
+  (* Heq0: machine_blk p_ctx len (blk, ct_a) = Some l0 *)
+  (* Heq1: transpose (map (machine_blk p_ctx len) p) = Some l1 *)
+  assert (MC_REST: _machine_prog p_ctx p len = Some (List.concat l1)).
+  { unfold _machine_prog. rewrite Heq1. auto. }
+  (* NTH is about concat (l0 :: l1) = l0 ++ concat l1 *)
+  change (List.concat (l0 :: l1)) with (l0 ++ List.concat l1) in NTH.
+  rewrite nth_error_app in NTH. des_ifs.
+  - (* Call is in first block l0 *)
+    exploit machine_blk_inv; eauto.
+    intros (isrc & NTH_SRC & MINST).
+    assert (exists e_src, isrc = ICall e_src).
+    { destruct isrc; ss; des_ifs; eauto. }
+    des. subst.
+    assert (NT_CALL: ~ is_terminator (ICall e_src)) by ss.
+    exploit not_terminator_has_next; eauto.
+    intros SNLT.
+    exploit machine_blk_len; eauto. intros BLEN.
+    assert (S n < Datatypes.length l0) by lia.
+    assert (nth_error l0 (S n) <> None).
+    { rewrite nth_error_Some. auto. }
+    destruct (nth_error l0 (S n)) eqn:E; [|contradiction].
+    eexists.
+    change (List.concat (l0 :: l1)) with (l0 ++ List.concat l1).
+    rewrite nth_error_app1; eauto.
+  - (* Call is in remaining blocks *)
+    assert (NLE: Datatypes.length l0 <= n).
+    { rewrite ltb_ge in *. lia. }
+    exploit IHp; eauto.
+    intros (i' & NXT).
+    eexists.
+    change (List.concat (l0 :: l1)) with (l0 ++ List.concat l1).
+    rewrite nth_error_app2; [|lia].
+    replace (S n - Datatypes.length l0) with (S (n - Datatypes.length l0)) by lia.
+    eauto.
+Qed.
+
+Lemma last_inst_terminator_app_r (l1 l2: list inst) (b: bool)
+  (TERM: last_inst_terminator (l2, b)) :
+  last_inst_terminator (l1 ++ l2, b).
+Proof.
+  unfold last_inst_terminator in *. simpl fst in *.
+  rewrite List.rev_app_distr.
+  destruct (List.rev l2) eqn:E; [contradiction|].
+  simpl. auto.
+Qed.
+
+Lemma uslh_inst_terminator_res i l o c res np
+  (USLH: uslh_inst i l o c = (res, np))
+  (TERM: is_terminator i) :
+  last_inst_terminator (res, false).
+Proof.
+  destruct i; ss; unfold MiniCET.uslh_ret in *; clarify; ss.
+Qed.
+
+Lemma uslh_inst_newp_terminator i l o c res np
+  (USLH: uslh_inst i l o c = (res, np)) :
+  Forall last_inst_terminator np.
+Proof.
+  destruct i; ss; unfold MiniCET.uslh_ret in *; clarify; try econs.
+  eapply bind_inv in USLH. des. subst.
+  unfold add_block_M, add_block in USLH. clarify.
+  ss. unfold MiniCET.uslh_ret in *. clarify.
+  econs; [|econs]. ss.
+Qed.
+
+Lemma last_inst_terminator_tail a bl b
+  (TERM: last_inst_terminator (a :: bl, b))
+  (NE: bl <> []) :
+  last_inst_terminator (bl, b).
+Proof.
+  unfold last_inst_terminator in *. simpl fst in *.
+  destruct (List.rev bl) eqn:E.
+  { exfalso. apply NE. apply List.length_zero_iff_nil.
+    rewrite <- List.length_rev. rewrite E. ss. }
+  assert (HR: List.rev (a :: bl) = i :: l ++ [a]).
+  { simpl. rewrite E. auto. }
+  rewrite HR in TERM. simpl in TERM. auto.
+Qed.
+
+Lemma concat_mapM_uslh_last_terminator bl ll n c results np
+  (LEN: Datatypes.length ll = Datatypes.length bl)
+  (MM: mapM (fun '(o, i) => uslh_inst i n o) (combine ll bl) c = (results, np))
+  (TERM: last_inst_terminator (bl, false)) :
+  last_inst_terminator (List.concat results, false).
+Proof.
+  ginduction bl; i.
+  - unfold last_inst_terminator in TERM. ss.
+  - destruct ll. { simpl in LEN. lia. }
+    simpl in MM.
+    exploit mapM_cons_inv; eauto. i. des. subst.
+    destruct bl as [|b bl'].
+    + (* singleton: [a] — last element is a terminator *)
+      destruct ll. 2:{ simpl in LEN. lia. }
+      unfold mapM in x1. ss. unfold MiniCET.uslh_ret in x1. clarify.
+      simpl. rewrite List.app_nil_r.
+      unfold last_inst_terminator in TERM. simpl fst in TERM.
+      eapply uslh_inst_terminator_res; eauto.
+    + (* cons: a :: b :: bl' *)
+      assert (TERM': last_inst_terminator (b :: bl', false)).
+      { eapply last_inst_terminator_tail; eauto. discriminate. }
+      assert (LEN': Datatypes.length ll = Datatypes.length (b :: bl')).
+      { simpl in *. lia. }
+      specialize (IHbl ll n _ _ _ LEN' x1 TERM').
+      simpl. eapply last_inst_terminator_app_r. auto.
+Qed.
+
+Lemma uslh_blk_last_terminator_res blk n c res np
+  (TERM: last_inst_terminator blk)
+  (NE: 0 < Datatypes.length (fst blk))
+  (USLH: uslh_blk (n, blk) c = (res, np)) :
+  last_inst_terminator res.
+Proof.
+  destruct blk as [insts is_proc].
+  unfold uslh_blk in USLH. des_ifs_safe.
+  eapply bind_inv in USLH. des. subst. unfold concatM in USLH.
+  eapply bind_inv in USLH. des. subst. ss. unfold MiniCET.uslh_ret in *. clarify.
+  assert (LIT: last_inst_terminator (List.concat a0, false)).
+  { unfold add_index_uslh in USLH.
+    eapply concat_mapM_uslh_last_terminator; try eapply USLH; eauto.
+    eapply _offset_uslh_length. }
+  destruct is_proc; ss; clarify; unfold MiniCET.uslh_ret in *; clarify.
+  - change (last_inst_terminator
+      ([<{{ ctarget }}>; <{{ msf := (callee = (& (n, 0))) ? msf : 1 }}>] ++ List.concat a0, true)).
+    eapply last_inst_terminator_app_r. auto.
+Qed.
+
+Lemma uslh_blk_np_last_terminator blk n c res np
+  (USLH: uslh_blk (n, blk) c = (res, np)) :
+  Forall last_inst_terminator np.
+Proof.
+  unfold uslh_blk in USLH. des_ifs_safe.
+  eapply bind_inv in USLH. des. subst. unfold concatM in USLH.
+  eapply bind_inv in USLH. des. subst. ss. unfold MiniCET.uslh_ret in *. clarify.
+  assert (Forall last_inst_terminator pm0).
+  { clear -USLH. unfold add_index_uslh in *.
+    assert (Datatypes.length (_offset_uslh l (if b then 2 else 0)) = Datatypes.length l).
+    { eapply _offset_uslh_length. }
+    remember (_offset_uslh l (if b then 2 else 0)) as ll. clear Heqll.
+    ginduction l; ii.
+    - destruct ll; ss. unfold mapM in USLH. ss. unfold MiniCET.uslh_ret in USLH. clarify.
+    - destruct ll; ss. eapply mapM_cons_inv in USLH. des. subst.
+      exploit IHl; try eapply USLH0; eauto. i.
+      assert (Forall last_inst_terminator np_hd).
+      { eapply uslh_inst_newp_terminator; eauto. }
+      rewrite Forall_app. split; eauto. }
+  rewrite app_nil_r. rewrite Forall_app. split; auto. des_ifs; ss.
+Qed.
+
+Lemma new_prog_last_terminator p c p' np
+  (USLH: mapM uslh_blk (add_index p) c = (p', np)) :
+  Forall last_inst_terminator np.
+Proof.
+  unfold add_index in USLH. remember 0 in USLH. clear Heqn.
+  ginduction p; ss; ii.
+  - unfold mapM in USLH. ss. unfold MiniCET.uslh_ret in USLH. clarify.
+  - exploit mapM_cons_inv; eauto. i. des. subst.
+    exploit IHp; eauto. i.
+    assert (Forall last_inst_terminator np_hd).
+    { eapply uslh_blk_np_last_terminator; eauto. }
+    rewrite Forall_app. split; eauto.
+Qed.
+
+Lemma uslh_prog_last_inst_terminator p
+  (WFP: wf_prog p) :
+  Forall last_inst_terminator (uslh_prog p).
+Proof.
+  unfold uslh_prog. des_ifs_safe.
+  rewrite Forall_app. split.
+  - (* transformed blocks p' *)
+    exploit mapM_perserve_len; eauto. intros LEN. rewrite length_add_index in LEN.
+    rewrite Forall_forall. intros blk IN.
+    eapply In_nth_error in IN. des.
+    assert (NLT: n < Datatypes.length p).
+    { assert (nth_error l n <> None) by (rewrite IN; discriminate).
+      rewrite nth_error_Some in H. lia. }
+    assert (exists src, nth_error p n = Some src) as [src SRC].
+    { destruct (nth_error p n) eqn:E; [eauto|].
+      exfalso. rewrite nth_error_None in E. lia. }
+    exploit nth_error_add_index; eauto. intros AI.
+    exploit mapM_nth_error; try eapply Heq; try eapply AI.
+    intros (blk' & c' & np' & NTH' & USLH').
+    rewrite NTH' in IN. clarify.
+    assert (WFB: wf_block p src).
+    { inv WFP. rewrite Forall_forall in H0.
+      eapply nth_error_In in SRC. eapply H0 in SRC. auto. }
+    red in WFB. des.
+    eapply uslh_blk_last_terminator_res; eauto.
+  - (* new blocks *)
+    eapply new_prog_last_terminator; eauto.
+Qed.
+
+Lemma wf_ret_exists p tp ttp len pc
+  (WFP: wf_prog p)
+  (USLH: tp = uslh_prog p)
+  (MC: machine_prog tp len = Some ttp)
+  (WFR: wf_ret ttp len pc) :
+  fetch ttp len pc <> None.
+Proof.
+  red in WFR. des. unfold fetch, MoreLinear.fetch in *.
+  destruct (le_dec pc len).
+  { replace (pc - len) with 0 by lia.
+    replace (pc - 1 - len) with 0 in WFR by lia.
+    rewrite WFR. discriminate. }
+  replace (pc - len) with (S (pc - 1 - len)) by lia.
+  subst tp.
+  exploit _machine_prog_call_has_next.
+  { unfold machine_prog in MC. eauto. }
+  { eapply uslh_prog_last_inst_terminator. auto. }
+  { eauto. }
+  i. des. rewrite x0. discriminate.
 Qed.
 
 Lemma lookup_from_target
