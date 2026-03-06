@@ -1639,6 +1639,34 @@ Proof.
         ss. lia.
 Qed.
 
+Lemma match_dir_inj p d1 d2 d':
+    match_dir p d1 d' ->
+    match_dir p d2 d' ->
+    d1 = d2.
+Proof.
+    destruct d1, d2, d'; ss; try congruence.
+    destruct lo, lo0, lo1. i.
+    exploit ret_sync_inj; [exact H | exact H0 |].
+    i. des. subst. reflexivity.
+Qed.
+
+Lemma match_ob_inj p o1 o2 o':
+    match_ob p o1 o' ->
+    match_ob p o2 o' ->
+    o1 = o2.
+Proof.
+    destruct o1, o2, o'; try contradiction; try congruence.
+    all: destruct l.
+    all: try (destruct n4; contradiction).
+    all: try (destruct n2; contradiction).
+    all: try (destruct n0; contradiction).
+    all: try (destruct n1; contradiction).
+    destruct l0, l1. unfold match_ob. destruct n0, n4, n2; try contradiction.
+    1: congruence.
+    i. exploit ret_sync_inj; [exact H|exact H0|].
+    now intros [-> ->%succ_inj].
+Qed.
+
 Lemma eval_regs_eq : forall p (r r': reg) (e: exp),
    e_unused msf e ->
    e_unused callee e ->
@@ -3209,7 +3237,6 @@ Lemma ultimate_slh_bcc (p: prog) : forall n ic1 sc1 sc2 ds os,
   wf_prog p ->
   unused_prog msf p ->
   unused_prog callee p ->
-  msf_lookup_sc sc1 = N (if (ms_true_sc sc1) then 1 else 0) ->
   match_cfgs p ic1 sc1 ->
   uslh_prog p |- <(( S_Running sc1 ))> -->*_ds^^os^^n <(( sc2 ))> ->
   exists os' ds' ic2, p |- <(( S_Running ic1 ))> -->i*_ ds' ^^ os' <(( ic2 ))>
@@ -3251,7 +3278,6 @@ Proof.
   replace ((0,0) + 1) with (0, 1) in x2 by ss.
   inv TGT. inv H0; clarify. inv H5. inv H0; clarify. simpl.
   exploit ultimate_slh_bcc; try eapply H6; eauto.
-  { red in INIT1. des. simpl. rewrite INIT2. ss. }
   econs; try sfby ss.
   - red in FST. des_ifs_safe.
     unfold pc_sync. rewrite nth_error_map. rewrite Heq. simpl.
@@ -3933,9 +3959,37 @@ Proof.
   eapply ultimate_slh_bcc' in SSTEP2; eauto.
   2:{ econs. eauto. }
   des. subst.
-  assert (ds' = ds'0) by admit. (* by SSTEP3 SSTEP5 *)
-  subst. eapply ideal_eval_relative_secure; eauto.
-Admitted.
+  assert (ds' = ds'0).
+  { clear - SSTEP3 SSTEP6.
+    induction ds in ds', ds'0, SSTEP3, SSTEP6 |-*; destruct ds', ds'0; ss.
+    all: try inv SSTEP3; try inv SSTEP6.
+    exploit match_dir_inj; [exact H2 | exact H3 |]. i. subst. f_equal.
+    apply IHds; eauto.
+  }
+  subst.
+  exploit (ideal_eval_relative_secure); eauto.
+  clear - SSTEP4 SSTEP7.
+  induction os' in os'0, os1, os2, SSTEP4, SSTEP7 |-* ; destruct os'0, os1, os2; ss.
+  all: try inv SSTEP4; try inv SSTEP7.
+  - left. exists (o0 :: os2). reflexivity.
+  - right. exists (o :: os1). reflexivity.
+  - i. assert (a = o) as ->.
+    { destruct x0; inv H; inv H0; reflexivity. }
+    rewrite <- !prefix_cons in x0. eapply IHos' in x0; [|exact H4 | exact H6].
+    enough (o0 = o1) as ->.
+    { rewrite <- !prefix_cons. assumption. }
+    clear - H2 H3. destruct o, o0, o1; try inv H2; try inv H3; clarify; ss.
+    all: destruct l.
+    all: try (destruct n4; contradiction).
+    all: try (destruct n0; contradiction).
+    all: try (destruct n3; contradiction).
+    all: try (destruct n1; contradiction).
+    all: try (destruct n2; contradiction).
+    destruct n0.
+    + destruct l0, l1. destruct n1, n3; try congruence; try contradiction.
+    + destruct l0, l1. destruct n2, n4; try contradiction. 
+      rewrite H3 in H2. inv H2. reflexivity.
+Qed.
 
 Lemma spec_eval_relative_secure_init_aux
   p r1 r2 m1 m2
