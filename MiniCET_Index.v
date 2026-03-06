@@ -2840,10 +2840,11 @@ Proof.
     exploit unused_prog_lookup; try eapply UNUSED1; eauto.
     exploit unused_prog_lookup; try eapply UNUSED2; eauto. i.
     destruct ((uslh_prog p)[[(l', o')]]) eqn:NXT.
-    (* Fault *)
+    (* Target Fault - instruction lookup failed.  *)
     2:{ replace [DCall(l', o')] with ([DCall (l', o')] ++ []) by ss.
         replace [OCall l] with ([OCall l] ++ []) by ss.
         destruct l as [l o]. destruct o.
+        (* o = 0 *)
         - exists ([DCall (l', o')] ++ []), ([OCall (l, 0)] ++ []). esplits.
           { econs; [|econs].
             eapply ISMI_Call_F; eauto.
@@ -2865,6 +2866,7 @@ Proof.
           { econs. ii. clarify. }
           { repeat econs. }
           { repeat econs. }
+        (* o = S n *)
         - assert (WFRT: wf_ret (uslh_prog p) (l, S o)).
           { dup REG. inv REG. simpl in H8. rewrite H0 in H8.
             unfold to_fp in H8. des_ifs.
@@ -2897,6 +2899,7 @@ Proof.
     assert (i = ICTarget \/ i <> ICTarget).
     { destruct i; try (sfby (right; ii; clarify)). auto. }
     des; subst.
+    (* Normal Call Steps *)
     + exploit head_call_target; eauto. i. des; clarify.
       replace [DCall(l0, 0)] with ([DCall (l0, 0)] ++ []) by ss.
       replace [OCall l] with ([OCall l] ++ []) by ss.
@@ -2947,7 +2950,43 @@ Proof.
             { rewrite Nat.eqb_sym, EQUIV. auto. } } }
         { repeat econs. }
         { repeat econs. }
-      * admit.
+      * assert (WFRT: wf_ret (uslh_prog p) (l, S o)).
+        { dup REG. inv REG. simpl in H8. rewrite H0 in H8.
+          unfold to_fp in H8. des_ifs.
+          eapply wf_ret_expr_tgt; eauto.
+          exploit wf_prog_lookup; eauto. }
+        hexploit wf_ret_uslh_src; eauto. i. des.
+        assert (ms = false); subst.
+        { destruct ms; auto. inv REG. des. simpl in H8.
+          rewrite H5 in H8. ss. }
+
+        exists ([DCall (l0, 0)] ++ []), ([OCall (l, S o_src)] ++ []).
+        esplits.
+        { econs; [|econs].
+          eapply ISMI_Call; eauto.
+          dup REG. inv REG. simpl in H8. rewrite H5 in H8. simpl in H8.
+          simpl in x1, x0. hexploit eval_regs_eq; eauto.
+          { exploit wf_prog_lookup; eauto. ss. clear. apply wf_expr_wf_exp. }
+          i. unfold to_fp in *. des_ifs_safe. red in H6.
+          destruct pc0. des_ifs.
+          { des; clarify. }
+          hexploit ret_sync_inj; [eapply H0|eapply H6|]. i. des. clarify. }
+        { simpl in NXT. des_ifs_safe. simpl in Heq0.
+          eapply match_cfgs_ext_ct1; eauto.
+          - simpl. des_ifs.
+          - inv REG. auto.
+          - simpl. rewrite STK.
+            exploit block_always_terminator_prog; try eapply CALL; eauto. i. des.
+            destruct pc as [b1 o1].
+            hexploit pc_sync_next; try eapply PC; eauto. i. unfold ret_sync.
+            ss. rewrite add_1_r. des_ifs_safe. ss.
+            do 3 f_equal. lia.
+          - inv REG. simpl. rewrite MS. ss. rewrite H5 in *.
+            ss. unfold to_fp in H8. des_ifs_safe.
+            ss. clarify. do 2 rewrite andb_false_r. simpl. auto. }
+        { repeat econs. }
+        { repeat econs. red. eauto. }
+    (* Fault - not ctarget *)
     + admit.
       (* replace [DCall(l', o')] with ([DCall (l', o')] ++ []) by ss. *)
       (* replace [OCall l] with ([OCall l] ++ []) by ss. *)
