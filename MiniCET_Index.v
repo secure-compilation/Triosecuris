@@ -3106,8 +3106,14 @@ Proof.
           { (* CMP = false: eval gives N 1 *)
             destruct ms; auto. } }
       { repeat econs. unfold match_dir. simpl. eauto. }
-    (* termination *)
-    + admit.
+    + exists [], S_Term. split.
+      * change (@nil direction) with (@nil direction ++ []).
+        change (@nil observation) with (@nil observation ++ []).
+        econs 2. 2: econs.
+        destruct stk; ss. 2: destruct (ret_sync p c); [destruct (map_opt (ret_sync p) stk); discriminate |discriminate].   
+        econs. exploit tgt_inv; try eapply FROM; eauto. i. des. inv x1. 2: assumption.
+        inv MATCH. eapply unused_prog_lookup in UNUSED2; eauto. now destruct UNUSED2.
+      * split; econs.
   (* after return *)
   - inv TGT; clarify.
     exists [], []. esplits; try sfby (repeat econs).
