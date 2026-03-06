@@ -2987,53 +2987,56 @@ Proof.
         { repeat econs. }
         { repeat econs. red. eauto. }
     (* Fault - not ctarget *)
-    + admit.
-      (* replace [DCall(l', o')] with ([DCall (l', o')] ++ []) by ss. *)
-      (* replace [OCall l] with ([OCall l] ++ []) by ss. *)
+    + replace [DCall(l', o')] with ([DCall (l', o')] ++ []) by ss.
+      replace [OCall l] with ([OCall l] ++ []) by ss.
+      destruct l as [l o]. destruct o.
+      (* o = 0 *)
+      * exists ([DCall (l', o')] ++ []), ([OCall (l, 0)] ++ []). esplits.
+        { econs; [|econs].
+          eapply ISMI_Call_F; eauto.
+          - unfold cptr in *. rewrite <- H8. inv REG. ss. rewrite H1.
+            destruct ms; ss. rewrite H1 in *. ss.
+            f_equal. exploit (eval_regs_eq); eauto.
+            { apply wf_expr_wf_exp; eapply wf_prog_lookup in WFP; eauto; apply WFP. }
+            i. unfold to_fp in H8. des_ifs_safe. red in x2.
+            des_ifs_safe; des; subst; auto. clear NXT.
+            des_ifs.
+            { des. rewrite Nat.eqb_eq in Heq2. subst. auto. }
+            { eapply ret_sync_nonzero in x2. clarify. }
+          - i. destruct blk; destruct b; auto. right.
+            simpl. ii. subst. hexploit ctarget_exists; eauto. i.
+            ss. clarify. }
+          { econs. ii. clarify. }
+          { repeat econs. }
+          { repeat econs. }
+      (* o = S n *)
+      * assert (WFRT: wf_ret (uslh_prog p) (l, S o)).
+        { dup REG. inv REG. simpl in H8. rewrite H1 in H8.
+          unfold to_fp in H8. des_ifs.
+          eapply wf_ret_expr_tgt; eauto.
+          exploit wf_prog_lookup; eauto. }
+        hexploit wf_ret_uslh_src; eauto. i. des.
+        assert (ms = false); subst.
+        { destruct ms; auto. inv REG. des. simpl in H8.
+          rewrite H6 in H8. ss. }
 
-      (* exploit unused_prog_lookup; try eapply UNUSED1; eauto. *)
-      (* exploit unused_prog_lookup; try eapply UNUSED2; eauto. *)
-
-      (* destruct (p[[(l', o')]]) eqn:ISRC; cycle 1. *)
-      (* { simpl in ISRC. des_ifs. *)
-      (*   - destruct o'. *)
-      (*     + destruct p0 as [blk' b']. simpl in ISRC. *)
-      (*       assert (blk' = []) by des_ifs. clear ISRC. subst. *)
-      (*       eapply nth_error_In in Heq. *)
-      (*       inv WFP. rewrite Forall_forall in H1. eapply H1 in Heq. *)
-      (*       inv Heq. red in H2. ss. lia. *)
-      (*     + i. exists ([DCall (l', S o')] ++ []). esplits. *)
-      (*       { econs; [|econs]. unfold cptr in *. eapply ISMI_Call_F; eauto. *)
-      (*         - rewrite <- H8. inv REG. simpl. *)
-      (*           rewrite H1. destruct ms; ss. *)
-      (*           (* erewrite eval_regs_eq; eauto. *) *)
-      (*           admit. (* zero offset *) *)
-      (*         - ii. ss. right. ss. } *)
-      (*       { econs; eauto. ii. clarify. } *)
-      (*       { repeat econs. } *)
-      (*   - i. exists ([DCall (l', o')] ++ []). esplits. *)
-      (*     { econs; [|econs]. unfold cptr in *. eapply ISMI_Call_F; eauto. *)
-      (*       - rewrite <- H8. inv REG. simpl. *)
-      (*         rewrite H1. destruct ms; ss. *)
-      (*         (* erewrite eval_regs_eq; eauto. *) *)
-      (*         admit. (* zero offset *) *)
-      (*       - ii. ss. clarify. } *)
-      (*     { econs; eauto. ii. clarify. } *)
-      (*     { repeat econs. } } *)
-      (* i. exists ([DCall (l', o')] ++ []). esplits. *)
-      (* { econs. *)
-      (*   - unfold cptr in *. eapply ISMI_Call_F; eauto. *)
-      (*     + rewrite <- H8. inv REG. simpl. *)
-      (*       rewrite H1. destruct ms; ss. *)
-      (*       (* erewrite eval_regs_eq; eauto. *) *)
-      (*       admit. (* zero offset *) *)
-      (*     + ii. simpl in H0. *)
-      (*       destruct blk as [blk b]. simpl. *)
-      (*       destruct b; auto. destruct o'; auto. *)
-      (*       eapply ctarget_exists in H0. clarify. *)
-      (*   - econs. } *)
-      (* { econs; eauto. ii. clarify. } *)
-      (* { repeat econs. } *)
+        exists ([DCall (l', o')] ++ []), ([OCall (l, S o_src)] ++ []).
+        esplits.
+        { econs; [|econs].
+          eapply ISMI_Call_F; eauto.
+          - dup REG. inv REG. simpl in H8. rewrite H6 in H8. simpl in H8.
+            simpl in x1, x0. hexploit eval_regs_eq; eauto.
+            { exploit wf_prog_lookup; eauto. ss. clear. apply wf_expr_wf_exp. }
+            i. unfold to_fp in *. des_ifs_safe. red in H9.
+            destruct pc0. des_ifs.
+            { des; clarify. }
+            hexploit ret_sync_inj; [eapply H1|eapply H9|]. i. des. clarify.
+          - ii. destruct o'; [| right; ii; ss; clarify].
+            destruct blk; destruct b; auto. right.
+            ss. hexploit ctarget_exists; eauto. i. ss; clarify. }
+        { econs. ii. clarify. }
+        { repeat econs. }
+        { repeat econs. red. eauto. }
   - inv TGT; clarify. esplits; econs.
   - inv TGT; clarify.
     esplits.
@@ -3165,7 +3168,7 @@ Proof.
       i. des. rewrite t_update_neq; eauto.
     + eauto.
     + eauto.
-Admitted.
+Qed.
 
 Lemma multi_ideal_inst_trans2
   p ic1 ic2 ic3 ds1 ds2 os1 os2
