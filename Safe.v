@@ -311,10 +311,9 @@ Proof.
   exploit ultimate_slh_bcc'; eauto.
   i. des. destruct ic2.
   - exploit SEQ; eauto. i. des.
-
     inv x1.
-    + inv MATCH0. inv x2.
-      * exploit src_inv; eauto. i. des. inv x2. inv MATCH0.
+    + inv MATCH0. inv x4.
+      * exploit src_inv; eauto. i. des. inv x4. inv MATCH0.
         esplits. econs; eauto.
       * exploit src_inv; eauto. i. des. inv x1. inv MATCH0.
         esplits. econs 2; eauto.
@@ -322,49 +321,49 @@ Proof.
         eapply unused_prog_lookup in UNUSED1; eauto.
         eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
         esplits. econs 3; eauto.
-        { erewrite <- H9. simpl. inv REG.
-          rewrite H1. destruct ms; ss. f_equal.
-          symmetry. eapply eval_regs_eq; eauto. }
-        { erewrite <- H10. simpl. inv REG.
-          rewrite H1. destruct ms; ss. f_equal.
-          symmetry. eapply eval_regs_eq; eauto. }
-      * exploit src_inv; eauto. i. des. inv x2; [ss|].
+        { erewrite <- H9. inv REG.
+          admit. }
+        { erewrite <- H10. inv REG.
+          admit. }
+      * exploit src_inv; eauto. i. des. inv x4; [ss|].
         eapply unused_prog_lookup in UNUSED1; eauto.
         eapply unused_prog_lookup in UNUSED2; eauto.
 
         assert (to_nat (eval r' <{{ (msf = 1) ? 0 : e }}>) = Some n').
         { ss. inv REG. rewrite H1. destruct ms; ss; eauto.
-          rewrite <- H9. erewrite <- eval_regs_eq; eauto. }
+          rewrite <- H9. admit. }
         esplits. econs 4; eauto.
-      * exploit src_inv; eauto. i. des. inv x2. inv MATCH0.
+      * exploit src_inv; eauto. i. des. inv x4. inv MATCH0.
         esplits. econs 5; eauto.
       * exploit src_inv; eauto. i. des. inv x1. inv MATCH0.
         eapply unused_prog_lookup in UNUSED1; eauto.
         eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
 
+        red in MSC. specialize (MSC n0). des_ifs_safe.
         esplits. econs 6; eauto. rewrite <- H10.
         inv REG. simpl. rewrite H1. destruct ms; ss.
-        erewrite <- eval_regs_eq; eauto.
-      * exploit src_inv; eauto. i. des. inv x2. inv MATCH0.
+        (* erewrite <- eval_regs_eq; eauto. *)
+        admit.
+      * exploit src_inv; eauto. i. des. inv x4. inv MATCH0.
         eapply unused_prog_lookup in UNUSED1; eauto.
         eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
 
         esplits. econs 7; eauto. erewrite <- H10.
         inv REG. simpl. rewrite H1. destruct ms; ss.
-        erewrite <- eval_regs_eq; eauto.
-      * exploit src_inv; eauto. i. des. inv x2; [ss|].
+        admit.
+      * exploit src_inv; eauto. i. des. inv x4; [ss|].
         esplits. econs 2; eauto.
-      * exploit src_inv; eauto. i. des. inv x2; [ss|].
+      * exploit src_inv; eauto. i. des. inv x4; [ss|].
         esplits. econs 2; eauto.
       * destruct stk'.
         { ss. des_ifs. }
-        exploit src_inv; eauto. i. des. inv x2.
+        exploit src_inv; eauto. i. des. inv x4.
         { inv SIMPL. }
         esplits. econs 11; eauto.
-      * exploit src_inv; eauto. i. des. inv x2. inv x1. inv MATCH0.
+      * exploit src_inv; eauto. i. des. inv x4. inv x1. inv MATCH0.
         esplits. econs 11. eauto.
       * destruct stk'; [|ss].
-        exploit src_inv; eauto. i. des. inv x2.
+        exploit src_inv; eauto. i. des. inv x4.
         { inv SIMPL. }
         esplits. econs 11; eauto.
     + esplits. econs. eauto.
@@ -374,11 +373,12 @@ Proof.
       eapply unused_prog_lookup in UNUSED2; eauto.
 
       destruct (to_fp (eval r' <{{ (msf = 1) ? & (0,0) : fp }}>)) eqn:FP.
-      2:{ ss. rewrite H1 in FP. ss. destruct ms; ss.
-          assert (exists l, to_fp (eval r0 fp) = Some l).
-          { inv x2; clarify; eauto. }
-          des. erewrite eval_regs_eq with (r := r0) (r' := r') in H2; try eapply H0; eauto.
-          clarify. }
+      2:{ admit.
+          (* ss. rewrite H1 in FP. ss. destruct ms; ss. *)
+          (* assert (exists l, to_fp (eval r0 fp) = Some l). *)
+          (* { inv x2; clarify; eauto. } *)
+          (* des. erewrite eval_regs_eq with (r := r0) (r' := r') in H2; try eapply H0; eauto.(*  *) *)
+          (* clarify. *) }
       esplits. eapply SpecSMI_Call; eauto.
     + esplits. econs 2; eauto.
     + esplits. eapply SpecSMI_Jump; eauto.
@@ -389,7 +389,7 @@ Proof.
       * destruct c as [l' o'].
         exists [DRet (l', o')].
         esplits. econs 10; eauto.
-        admit. (* TODO: use WFSTK, STK  *)
+        admit.
     + esplits. eapply SpecSMI_Asgn. eauto.
   - clear - x0. exfalso. remember false. clear Heqb.
     dependent induction x0. destruct ic2. 3-4: inv x0; inv H0.
@@ -402,10 +402,10 @@ Unshelve. all: repeat econs.
 Admitted.
 
 Lemma seq_spec_safety_preservation_init_aux
-  p c c' r r' m
+  p c c' r r' m m'
   (FST: first_blk_call p)
   (CFG1: c = ((0,0), r, m, @nil cptr))
-  (CFG2: c' = ((0,0), r', m, @nil cptr))
+  (CFG2: c' = ((0,0), r', m', @nil cptr))
   (CALLEE: r' ! callee = FP (0, 0))
   (MEM: nonempty_mem m)
   (NCT: no_ct_prog p)
@@ -413,7 +413,8 @@ Lemma seq_spec_safety_preservation_init_aux
   (UNUSED1: unused_prog msf p)
   (UNUSED2: unused_prog callee p)
   (SEQ: seq_exec_safe p c)
-  (REG: Rsync r r' false) :
+  (REG: Rsync p r r' false)
+  (MSC: Msync p m m') :
   spec_exec_safe (uslh_prog p) (c', true, false).
 Proof.
   red. i.
@@ -440,10 +441,11 @@ Proof.
     - i. des. rewrite t_update_neq; eauto.
     - ss. rewrite CALLEE. ss. }
   { ss. }
+  { ss. }
 Qed.
 
 Lemma seq_spec_safety_preservation_init
-  p r r' m
+  p r r' m m'
   (FST: first_blk_call p)
   (CALLEE: r' ! callee = FP (0,0))
   (MEM: nonempty_mem m)
@@ -452,8 +454,9 @@ Lemma seq_spec_safety_preservation_init
   (UNUSED1: unused_prog msf p)
   (UNUSED2: unused_prog callee p)
   (SEQ: seq_exec_safe p ((0,0), r, m, @nil cptr))
-  (REG: Rsync r r' false) :
-  spec_exec_safe (uslh_prog p) (((0,0), r', m, @nil cptr), true, false).
+  (REG: Rsync p r r' false)
+  (MSC: Msync p m m') :
+  spec_exec_safe (uslh_prog p) (((0,0), r', m', @nil cptr), true, false).
 Proof.
   eapply seq_spec_safety_preservation_init_aux; eauto.
 Qed.
