@@ -3228,9 +3228,12 @@ Proof.
   i. des. esplits.
   - eapply multi_ideal_inst_trans2; eauto.
   - eauto.
-  - admit.
-  - admit.
-Admitted.
+  - clear - x2 x6.
+    unfold match_ds.
+    apply Forall2_app; assumption.
+  - clear - x3 x7.
+    apply Forall2_app; assumption.
+Qed.
 
 Lemma ultimate_slh_bcc (p: prog) : forall n ic1 sc1 sc2 ds os,
   no_ct_prog p ->
