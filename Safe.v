@@ -431,7 +431,7 @@ Proof.
     eapply SpecSMI_Fault; eauto.
   - inv x1.
 Unshelve. all: repeat econs.
-Admitted.
+Qed.
 
 Lemma seq_spec_safety_preservation_init_aux
   p c c' r r' m m'
