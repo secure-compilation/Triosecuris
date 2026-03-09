@@ -321,17 +321,31 @@ Proof.
         eapply unused_prog_lookup in UNUSED1; eauto.
         eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
         esplits. econs 3; eauto.
-        { erewrite <- H9. inv REG.
-          admit. }
-        { erewrite <- H10. inv REG.
-          admit. }
+        { erewrite <- H9. inv REG. ss. rewrite H1.
+          destruct ms; ss.
+          exploit eval_regs_eq; try eapply UNUSED4; eauto.
+          { apply wf_expr_wf_exp. eapply wf_prog_lookup in WFP; eauto. apply WFP. }
+          destruct (eval r0 e1), (eval r' e1); ss.
+          congruence.
+        }
+        { erewrite <- H10. inv REG. ss. rewrite H1.
+          destruct ms; ss.
+          exploit eval_regs_eq; try eapply UNUSED5; eauto.
+          { apply wf_expr_wf_exp. eapply wf_prog_lookup in WFP; eauto. apply WFP. }
+          destruct (eval r0 e2), (eval r' e2); ss.
+          congruence.
+        }
       * exploit src_inv; eauto. i. des. inv x4; [ss|].
         eapply unused_prog_lookup in UNUSED1; eauto.
         eapply unused_prog_lookup in UNUSED2; eauto.
 
         assert (to_nat (eval r' <{{ (msf = 1) ? 0 : e }}>) = Some n').
-        { ss. inv REG. rewrite H1. destruct ms; ss; eauto.
-          rewrite <- H9. admit. }
+        { ss. inv REG. rewrite H1. destruct ms; ss; eauto. rewrite <- H9.
+          exploit eval_regs_eq; try eapply UNUSED4; eauto.
+          { apply wf_expr_wf_exp. eapply wf_prog_lookup in WFP; eauto. apply WFP. }
+          destruct (eval r0 e), (eval r' e); ss.
+          congruence.
+        }
         esplits. econs 4; eauto.
       * exploit src_inv; eauto. i. des. inv x4. inv MATCH0.
         esplits. econs 5; eauto.
@@ -342,15 +356,20 @@ Proof.
         red in MSC. specialize (MSC n0). des_ifs_safe.
         esplits. econs 6; eauto. rewrite <- H10.
         inv REG. simpl. rewrite H1. destruct ms; ss.
-        (* erewrite <- eval_regs_eq; eauto. *)
-        admit.
+        exploit eval_regs_eq; eauto.
+        { apply wf_expr_wf_exp. eapply wf_prog_lookup in WFP; eauto. apply WFP. }
+        destruct (eval r0 e), (eval r' e); ss.
+        congruence.
       * exploit src_inv; eauto. i. des. inv x4. inv MATCH0.
         eapply unused_prog_lookup in UNUSED1; eauto.
         eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
 
         esplits. econs 7; eauto. erewrite <- H10.
         inv REG. simpl. rewrite H1. destruct ms; ss.
-        admit.
+        exploit eval_regs_eq; try apply UNUSED1; eauto.
+        { apply wf_expr_wf_exp. eapply wf_prog_lookup in WFP; eauto. apply WFP. }
+        destruct (eval r0 e), (eval r' e); ss.
+        congruence.
       * exploit src_inv; eauto. i. des. inv x4; [ss|].
         esplits. econs 2; eauto.
       * exploit src_inv; eauto. i. des. inv x4; [ss|].
@@ -373,12 +392,12 @@ Proof.
       eapply unused_prog_lookup in UNUSED2; eauto.
 
       destruct (to_fp (eval r' <{{ (msf = 1) ? & (0,0) : fp }}>)) eqn:FP.
-      2:{ admit.
-          (* ss. rewrite H1 in FP. ss. destruct ms; ss. *)
-          (* assert (exists l, to_fp (eval r0 fp) = Some l). *)
-          (* { inv x2; clarify; eauto. } *)
-          (* des. erewrite eval_regs_eq with (r := r0) (r' := r') in H2; try eapply H0; eauto.(*  *) *)
-          (* clarify. *) }
+      2:{ ss. rewrite H1 in FP. ss. destruct ms; ss.
+        assert (exists l, to_fp (eval r0 fp) = Some l).
+        { inv x4; clarify; eauto. }
+        des. exploit eval_regs_eq; eauto. 1: apply wf_expr_wf_exp; eapply wf_prog_lookup in WFP; eauto; apply WFP.
+        destruct (eval r' fp), (eval r0 fp); ss; destruct pc1; ss.
+      }
       esplits. eapply SpecSMI_Call; eauto.
     + esplits. econs 2; eauto.
     + esplits. eapply SpecSMI_Jump; eauto.
