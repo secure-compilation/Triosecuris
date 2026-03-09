@@ -408,7 +408,20 @@ Proof.
       * destruct c as [l' o'].
         exists [DRet (l', o')].
         esplits. econs 10; eauto.
-        admit.
+        unfold wf_ret.
+        destruct stk0; ss.
+        destruct (ret_sync p c) eqn: ?;  ss.
+        destruct (map_opt (ret_sync p) stk0); ss. clarify.
+        destruct c. exploit ret_sync_same_label; eauto. intros ->.
+        destruct n1; ss.
+        destruct (p [[(l', n1)]]) eqn:?; ss; rewrite Heqo0 in Heqo. 2: discriminate.
+        destruct i; ss.
+        destruct (pc_sync p (l', n1)) eqn:?; ss; rewrite Heqo1 in Heqo. 2: discriminate.
+        exploit src_inv. 3: instantiate (2 := (l', n1)); exact Heqo1. all: eauto. i.
+        destruct c; clarify. des. inv x5. 1: inv SIMPL.
+        destruct tpc. simpl in SYNC. clarify. ss.
+        rewrite IN'. assert (n2 + 2 - 1 = Nat.add n2 1) as -> by lia. rewrite IN.
+        split; ss. econs. split; [reflexivity|lia].
     + esplits. eapply SpecSMI_Asgn. eauto.
   - clear - x0. exfalso. remember false. clear Heqb.
     dependent induction x0. destruct ic2. 3-4: inv x0; inv H0.
