@@ -1667,6 +1667,25 @@ Proof.
     now intros [-> ->%succ_inj].
 Qed.
 
+Lemma match_ob_functional p o o'1 o'2:
+    match_ob p o o'1 ->
+    match_ob p o o'2 ->
+    o'1 = o'2.
+Proof.
+    destruct o, o'1, o'2; try contradiction; try congruence.
+    all: destruct l.
+    all: match goal with 
+         | |- match_ob _ (OCall (_, ?n)) _ -> _ => try (destruct n; contradiction)
+         end.
+    destruct l0, l1. unfold match_ob. destruct n0, n4, n2; try contradiction.
+    - congruence.
+    - unfold ret_sync.
+      destruct (p [[(n, n0)]]); try discriminate.
+      destruct i; try discriminate.
+      destruct (pc_sync p (n, n0)); try discriminate. 
+      destruct c. i. inv H. inv H0. reflexivity.
+Qed.
+
 Lemma eval_regs_eq : forall p (r r': reg) (e: exp),
    e_unused msf e ->
    e_unused callee e ->
@@ -3981,17 +4000,7 @@ Proof.
     rewrite <- !prefix_cons in x0. eapply IHos' in x0; [|exact H4 | exact H6].
     enough (o0 = o1) as ->.
     { rewrite <- !prefix_cons. assumption. }
-    clear - H2 H3. destruct o, o0, o1; try inv H2; try inv H3; clarify; ss.
-    all: destruct l.
-    all: try (destruct n4; contradiction).
-    all: try (destruct n0; contradiction).
-    all: try (destruct n3; contradiction).
-    all: try (destruct n1; contradiction).
-    all: try (destruct n2; contradiction).
-    destruct n0.
-    + destruct l0, l1. destruct n1, n3; try congruence; try contradiction.
-    + destruct l0, l1. destruct n2, n4; try contradiction. 
-      rewrite H3 in H2. inv H2. reflexivity.
+    eapply match_ob_functional; eauto.
 Qed.
 
 Lemma spec_eval_relative_secure_init_aux
@@ -4018,8 +4027,21 @@ Lemma spec_eval_relative_secure_init_aux
 Proof.
   eapply ultimate_slh_bcc_init in SSTEP1; eauto. des.
   eapply ultimate_slh_bcc_init in SSTEP2; eauto. des. subst.
-  eapply ideal_eval_relative_secure; eauto.
-Admitted.
+  assert (ds'0 = ds') as ->.
+  { clear - SSTEP0 SSTEP4. induction SSTEP0 in ds'0, SSTEP4 |-*; inv SSTEP4. 1: reflexivity.
+    exploit match_dir_inj; [exact H | exact H3|]. i. subst. f_equal. apply IHSSTEP0. exact H4. } 
+  exploit ideal_eval_relative_secure; eauto. i.
+  clear - x0 SSTEP3 SSTEP5.
+  induction SSTEP3 in os'0, os2, SSTEP5, x0 |-*; inv SSTEP5.
+  - assumption.
+  - left. now exists (y :: l').
+  - right. now exists (y :: l').
+  - assert (x = x1) as ->.
+    { destruct x0, H2; inv H2; reflexivity. }
+    enough (y = y0) as ->.
+    { rewrite <- !prefix_cons in x0 |- *. firstorder. }
+    eapply match_ob_functional; eauto.
+Qed.
 
 Lemma spec_eval_relative_secure
   p r1 r2 r1' r2' m1 m2 m1' m2'
