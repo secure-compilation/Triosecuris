@@ -664,14 +664,13 @@ Proof.
   rewrite utils_rev_append_and_rev. rewrite IHl. reflexivity.
 Qed.
 
-Lemma block_always_terminator p b o i
-  (WFB: wf_block p b)
+Lemma block_always_terminator b o i
+  (WFB: last_inst_terminator b)
   (INST: nth_error (fst b) o = Some i)
   (NT: ~ is_terminator i) :
   exists i', nth_error (fst b) (add o 1) = Some i'.
 Proof.
-  destruct WFB. destruct H0.
-  red in H0. des_ifs.
+  red in WFB. des_ifs.
   destruct (le_dec o (Datatypes.length (fst b) - 1)).
 
   { assert (i <> i0).
@@ -681,39 +680,39 @@ Proof.
 
     { assert (rev (i0 :: l) = rev l ++ [i0]). { simpl. auto. }
       assert (rev (rev (fst b)) = rev (i0 :: l)). { rewrite Heq. simpl. auto. }
-      rewrite rev_involutive in H4. simpl in H4.
+      rewrite rev_involutive in H1. simpl in H1.
       assert (nth_error (fst b) o = Some i0).
-      { rewrite H4, e. simpl. rewrite H4. simpl. rewrite nth_error_app.
+      { rewrite H1, e. simpl. rewrite H1. simpl. rewrite nth_error_app.
         assert ((Datatypes.length (rev l ++ [i0]) - 1 <? Datatypes.length (rev l))%nat = false).
         { induction l as [|h t]; clarify. simpl in *.
           assert (add 1 (Datatypes.length (rev t ++ [h])) = Datatypes.length ((rev t ++ [h]) ++ [i0])).
-          { repeat rewrite length_app. assert (Datatypes.length [i0] = 1). { auto. } rewrite H5. rewrite add_comm. auto. }
-          rewrite <- H5. simpl. rewrite sub_0_r. apply ltb_irrefl.
+          { repeat rewrite length_app. assert (Datatypes.length [i0] = 1). { auto. } rewrite H2. rewrite add_comm. auto. }
+          rewrite <- H2. simpl. rewrite sub_0_r. apply ltb_irrefl.
         }
-        rewrite H5.
+        rewrite H2.
         assert (forall (n: nat), ((add n 1) - 1) - n = 0). { lia. }
-        specialize (H6 (Datatypes.length (rev l))).
+        specialize (H3 (Datatypes.length (rev l))).
         rewrite length_app. assert (Datatypes.length [i0] = 1). { simpl. auto. }
-        rewrite H7.
+        rewrite H4.
         assert (((add 1 (Datatypes.length (rev l))) - 1) = Datatypes.length (rev l)). { simpl. rewrite sub_0_r. auto. }
-        rewrite add_comm. rewrite H8. simpl.
+        rewrite add_comm. rewrite H5. simpl.
         assert ( ((Datatypes.length (rev l)) - (Datatypes.length (rev l))) = 0 ). { lia. }
-        rewrite H9. simpl. auto.
+        rewrite H6. simpl. auto.
       }
-      rewrite INST in H5. injection H5; intros. clarify.
+      rewrite INST in H2. injection H2; intros. clarify.
     }
 
     assert (rev (i0 :: l) = rev l ++ [i0]) by ss.
     assert (rev (rev (fst b)) = rev (i0 :: l)) by (rewrite Heq; ss).
-    rewrite rev_involutive in H4. simpl in H4. rewrite H4 in INST, l0, n. rewrite H4.
+    rewrite rev_involutive in H1. simpl in H1. rewrite H1 in INST, l0, n. rewrite H1.
     assert (o <= Datatypes.length (rev l ++ [i0]) - 1
             -> o <> Datatypes.length (rev l ++ [i0]) - 1
             -> o < Datatypes.length (rev l ++ [i0]) - 1 ).
     { lia. }
-    specialize (H5 l0 n); intros.
+    specialize (H2 l0 n); intros.
     assert ((add o 1) <= (Datatypes.length (rev l ++ [i0]) - 1)). { lia. }
     assert ((add o 1) < (Datatypes.length (rev l ++ [i0]))). { lia. }
-    rewrite <- nth_error_Some in H7.
+    rewrite <- nth_error_Some in H4.
     destruct (nth_error (rev l ++ [i0]) (add o 1)); clarify. exists i1. auto.
   }
 
@@ -723,16 +722,27 @@ Proof.
   rewrite nth_error_Some in H. lia.
 Qed.
 
+Lemma block_always_terminator_prog_aux p pc i
+  (WF: Forall last_inst_terminator p)
+  (INST: p[[pc]] = Some i)
+  (NT: ~ is_terminator i) :
+  exists i', p[[pc+1]] = Some i'.
+Proof.
+  destruct pc as [l o]. ss. des_ifs_safe.
+  exploit block_always_terminator; eauto.
+  rewrite Forall_forall in WF. eapply WF.
+  eapply nth_error_In; eauto.
+Qed.
+
 Lemma block_always_terminator_prog p pc i
   (WF: wf_prog p)
   (INST: p[[pc]] = Some i)
   (NT: ~ is_terminator i) :
   exists i', p[[pc+1]] = Some i'.
 Proof.
-  inv WF. destruct pc as [l o]. ss. des_ifs_safe.
-  exploit block_always_terminator; eauto.
-  rewrite Forall_forall in H0. eapply H0.
-  eapply nth_error_In; eauto.
+  inv WF. des. eapply block_always_terminator_prog_aux; eauto.
+  eapply Forall_and_inv in H0. des. eapply Forall_and_inv in H1. des.
+  eauto.
 Qed.
 
 Import MonadNotation.

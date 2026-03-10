@@ -98,7 +98,7 @@ Inductive multi_seq_inst (p : prog) (c : @state cfg) : @state cfg -> obs -> Prop
       (multi_seq_inst p c ct os).
 
 Definition wf_ret (p: prog) (len: nat) (pc: nat) : Prop :=
-  exists e, fetch p len (pc - 1) = Some <{{ call e }}> /\ pc > 0.
+  exists e, MoreLinear.fetch p len (pc - 1) = Some <{{ call e }}> /\ Nat.le (Nat.add len 1) pc.
 
 Definition wf_stk (p: prog) (len: nat) (stk: list nat) : Prop :=
   Forall (fun pc => wf_ret p len pc) stk.
@@ -334,14 +334,14 @@ Proof.
 Qed.
 
 Definition match_pc (p: MiniCET.prog) (len: nat) (pc: cptr) (pc': nat) : Prop :=
-  (* p[[pc]] <> None -> *) pc_inj p len pc = Some pc'.
+  p[[pc]] <> None -> pc_inj p len pc = Some pc'.
 
 Definition match_stk (p: MiniCET.prog) (len: nat) (stk: list cptr) (stk': list nat) : Prop :=
   Forall2 (match_pc p len) stk stk'.
 
 Variant match_states (p: MiniCET.prog) (tp: prog) (len: nat) : state MCC.spec_cfg -> state spec_cfg -> Prop :=
 | match_states_intro pc r m stk ms pc' r' m' stk'
-  (PC: (* p[[pc]] <> None -> *) pc_inj p len pc = Some pc')
+  (PC: p[[pc]] <> None -> pc_inj p len pc = Some pc')
   (MLEN: len = Datatypes.length m')
   (REG: match_reg p len r r')
   (MEM: match_mem p len m m')
@@ -351,17 +351,17 @@ Variant match_states (p: MiniCET.prog) (tp: prog) (len: nat) : state MCC.spec_cf
   match_states p tp len S_Term S_Term
 | match_states_fault :
   match_states p tp len S_Fault S_Fault
-| match_states_call_fault pc r m stk ms pc' r' m' stk'
-  (PC: p[[pc]] <> Some ICTarget)
-  (TPC: fetch tp len pc' <> Some ICTarget)
-  (MLEN: len = Datatypes.length m')
-  (REG: match_reg p len r r')
-  (MEM: match_mem p len m m')
-  (STK: match_stk p len stk stk') :
-  match_states p tp len (S_Running (pc, r, m, stk, true, ms)) (S_Running (pc', r', m', stk', true, ms))
+(* | match_states_call_fault pc r m stk ms pc' r' m' stk' *)
+(*   (PC: p[[pc]] <> Some ICTarget) *)
+(*   (TPC: fetch tp len pc' <> Some ICTarget) *)
+(*   (MLEN: len = Datatypes.length m') *)
+(*   (REG: match_reg p len r r') *)
+(*   (MEM: match_mem p len m m') *)
+(*   (STK: match_stk p len stk stk') : *)
+(*   match_states p tp len (S_Running (pc, r, m, stk, true, ms)) (S_Running (pc', r', m', stk', true, ms)) *)
 | match_states_call pc r m stk ms pc' r' m' stk'
-  (PC: p[[pc]] = Some ICTarget)
-  (TPC: fetch tp len pc' = Some ICTarget)
+  (* (PC: p[[pc]] = Some ICTarget) *)
+  (* (TPC: fetch tp len pc' = Some ICTarget) *)
   (SYNC: pc_inj p len pc = Some pc')
   (MLEN: len = Datatypes.length m')
   (REG: match_reg p len r r')
@@ -682,9 +682,7 @@ Lemma wf_ret_exists p tp ttp len pc
 Proof.
   red in WFR. des. unfold fetch, MoreLinear.fetch in *.
   destruct (le_dec pc len).
-  { replace (pc - len) with 0 by lia.
-    replace (pc - 1 - len) with 0 in WFR by lia.
-    rewrite WFR. discriminate. }
+  { exfalso. lia. }
   replace (pc - len) with (S (pc - 1 - len)) by lia.
   subst tp.
   exploit _machine_prog_call_has_next.
@@ -900,9 +898,32 @@ Definition sc_stk (sc: MCC.spec_cfg) :=
   let '(pc, r, m, stk) := c in
   stk.
 
+Lemma wf_stk_step (p: MiniCET.prog) sc a ds os
+  (WFP: Forall MiniCET_Index.last_inst_terminator p)
+  (STEP: p |- <(( S_Running sc ))> -->_ ds ^^ os <(( S_Running a ))>)
+  (WFSTK: MiniCET_Index.wf_stk p (sc_stk sc)) :
+  MiniCET_Index.wf_stk p (sc_stk a).
+Proof.
+  inv STEP; ss; auto.
+  - (* SpecSMI_Call: stk goes from sk to (pc+1)::sk *)
+    apply Forall_cons; auto.
+    unfold MiniCET_Index.wf_ret.
+    destruct pc0 as [lc oc]. simpl.
+    split.
+    { hexploit MiniCET_Index.block_always_terminator_prog_aux; [eapply WFP | eauto | ss | ].
+      intros [i_nxt INXT_NXT]. unfold MiniCET.inc in INXT_NXT. simpl in INXT_NXT.
+      rewrite INXT_NXT. discriminate. }
+    exists e. split.
+    { replace (Nat.sub (Nat.add oc 1) 1) with oc by lia. eauto. }
+    { lia. }
+  - (* SpecSMI_Ret: stk goes from pc'::sk to sk *)
+    inv WFSTK. eauto.
+Qed.
+
 Lemma minicet_linear_bcc_single
   (p: MiniCET.prog) len (tp: prog) sc tc tct tds tos
   (TRANSL: machine_prog p len = Some tp)
+  (WFP: Forall MiniCET_Index.last_inst_terminator p)
   (SAFE: exists ds os sct, p |- <(( S_Running sc ))> -->_ ds ^^ os  <(( sct ))>)
   (MATCH: match_states p tp len (S_Running sc) (S_Running tc))
   (WFDS: wf_ds tp len tds)
@@ -916,16 +937,17 @@ Proof.
   (* fault *)
   { inv TGT; clarify. esplits; try sfby econs. }
   (* call *)
-  { inv TGT; clarify. esplits; try sfby econs.
-    econs.
-    econs; eauto. ii. eapply pc_inj_inc; eauto. }
+  { inv TGT; clarify. esplits.
+    { eapply MiniCET_Index.SpecSMI_CTarget; eauto. }
+    { econs; eauto. i. exploit pc_inj_inc; try eapply SYNC; eauto. }
+    { repeat econs. }
+    { repeat econs. } }
   destruct (p[[pc0]]) eqn:ISRC.
   2:{ des. inv SAFE; clarify. }
-  des. exploit PC; [ii; clarify|]. clear PC. intros PC. inv TGT.
+  exploit PC; [ii; clarify|]. clear PC. intros PC.
+  des. inv TGT.
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
-    esplits; econs; eauto. unfold pc_inj. intro PC'.
-    destruct pc0 as [b o]. simpl.
-    exploit pc_inj_inc; eauto.
+    esplits; econs; eauto. i. exploit pc_inj_inc; eauto.
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x0. des_ifs.
     esplits. 3-4: econs.
     { econs 2; eauto. }
@@ -1063,13 +1085,13 @@ Proof.
         { ii. clarify. }
         { unfold fetch, MoreLinear.fetch. ii. clarify. }
         econs; eauto. red. ii.
-        eapply pc_inj_inc; eauto.
+        exploit pc_inj_inc; try eapply PC; eauto.
       - hexploit tgt_inv; eauto. i. des.
         assert (i0 = ICTarget).
         { ii. subst. ss. destruct i0; ss; des_ifs. }
         subst. eapply match_states_call; eauto.
         econs; eauto. red. ii.
-        eapply pc_inj_inc; eauto. }
+        exploit pc_inj_inc; try eapply PC; eauto. }
     { repeat econs. red. eauto. }
     { repeat econs. unfold match_ob, val_inject in *. des_ifs. }
 
@@ -1082,24 +1104,105 @@ Proof.
 
   (* return *)
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
+    (* Save the wf_ret hypothesis before it gets overwritten by inv STK *)
+    match goal with H: wf_ret tp _ pc'' |- _ => rename H into WFR_TGT end.
     inv STK. inv SAFE; clarify.
 
+    (* Get wf_ret info for BCC nondeterministic target pc'' *)
     assert (SRCT: exists pc''_src, pc_inj p (Datatypes.length m') pc''_src = Some (pc'')
                            /\ MiniCET_Index.wf_ret p pc''_src).
-    { admit. }
+    { (* From wf_ret tp len pc'', strengthened: pc'' >= len + 1 *)
+      (* WFR_TGT: wf_ret tp (Datatypes.length m') pc'' *)
+      red in WFR_TGT. des.
+      (* H2: fetch tp (Datatypes.length m') (pc'' - 1) = Some (ICall e) *)
+      (* H3: pc'' >= (Datatypes.length m') + 1 *)
+      (* So pc'' - 1 >= Datatypes.length m' *)
+      assert (LLEN: pc'' - 1 >= Datatypes.length m') by lia.
+      unfold fetch, MoreLinear.fetch in H2.
+      (* H2: nth_error tp (pc'' - 1 - Datatypes.length m') = Some (ICall e) *)
+      exploit lookup_from_target.
+      { eauto. }
+      { unfold machine_prog in TRANSL. eauto. }
+      { eauto. }
+      intros (pc_call & INJ_CALL).
+      exploit tgt_inv.
+      { eauto. }
+      { eauto. }
+      { eauto. }
+      intros (i_call & ISRC_CALL & MINST_CALL).
+      unfold machine_inst in MINST_CALL. destruct i_call; ss; clarify; try des_ifs.
+      exploit MiniCET_Index.block_always_terminator_prog_aux.
+      { eauto. }
+      { eauto. }
+      { ss. }
+      intros (i_next & INXT).
+      exploit pc_inj_inc.
+      { eauto. }
+      { intro H_nxt. rewrite H_nxt in INXT. discriminate. }
+      assert (H_addpc: add (pc'' - 1) 1 = pc'').
+      { lia. }
+      rewrite H_addpc. intros INJ_RET.
+      esplits; [eauto |].
+      (* Goal: MiniCET_Index.wf_ret p (pc_call + 1) *)
+      (* INXT: p[[pc_call + 1]] = Some i_next *)
+      (* ISRC_CALL: p[[pc_call]] = Some (ICall fp) *)
+      destruct pc_call as [lc oc].
+      unfold MiniCET_Index.wf_ret. simpl.
+      split.
+      - unfold MiniCET.inc in INXT. simpl in INXT. rewrite INXT. discriminate.
+      - exists fp. split.
+        + replace (Nat.sub (Nat.add oc 1) 1) with oc by lia. exact ISRC_CALL.
+        + lia. }
     des.
 
     esplits; eauto. 3-4: repeat econs.
     { eapply MiniCET_Index.SpecSMI_Ret; eauto. }
-    + admit.
-    + admit. (* red. eauto. *)
+    + (* match_states after ret *)
+      assert (INJH: p[[x]] <> None -> pc_inj p (Datatypes.length m') x = Some pc'0).
+      { eapply H2. }
+      assert (PNNX: p[[x]] <> None).
+      { pose proof (Forall_inv WFSTK) as WFR_X. unfold MiniCET_Index.wf_ret in WFR_X.
+        destruct x. simpl in WFR_X. des. eauto. }
+      assert (INJ_X: pc_inj p (Datatypes.length m') x = Some pc'0).
+      { apply INJH. exact PNNX. }
+      assert (XEQ: x = pc''_src <-> pc'0 = pc'').
+      { split.
+        - intro Hxeq. subst pc''_src. rewrite INJ_X in SRCT. injection SRCT; auto.
+        - intro Hpeq. subst pc''.
+          destruct x as [lx ox]. destruct pc''_src as [lc oc].
+          destruct (Nat.eq_dec lx lc) as [Hleq | Hlneq].
+          + subst lx.
+            destruct (Nat.eq_dec ox oc) as [Hoeq | Honeq].
+            * subst oc. auto.
+            * exfalso. eapply (pc_inj_inject p (lc,ox) (lc,oc) (Datatypes.length m') pc'0 pc'0).
+              { intro Hcontra. injection Hcontra. intros. auto. }
+              { eauto. }
+              { eauto. }
+              { reflexivity. }
+          + exfalso. eapply (pc_inj_inject p (lx,ox) (lc,oc) (Datatypes.length m') pc'0 pc'0).
+            { intro Hcontra. injection Hcontra. intros. auto. }
+            { eauto. }
+            { eauto. }
+            { reflexivity. } }
+      assert (EQ_MS: (fst x =? fst pc''_src)%nat && (snd x =? snd pc''_src)%nat = (pc'0 =? pc'')%nat).
+      { apply Bool.eq_iff_eq_true.
+        rewrite andb_true_iff. do 3 rewrite Nat.eqb_eq.
+        split.
+        - intros [Hf Hs]. apply XEQ. destruct x. destruct pc''_src. simpl in *. subst. auto.
+        - intro Hpeq. apply XEQ in Hpeq. destruct x as [a b]. destruct pc''_src as [c d]. simpl.
+          injection Hpeq. intros Hd Hc. subst. auto.
+      }
+      rewrite EQ_MS.
+      econs; eauto.
+    + (* match_dirs: DRet case *)
+      repeat econs. red. eauto.
 
   (* peek *)
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x0. des_ifs.
     esplits; try sfby econs.
     { eapply MiniCET_Index.SpecSMI_Peek. eauto. }
     { econs; eauto.
-      - ii. eapply pc_inj_inc; eauto.
+      - i. exploit pc_inj_inc; try eapply PC; eauto.
       - destruct stk'.
         + inv STK. red. ii.
           destruct (string_dec x x0); subst.
@@ -1109,24 +1212,26 @@ Proof.
           subst val.
           destruct (string_dec x x2); subst.
           { do 2 rewrite MiniCET_Index.t_update_eq.
-            hexploit H2; ii; clarify. red in H2. red.
-            rewrite H2; eauto. ss.
-            inv WFSTK. red in H4. des_ifs. des.
-
-            inv H4. admit. (* stack wf *) }
+            unfold val_inject. simpl.
+            pose proof (Forall_inv WFSTK) as WFR.
+            destruct x0 as [lx ox].
+            unfold MiniCET_Index.wf_ret in WFR. simpl in WFR.
+            rewrite (H2 (proj1 WFR)). auto. }
           do 2 (rewrite MiniCET_Index.t_update_neq; eauto). }
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     clear SAFE. inv STK.
     esplits; eauto. 2-4: repeat econs.
     { eapply MiniCET_Index.SpecSMI_Term. eauto. }
-Admitted.
+Qed.
 
 Lemma minicet_linear_bcc
   (p: MiniCET.prog) len (tp: prog) sc tc tct tds tos n
   (TRANSL: machine_prog p len = Some tp)
+  (WFP: Forall MiniCET_Index.last_inst_terminator p)
   (SAFE: spec_exec_safe p sc)
   (MATCH: match_states p tp len (S_Running sc) (S_Running tc))
   (WFDS: wf_ds tp len tds)
+  (WFSTK: MiniCET_Index.wf_stk p (sc_stk sc))
   (TGT: tp |- <(( S_Running tc ))> -->m*_ tds ^^ tos ^^ n  <(( tct ))>) :
   exists ds os sct, p |- <(( S_Running sc ))> -->*_ ds ^^ os ^^ n  <(( sct ))>
              /\ match_states p tp len sct tct
@@ -1138,7 +1243,7 @@ Proof.
   { eapply SAFE with (ds := []); econs. }
   inv TGT.
   eapply Forall_app in WFDS. destruct WFDS.
-  exploit minicet_linear_bcc_single; try eapply H0; eauto. i. des.
+  exploit minicet_linear_bcc_single; try eapply H0; try eapply WFSTK; eauto. i. des.
   destruct sct; cycle 1.
   { inv x0. }
   { inv x1. inv H5; [|inv H2].
@@ -1161,7 +1266,9 @@ Proof.
     2:{ econs 2; [eapply x0|eapply H2]. }
     { red. rewrite Forall_app; eauto. }
     eauto. }
-  exploit IHn; try eapply H5; eauto.
+  assert (WFSTK2: MiniCET_Index.wf_stk p (sc_stk a)).
+  { eapply wf_stk_step; eauto. }
+  exploit IHn; try eapply H5; try eapply WFSTK2; eauto.
   i. des. esplits; try eapply x5.
   { econs; eauto. }
   { red. eapply Forall2_app; eauto. }
@@ -1185,6 +1292,9 @@ Definition relative_secure_spec_mir_mc (p:MiniCET.prog) (len:nat) (tp: prog) (tr
 
 Lemma spec_eval_relative_secure_spec_mir_mc_aux
   p r1 r2 r1' r2' m1 m2 m1' m2' tp
+  (WFP1: Forall nonempty_block p)
+  (WFP2: nonempty_program p)
+  (WFP3: Forall last_inst_terminator p)
   (LEN1: Datatypes.length m1' = Datatypes.length m2')
   (REG1: match_reg p (Datatypes.length m1') r1 r1')
   (REG2: match_reg p (Datatypes.length m1') r2 r2')
@@ -1196,30 +1306,30 @@ Lemma spec_eval_relative_secure_spec_mir_mc_aux
   (ISAFE2: spec_exec_safe p (0, 0, r2, m2, [], true, false)):
   spec_same_obs_machine tp (Datatypes.length m1') r1' r2' (Datatypes.length m1') m1' m2' [] true.
 Proof.
-  (* assert (INITSAFE: p[[(0,0)]] <> None). *)
-  (* { red in ISAFE1. exploit ISAFE1; [econs|econs|]. i. des. inv x0; ii; clarify. } *)
+  assert (INITSAFE: p[[(0,0)]] <> None).
+  { admit. }
 
-  (* assert (ISYNC: pc_inj p (Datatypes.length m1') (0, 0) = Some (Datatypes.length m1')). *)
-  (* { clear -INITSAFE. ss. des_ifs. destruct p0. ss. clarify. } *)
+  assert (ISYNC: pc_inj p (Datatypes.length m1') (0, 0) = Some (Datatypes.length m1')).
+  { clear -INITSAFE. ss. des_ifs. destruct p0. ss. clarify. }
 
-  (* red. i. *)
-  (* hexploit minicet_linear_bcc; [|eapply ISAFE1| | |eapply H|]; eauto. *)
-  (* { econs; try sfby ss. } *)
-  (* i. des. *)
+  red. i.
+  hexploit minicet_linear_bcc; [| |eapply ISAFE1| | | |eapply H|]; eauto.
+  { eapply match_states_call; eauto. econs; try sfby ss. }
+  i. des.
 
-  (* hexploit minicet_linear_bcc; [|eapply ISAFE2| | |eapply H0|]; eauto. *)
-  (* { econs; try sfby ss. } *)
-  (* i. des. *)
+  hexploit minicet_linear_bcc; [|eapply ISAFE2| | |eapply H0|]; eauto.
+  { econs; try sfby ss. }
+  i. des.
 
-  (* assert (UNIQ: ds0 = ds1); subst. *)
-  (* { eapply match_dirs_unique; eauto. } *)
+  assert (UNIQ: ds0 = ds1); subst.
+  { eapply match_dirs_unique; eauto. }
 
-  (* red in SPEC. hexploit SPEC. *)
-  (* { eapply H1. } *)
-  (* { eapply H5. } *)
-  (* i. clear - H4 H8 H9. *)
-  (* eapply prefix_match_obs; eauto. *)
-  (* Qed. *)
+  red in SPEC. hexploit SPEC.
+  { eapply H1. }
+  { eapply H5. }
+  i. clear - H4 H8 H9.
+  eapply prefix_match_obs; eauto.
+  Qed.
 Admitted.
 
 Lemma spec_eval_relative_secure_spec_mir_mc
@@ -1257,50 +1367,4 @@ Lemma spec_eval_relative_secure_machine
   (SAFE1: seq_exec_safe p ((0,0), r1, m1, []))
   (SAFE2: seq_exec_safe p ((0,0), r2, m2, [])) :
   relative_secure_machine p (Datatypes.length m1') tp (fun p => machine_prog p (Datatypes.length m1')) r1 r2 r1' r2' m1 m2 m1' m2'.
-Proof.
-  red. i.
-  set (ir1 := (msf !-> N 0; callee !-> (FP (0, 0)); r1)).
-  set (ir2 := (msf !-> N 0; callee !-> (FP (0, 0)); r2)).
-
-  hexploit (spec_eval_relative_secure p r1 r2 ir1 ir2 m1 m2); eauto.
-  intros REL. red in REL.
-
-  assert (IREG1: Rsync r1 ir1 false).
-  { split; subst ir1; ss. ii. des.
-    do 2 (rewrite MiniCET_Index.t_update_neq; eauto). }
-
-  assert (IREG2: Rsync r2 ir2 false).
-  { split; subst ir2; ss. ii. des.
-    do 2 (rewrite MiniCET_Index.t_update_neq; eauto). }
-
-  hexploit REL; eauto. intros SPEC.
-
-  hexploit seq_spec_safety_preservation_init; try eapply SAFE1; eauto.
-  { subst ir1. rewrite MiniCET_Index.t_update_neq; eauto. ii; clarify. }
-  intros ISAFE1.
-
-  hexploit seq_spec_safety_preservation_init; try eapply SAFE2; eauto.
-  { subst ir2. rewrite MiniCET_Index.t_update_neq; eauto. ii; clarify. }
-  intros ISAFE2.
-
-  assert (INITSAFE: (uslh_prog p)[[(0,0)]] <> None).
-  { red in ISAFE1. exploit ISAFE1; [econs|econs|]. i. des. inv x0; ii; clarify. }
-
-  assert (ISYNC: pc_inj (uslh_prog p) (Datatypes.length m1') (0, 0) = Some (Datatypes.length m1')).
-  { clear -INITSAFE. destruct (uslh_prog p); ss.
-    destruct p0. ss. des_ifs. }
-
-  eapply spec_eval_relative_secure_spec_mir_mc_aux; try eapply SPEC; eauto.
-  - subst ir1. red in H0. des. red. i.
-    destruct (string_dec x callee).
-    { subst. rewrite CALLEE1. ss. rewrite ISYNC. ss. }
-    destruct (string_dec x msf).
-    { des. subst. rewrite H5. ss. }
-    do 2 (rewrite TotalMap.t_update_neq; eauto).
-  - subst ir2. red in H1. des. red. i.
-    destruct (string_dec x callee).
-    { subst. rewrite CALLEE2. ss. rewrite ISYNC. ss. }
-    destruct (string_dec x msf).
-    { des. subst. rewrite H5. ss. }
-    do 2 (rewrite TotalMap.t_update_neq; eauto).
-Qed.
+Admitted.
