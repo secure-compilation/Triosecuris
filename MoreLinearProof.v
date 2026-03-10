@@ -257,13 +257,21 @@ Proof.
 Qed.
 
 Definition match_reg_src (p: MiniCET.prog) (len: nat) (r: MCC.reg) (r': reg) (ms: bool) : Prop :=
-  (forall x, x <> msf /\ x <> callee -> val_inject p len (r ! x) (r' ! x))
+  (forall x, x <> msf /\ x <> callee ->
+        exists iv, val_match p (r ! x) iv /\ val_inject (uslh_prog p) len iv (r' ! x))
 /\ r' ! msf = N (if ms then 1 else 0).
 
 Definition match_mem (p: MiniCET.prog) (len: nat) (m m': mem) : Prop :=
   forall i, match nth_error m i, nth_error m' i with
        | None, _ => True
        | Some v, Some v' => val_inject p len v v'
+       | Some v, None => False
+       end.
+
+Definition match_mem_src (p: MiniCET.prog) (len: nat) (m m': mem) : Prop :=
+  forall i, match nth_error m i, nth_error m' i with
+       | None, _ => True
+       | Some v, Some v' => exists iv, val_match p v iv /\ val_inject (uslh_prog p) len iv v'
        | Some v, None => False
        end.
 
@@ -686,6 +694,63 @@ Proof.
     eapply uslh_blk_last_terminator_res; eauto.
   - (* new blocks *)
     eapply new_prog_last_terminator; eauto.
+Qed.
+
+Lemma uslh_prog_nonempty_aux p
+  (WFP: nonempty_program p) :
+  nonempty_program (uslh_prog p).
+Proof.
+  destruct p.
+  { i. red in WFP. ss; lia. }
+  i. unfold uslh_prog. des_ifs. ss.
+  unfold add_index in Heq. ss. eapply mapM_cons_inv in Heq.
+  des. ss. des_ifs_safe. simpl. red. ss. lia.
+Qed.
+
+Lemma uslh_prog_nonempty p
+  (WFP: wf_prog p) :
+  nonempty_program (uslh_prog p).
+Proof.
+  eapply uslh_prog_nonempty_aux. red in WFP.
+  des. eauto.
+Qed.
+
+Lemma uslh_prog_nonempty_blk_aux p
+  (WFP: Forall nonempty_block p) :
+  Forall nonempty_block (uslh_prog p).
+Proof.
+  unfold uslh_prog. des_ifs_safe.
+  rewrite Forall_app. split.
+  - remember (Datatypes.length p). clear Heqn.
+    unfold add_index in Heq. remember 0 in Heq. clear Heqn0.
+    ginduction p; ss; ii.
+    { unfold mapM in Heq. ss.
+      unfold MiniCET.uslh_ret in *. clarify. }
+    exploit mapM_cons_inv; eauto. i. des. subst.
+    exploit IHp; eauto; i.
+    { inv WFP. eauto. }
+    econs; eauto.
+    inv WFP. clear - H1 x0.
+    eapply uslh_blk_nonempty_res in x0; eauto.
+  - remember (Datatypes.length p). clear Heqn.
+    unfold add_index in Heq. remember 0 in Heq. clear Heqn0.
+    ginduction p; ss; ii.
+    { unfold mapM in Heq. ss.
+      unfold MiniCET.uslh_ret in *. clarify. }
+    exploit mapM_cons_inv; eauto. i. des. subst.
+    exploit IHp; eauto; i.
+    { inv WFP; eauto. }
+    eapply uslh_blk_np_nonempty in x0.
+    rewrite Forall_app. split; auto.
+Qed.
+
+Lemma uslh_prog_nonempty_blk p
+  (WFP: wf_prog p) :
+  Forall nonempty_block (uslh_prog p).
+Proof.
+  eapply uslh_prog_nonempty_blk_aux. red in WFP.
+  des. unfold wf_block in WFP0.
+  eapply Forall_and_inv in WFP0. des. eauto.
 Qed.
 
 Lemma wf_ret_exists p tp ttp len pc
@@ -1424,6 +1489,9 @@ Qed.
 
 Lemma spec_eval_relative_secure_spec_mir_mc
   p r1 r2 r1' r2' m1 m2 m1' m2' tp
+  (WFP1: Forall nonempty_block p)
+  (WFP2: nonempty_program p)
+  (WFP3: Forall last_inst_terminator p)
   (LEN1: Datatypes.length m1' = Datatypes.length m2')
   (SPEC: spec_same_obs p (0, 0) r1 r2 m1 m2 [] true)
   (ISAFE1: spec_exec_safe p (0, 0, r1, m1, [], true, false))
@@ -1436,11 +1504,62 @@ Qed.
 Definition relative_secure_machine (p:MiniCET.prog) (len:nat) (tp: prog) (trans : MiniCET.prog -> option prog)
   (r1 r2 r1' r2' : reg) (m1 m2 m1' m2' : mem) : Prop :=
   seq_same_obs p (0,0) r1 r2 m1 m2 [] ->
-
-  match_reg_src (uslh_prog p) len r1 r1' false -> match_reg_src (uslh_prog p) len r2 r2' false ->
-  match_mem (uslh_prog p) len m1 m1' -> match_mem (uslh_prog p) len m2 m2' ->
+  match_reg_src p len r1 r1' false -> match_reg_src p len r2 r2' false ->
+  match_mem_src p len m1 m1' -> match_mem_src p len m2 m2' ->
   trans (uslh_prog p) = Some tp ->
   spec_same_obs_machine tp len r1' r2' len m1' m2' [] true.
+
+Definition wf_reg (p:MiniCET.prog) (r: MCC.reg) : Prop :=
+  forall x, match r ! x with
+       | FP (l, S o) => MiniCET_Index.wf_ret p (l, S o)
+       | _ => True
+       end.
+
+Definition wf_mem (p:MiniCET.prog) (m: list val) : Prop :=
+  forall i, match nth_error m i with
+       | Some (FP (l, S o)) => MiniCET_Index.wf_ret p (l, S o)
+       | _ => True
+       end.
+
+Definition val_sync (p:MiniCET.prog) (v: val) : val :=
+  match v with
+  | FP (l, S o) => match ret_sync p (l, S o) with
+                  | Some pc => FP pc
+                  | _ => UV (* unreachable *)
+                  end
+  | _ => v
+  end.
+
+Lemma val_match_sync p v
+  (WF: match v with
+       | FP (l, S o) => MiniCET_Index.wf_ret p (l, S o)
+       | _ => True
+       end) :
+  val_match p v (val_sync p v).
+Proof.
+  destruct v; try sfby ss.
+  destruct pc0 as [l o]. destruct o; [ss|].
+  unfold val_sync. red in WF. des. unfold ret_sync.
+  replace (S o - 1) with o in WF0 by lia. rewrite WF0.
+  des_ifs.
+  2:{ unfold pc_sync in Heq0.
+      rewrite nth_error_map in Heq0.
+      ss. des_ifs_safe.
+      destruct p0. ss. destruct l2; ss. clarify.
+      rewrite nth_error_None in Heq3.
+      rewrite offset_uslh_length in Heq3.
+      rewrite <- nth_error_None in Heq3. clarify. }
+  ss. des_ifs_safe. des_ifs.
+Qed.
+
+Lemma val_match_functional p v iv1 iv2
+  (VM1: val_match p v iv1)
+  (VM2: val_match p v iv2) :
+  iv1 = iv2.
+Proof.
+  destruct v; unfold val_match in *; try (sfby des_ifs).
+  destruct pc0. des_ifs. des; clarify.
+Qed.
 
 Lemma spec_eval_relative_secure_machine
   p r1 r2 r1' r2' m1 m2 m1' m2' tp
@@ -1454,7 +1573,107 @@ Lemma spec_eval_relative_secure_machine
   (CALLEE2: r2' ! callee = N (Datatypes.length m2'))
   (UNUSED1: unused_prog msf p)
   (UNUSED2: unused_prog callee p)
+  (WFREG1: wf_reg p r1)
+  (WFREG2: wf_reg p r2)
+  (WFMEM1: wf_mem p m1)
+  (WFMEM2: wf_mem p m2)
   (SAFE1: seq_exec_safe p ((0,0), r1, m1, []))
   (SAFE2: seq_exec_safe p ((0,0), r2, m2, [])) :
   relative_secure_machine p (Datatypes.length m1') tp (fun p => machine_prog p (Datatypes.length m1')) r1 r2 r1' r2' m1 m2 m1' m2'.
-Admitted.
+Proof.
+  red; i.
+  set (iir1 := fun x => val_sync p (r1 ! x)).
+  set (iir2 := fun x => val_sync p (r2 ! x)).
+  set (ir1 := (msf !-> N 0; callee !-> (FP (0, 0)); iir1)).
+  set (ir2 := (msf !-> N 0; callee !-> (FP (0, 0)); iir2)).
+
+  set (im1 := map (val_sync p) m1).
+  set (im2 := map (val_sync p) m2).
+  
+  hexploit (spec_eval_relative_secure p r1 r2 ir1 ir2 m1 m2 im1 im2); eauto.
+  intros REL. red in REL.
+
+  assert (IREG1: Rsync p r1 ir1 false).
+  { split; subst ir1; subst iir1; ss. ii. des.
+    do 2 (rewrite MiniCET_Index.t_update_neq; eauto).
+    eapply val_match_sync. specialize (WFREG1 x). eauto. }
+
+  assert (IREG2: Rsync p r2 ir2 false).
+  { split; subst ir2; subst iir2; ss. ii. des.
+    do 2 (rewrite MiniCET_Index.t_update_neq; eauto).
+    eapply val_match_sync. specialize (WFREG2 x). eauto. }
+
+  assert (IMEG1: Msync p m1 im1).
+  { subst im1; ss. red. i. rewrite nth_error_map in *.
+    des_ifs. unfold option_map in Heq0. clarify.
+    eapply val_match_sync. specialize (WFMEM1 i). des_ifs. }
+
+  assert (IMEG2: Msync p m2 im2).
+  { subst im2; ss. red. i. rewrite nth_error_map in *.
+    des_ifs. unfold option_map in Heq0. clarify.
+    eapply val_match_sync. specialize (WFMEM2 i). des_ifs. }
+
+  hexploit REL; eauto. intro SPEC.
+
+  hexploit seq_spec_safety_preservation_init; try eapply SAFE1; eauto.
+  { subst ir1. rewrite MiniCET_Index.t_update_neq; eauto. ii; clarify. }
+  intros ISAFE1.
+
+  hexploit seq_spec_safety_preservation_init; try eapply SAFE2; eauto.
+  { subst ir2. rewrite MiniCET_Index.t_update_neq; eauto. ii; clarify. }
+  intros ISAFE2.
+
+  assert (INITSAFE: (uslh_prog p)[[(0,0)]] <> None).
+  { clear - WFP.
+    hexploit uslh_prog_nonempty; eauto. i.
+    hexploit uslh_prog_nonempty_blk; eauto. i.
+    remember (uslh_prog p). clear Heqp0. destruct p0.
+    { red in H. ss. lia. }
+    simpl. destruct p0. destruct l; ss.
+    inv H0. red in H3. ss. lia. }
+
+  assert (ISYNC: pc_inj (uslh_prog p) (Datatypes.length m1') (0, 0) = Some (Datatypes.length m1')).
+  { clear -INITSAFE. destruct (uslh_prog p); ss.
+    destruct p0. ss. des_ifs. }
+
+  eapply spec_eval_relative_secure_spec_mir_mc_aux; try eapply SPEC; eauto.
+  { eapply uslh_prog_nonempty_blk; eauto. }
+  { eapply uslh_prog_nonempty; eauto. }
+  { eapply uslh_prog_last_inst_terminator. eauto. }
+  - subst ir1. subst iir1. red in H0. des. red. i.
+    destruct (string_dec x callee).
+    { subst. rewrite CALLEE1. ss. rewrite ISYNC. ss. }
+    destruct (string_dec x msf).
+    { des. subst. rewrite H5. ss. }
+    do 2 (rewrite TotalMap.t_update_neq; eauto).
+    red. i. ss. hexploit H0; eauto. i. des.
+    exploit val_match_sync.
+    { eapply (WFREG1 x). }
+    i. exploit val_match_functional; [eapply H6|eapply x1|].
+    i. subst. clear - H7. ss.
+  - subst ir2. subst iir2. red in H1. des. red. i.
+    destruct (string_dec x callee).
+    { subst. rewrite CALLEE2. ss. rewrite ISYNC. ss. }
+    destruct (string_dec x msf).
+    { des. subst. rewrite H5. ss. }
+    do 2 (rewrite TotalMap.t_update_neq; eauto).
+    red. i. ss. hexploit H1; eauto. i. des.
+    exploit val_match_sync.
+    { eapply (WFREG2 x). }
+    i. exploit val_match_functional; [eapply H6|eapply x1|].
+    i. subst. clear - H7. ss.
+  - subst im1. red in H2. red. i.
+    specialize (H2 i). specialize (WFMEM1 i).
+    rewrite nth_error_map. des_ifs_safe. simpl in Heq. clarify. des.
+    exploit val_match_sync.
+    { eapply WFMEM1. }
+    i. exploit val_match_functional; [eapply H2|eapply x0|].
+    i. subst. ss.
+  - subst im2. red in H3. red. i.
+    specialize (H3 i). specialize (WFMEM2 i).
+    rewrite nth_error_map. des_ifs_safe. simpl in Heq. clarify. des.
+    exploit val_match_sync.
+    { eapply WFMEM2. }
+    i. exploit val_match_functional; [eapply H3|eapply x0|].
+    i. subst. ss.
+Qed.
