@@ -30,6 +30,17 @@ Definition gen_dbr : G dir :=
 Definition gen_dcall (pst: list nat) : G dir :=
   l <- (elems_ (0, 0) (proc_hd pst));; ret (DCall l).
 
+Definition wf_ret_addrs (p: prog) : list cptr :=
+  let fix all_cptrs (l: nat) (blocks: prog) :=
+    match blocks with
+    | [] => []
+    | (blk, _) :: rest => map (fun o => (l, o)) (seq 0 (List.length blk)) ++ all_cptrs (S l) rest
+    end
+  in filter (wf_retb p) (all_cptrs 0 p).
+
+Definition gen_dret (p: prog) : G dir :=
+  l <- elems_ (0, 0) (wf_ret_addrs p);; ret (DRet l).
+
 Instance ShowDirection : Show dir := {
   show dir := match dir with
     | DBranch b => ("DBranch " ++ show b)%string
@@ -163,7 +174,7 @@ Definition test_ni_transform_load_store :=
 
 
 
-Definition test_safety_preservation_uslh := test_safety_preservation uslh_prog gen_dbr gen_dcall.
+Definition test_safety_preservation_uslh := test_safety_preservation uslh_prog gen_dbr gen_dcall gen_dret.
 
 (*! QuickChick test_safety_preservation_uslh. *)
 
@@ -172,7 +183,7 @@ Definition test_safety_preservation_uslh := test_safety_preservation uslh_prog g
 
 
 
-Definition test_relative_security_uslh := test_relative_security uslh_prog gen_dbr gen_dcall.
+Definition test_relative_security_uslh := test_relative_security uslh_prog gen_dbr gen_dcall gen_dret.
 
 (*! QuickChick test_relative_security_uslh. *)
 

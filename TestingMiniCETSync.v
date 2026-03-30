@@ -65,6 +65,27 @@ Fixpoint map_opt {S T} (f: S -> option T) l : option (list T):=
   end.
 
 
+Definition ret_sync (p: prog) (pc: cptr) : option cptr :=
+  match pc with
+  | (l, S o) => match p[[(l, o)]] with
+               | Some (ICall _) => match (pc_sync p (l, o)) with
+                                  | Some (l', o') => Some (l', o'+2)
+                                  | None => None
+                                  end
+               | _ => None
+               end
+  | _ => None
+  end.
+
+Definition sync_dir (p: prog) (d: direction) : option direction :=
+  match d with
+  | DRet pc => pc' <- ret_sync p pc;; ret (DRet pc')
+  | d => Some d
+  end.
+
+Definition sync_dirs (p: prog) (ds: dirs) : option dirs :=
+  map_opt (sync_dir p) ds.
+
 Definition spec_cfg_sync (p: prog) (ic: ideal_cfg): option spec_cfg :=
   let '(c, ms) := ic in
   let '(pc, r, m, stk) := c in
@@ -126,6 +147,17 @@ Definition steps_to_sync_point (tp: prog) (tsc: spec_cfg) (ds: dirs) : option na
                                (*! | DBranch b :: _ => Some (if b then 2 else 3) *)
                                | _ => None
                                end
+    | <{{x <- peek}}> =>
+      match (String.eqb x callee) with
+      | true => match tp[[pc+1]] with
+                | Some <{{ret}}> => match ds with
+                                   | [DRet _] => Some 2
+                                   | _ => None
+                                   end
+                | _ => Some 1
+                end
+      | false => Some 1
+      end
     | _ => Some 1
     end.
 
@@ -157,6 +189,11 @@ Definition gen_directive_from_ideal_cfg (p: prog) (pst: list nat) (ic: ideal_cfg
           ret [d] ;;;
           [ pc <- gen_pc_from_prog p ;; ret [DCall pc] ]
         )
+      | <{{ret}}> =>
+        match sk with
+        | [] => ret []
+        | _ :: _ => d <- gen_dret p;; ret [d]
+        end
       | _ => ret []
       end
   | None => untrace "lookup error" (ret [])
@@ -177,6 +214,11 @@ Definition get_directive_for_seq_behaviour (p: prog) (pst: list nat) (ic: ideal_
         match (to_fp (eval r e)) with
         | None => []
         | Some l => [DCall l]
+        end
+      | <{{ret}}> =>
+        match sk with
+        | [] => []
+        | pc' :: _ => if wf_retb p pc' then [DRet pc'] else []
         end
       | _ => []
       end
@@ -204,6 +246,17 @@ Definition gen_directive_triggering_misspec (p: prog) (pst: list nat) (ic: ideal
             | [] => ret []
             | e::tl => t <- elems_ e (e::tl);;
                        ret [DCall t]
+            end
+        end
+      | <{{ret}}> =>
+        match sk with
+        | [] => ret []
+        | pc' :: _ =>
+            let addrs := wf_ret_addrs p in
+            let other_addrs := filter (fun x => negb (x ==b pc')) addrs in
+            match other_addrs with
+            | [] => ret []
+            | e :: tl => t <- elems_ e (e :: tl);; ret [DRet t]
             end
         end
       | _ => ret []
@@ -273,27 +326,30 @@ Definition single_step_cc := (
   | None => collect "hello"%string (checker tt)
   | Some tcfg =>
       forAll (gen_directive_from_ideal_cfg p pst icfg) (fun ds =>
+      match (sync_dirs p ds) with
+      | None => collect "dir sync failed"%string (checker tt)
+      | Some tds =>
       match ideal_step p (S_Running icfg) ds with
       | (S_Fault, _, oideal) =>
-          match (steps_to_sync_point (uslh_prog p) tcfg ds) with
-          | None => match spec_steps 4 (uslh_prog p) (S_Running tcfg) ds with
+          match (steps_to_sync_point (uslh_prog p) tcfg tds) with
+          | None => match spec_steps 4 (uslh_prog p) (S_Running tcfg) tds with
                     | (S_Fault, _, ospec) =>   (checker (obs_eqb oideal ospec))
                     | _ => trace "spec exec didn't fail"%string (checker false)
                     end
           | Some n => collect ("ideal step failed for "%string ++ show (p[[pc]]) ++ " but steps_to_sync_point was Some"%string)%string (checker tt)
           end
       | (S_Term, _, oideal) =>
-          match (steps_to_sync_point (uslh_prog p) tcfg ds) with
-          | None => match spec_steps 1 (uslh_prog p) (S_Running tcfg) ds with
+          match (steps_to_sync_point (uslh_prog p) tcfg tds) with
+          | None => match spec_steps 1 (uslh_prog p) (S_Running tcfg) tds with
                     | (S_Term, _, ospec) =>   (checker (obs_eqb oideal ospec))
                     | _ => trace "spec exec didn't terminate"%string (checker false)
                     end
           | Some n => collect ("ideal step failed for "%string ++ show (p[[pc]]) ++ " but steps_to_sync_point was Some"%string)%string (checker tt)
           end
       | (S_Running icfg', _, oideal) =>
-          match (steps_to_sync_point (uslh_prog p) tcfg ds) with
+          match (steps_to_sync_point (uslh_prog p) tcfg tds) with
           | None => trace "Ideal step succeeds, but steps_to_sync_point undefined" (checker false)
-          | Some n => match spec_steps n (uslh_prog p) (S_Running tcfg) ds with
+          | Some n => match spec_steps n (uslh_prog p) (S_Running tcfg) tds with
                       | (S_Running tcfg', _, ospec) => match (spec_cfg_sync p icfg') with
                                               | None => collect "sync fails "%string (checker tt)
                                               | Some tcfgref => match (spec_cfg_eqb_up_to_callee tcfg' tcfgref) with
@@ -301,10 +357,11 @@ Definition single_step_cc := (
                                                                 | false =>   (checker false)
                                                                 end
                                               end
-                      | (_, ds, os) => trace ("spec exec fails "%string ++ (show os) ++ show (uslh_prog p)) (checker false)
+                      | (_, ds', os) => trace ("spec exec fails "%string ++ (show os) ++ show (uslh_prog p)) (checker false)
                       end
           end
       | _ => collect "ideal exec undef"%string (checker tt)
+      end
       end
       )
   end

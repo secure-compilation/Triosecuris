@@ -76,7 +76,7 @@ Definition gen_step_direction (i: inst) (c: cfg) (pst: list nat)
   end.
 
 Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
-  (gen_dbr : G dir) (gen_dcall : list nat -> G dir): G sc_output_st :=
+  (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir): G sc_output_st :=
   let '(c, ct, ms) := sc in
   let '(pc, r, m, sk) := c in
   match fetch p pc with
@@ -94,9 +94,24 @@ Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
                | (S_Running sc', dir', os') => SRStep os' [d] sc'
                | _ => SRError [] [] sc
                end)
-      | IRet | ICTarget =>
+      | <{{ret}}> =>
+          match sk with
+          | [] =>
+              ret (match spec_step p (S_Running sc) [] with
+                   | (S_Term, _, _) => SRTerm [] [] sc
+                   | (S_Running sc', dir', os') => SRStep os' [] sc'
+                   | _ => SRError [] [] sc
+                   end)
+          | _ :: _ =>
+              d <- gen_dret p;;
+              ret (match spec_step p (S_Running sc) [d] with
+                   | (S_Running sc', dir', os') => SRStep os' [d] sc'
+                   | _ => SRError [] [] sc
+                   end)
+          end
+      | ICTarget =>
           ret (match spec_step p (S_Running sc) [] with
-               | (S_Running sc', dir', os') => SRStep os' [ ] sc'
+               | (S_Running sc', dir', os') => SRStep os' [] sc'
                | (S_Term, _, _) => SRTerm [] [] sc
                | _ => SRError [] [] sc
                end)
@@ -124,14 +139,14 @@ Variant spec_exec_result : Type :=
   }.
 
 Fixpoint _gen_spec_steps_sized (f : nat) (p:prog) (pst: list nat) (sc: spec_cfg) (os: obs) (ds: dirs)
-  (gen_dbr : G dir) (gen_dcall : list nat -> G dir) : G (spec_exec_result) :=
+  (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) : G (spec_exec_result) :=
   match f with
   | 0 => ret (SEOutOfFuel sc os ds)
   | S f' =>
-      sr <- gen_spec_step p sc pst gen_dbr gen_dcall;;
+      sr <- gen_spec_step p sc pst gen_dbr gen_dcall gen_dret;;
       match sr with
       | SRStep os1 ds1 sc1 =>
-          _gen_spec_steps_sized f' p pst sc1 (os ++ os1) (ds ++ ds1) gen_dbr gen_dcall
+          _gen_spec_steps_sized f' p pst sc1 (os ++ os1) (ds ++ ds1) gen_dbr gen_dcall gen_dret
       | SRError os1 ds1 sc1 =>
 
           (ret (SEError sc1 (os ++ os1) (ds ++ ds1)))
@@ -141,8 +156,8 @@ Fixpoint _gen_spec_steps_sized (f : nat) (p:prog) (pst: list nat) (sc: spec_cfg)
   end.
 
 Definition gen_spec_steps_sized (f : nat) (p:prog) (pst: list nat) (sc:spec_cfg)
-  (gen_dbr : G dir) (gen_dcall : list nat -> G dir) : G (spec_exec_result) :=
-  _gen_spec_steps_sized f p pst sc [] [] gen_dbr gen_dcall.
+  (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) : G (spec_exec_result) :=
+  _gen_spec_steps_sized f p pst sc [] [] gen_dbr gen_dcall gen_dret.
 
 
 Definition spec_step_acc (p:prog) (sc:spec_cfg) (ds: dirs) : sc_output_st :=
@@ -291,7 +306,7 @@ Definition test_ni (transform : rctx -> tmem -> prog -> prog) := (
 
 Definition test_safety_preservation `{Show dir}
   (harden : prog -> prog)
-  (gen_dbr : G dir) (gen_dcall : list nat -> G dir) := (
+  (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
   forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst) (fun m =>
@@ -302,7 +317,7 @@ Definition test_safety_preservation `{Show dir}
   let icfg' := (ipc, rs', m, istk) in
   let iscfg := (icfg', true, false) in
   let h_pst := pst_calc harden in
-  forAll (gen_spec_steps_sized 200 harden h_pst iscfg gen_dbr gen_dcall) (fun ods =>
+  forAll (gen_spec_steps_sized 200 harden h_pst iscfg gen_dbr gen_dcall gen_dret) (fun ods =>
   (match ods with
    | SETerm sc os ds => checker true
    | SEError (c', _, _) _ ds => checker false
@@ -312,7 +327,7 @@ Definition test_safety_preservation `{Show dir}
 
 Definition test_relative_security `{Show dir}
   (harden : prog -> prog)
-  (gen_dbr : G dir) (gen_dcall : list nat -> G dir) := (
+  (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
   forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst) (fun m1 =>
@@ -335,7 +350,7 @@ Definition test_relative_security `{Show dir}
                 let icfg1' := (ipc, rs1', m1, istk) in
                 let iscfg1' := (icfg1', true, false) in
                 let h_pst := pst_calc harden in
-                forAll (gen_spec_steps_sized 1000 harden h_pst iscfg1' gen_dbr gen_dcall) (fun ods1 =>
+                forAll (gen_spec_steps_sized 1000 harden h_pst iscfg1' gen_dbr gen_dcall gen_dret) (fun ods1 =>
                 (match ods1 with
                  | SETerm _ os1 ds =>
 

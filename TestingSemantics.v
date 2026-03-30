@@ -153,6 +153,19 @@ Fixpoint eval (st : reg) (e: exp) : val :=
     | s => (s, [])
     end.
 
+  Definition wf_retb (p: prog) (pc: cptr) : bool :=
+    let '(l, o) := pc in
+    match MiniCET.fetch p (l, o) with
+    | Some _ => match o with
+               | 0 => false
+               | S o' => match MiniCET.fetch p (l, o') with
+                        | Some (ICall _) => true
+                        | _ => false
+                        end
+               end
+    | _ => false
+    end.
+
   Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg * dirs * obs) :=
     match ssc with
     | S_Running sc =>
@@ -208,6 +221,25 @@ Fixpoint eval (st : reg) (e: exp) : val :=
               | None => untrace "ctarget fail!" (S_Undef, ds, [])
               | Some (c, ds, os) => (c, ds, os)
               end
+            | <{{ret}}> =>
+              if ct then (S_Fault, ds, []) else
+              match sk with
+              | [] => (S_Term, ds, [])
+              | pc'::sk' =>
+                match
+                  if seq.nilp ds then
+                    untrace "Ret: Directions are empty!" None
+                  else
+                    d <- hd_error ds;;
+                    pc'' <- is_dret d;;
+                    is_true (wf_retb p pc'');;
+                    let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
+                    ret ((S_Running ((pc'', r, m, sk'), false, ms'), tl ds), [])
+                with
+                | None => untrace "ret fail" (S_Undef, ds, [])
+                | Some (c, ds, os) => (c, ds, os)
+                end
+              end
             | _ =>
               if ct then   (S_Fault, ds, [])
               else
@@ -255,6 +287,19 @@ Fixpoint eval (st : reg) (e: exp) : val :=
 End MiniCETSemantics.
 
 Module IdealStepSemantics (Import ST : Semantics ListTotalMap with Definition pc := cptr).
+
+Definition wf_retb (p: prog) (pc: cptr) : bool :=
+  let '(l, o) := pc in
+  match MiniCET.fetch p (l, o) with
+  | Some _ => match o with
+             | 0 => false
+             | S o' => match MiniCET.fetch p (l, o') with
+                      | Some (ICall _) => true
+                      | _ => false
+                      end
+             end
+  | _ => false
+  end.
 
 Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs) : (state ideal_cfg * dirs * obs) :=
   match sic with
@@ -334,6 +379,24 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs) : (state ideal
               with
               | None => (S_Undef, ds, [])
               | Some (c, ds, os) => (c, ds, os)
+              end
+            | <{{ret}}> =>
+              match sk with
+              | [] => (S_Term, ds, [])
+              | pc'::sk' =>
+                match
+                  if seq.nilp ds then
+                    untrace "idealRet: Directions are empty!" None
+                  else
+                    d <- hd_error ds;;
+                    pc'' <- is_dret d;;
+                    MiniCET.is_true (wf_retb p pc'');;
+                    let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
+                    ret ((S_Running ((pc'', r, m, sk'), ms'), tl ds), [])
+                with
+                | None => untrace "idealRet fail" (S_Undef, ds, [])
+                | Some (c, ds, os) => (c, ds, os)
+                end
               end
           | _ =>
               match step p (S_Running c) with
