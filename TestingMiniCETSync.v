@@ -40,16 +40,19 @@ Definition is_br_or_call (i : inst) :=
 
 
 
+Definition offset_uslh (bl: list inst * bool) : list nat :=
+  _offset_uslh (fst bl) (if snd bl then 2 else 0).
+
 Definition pc_sync (p: prog) (pc: cptr) : option cptr :=
-  blk <- nth_error p (fst pc);;
-  i <- nth_error (fst blk) (snd pc);;
-  let acc1 := if (Bool.eqb (snd blk) true) then 2 else 0 in
-  let insts_before_pc := (firstn (snd pc) (fst blk)) in
-               let acc2 := fold_left (fun acc (i: inst) => if (is_br_or_call i)
-                                                           then (add acc 1)
-                                                           else acc)
-                                                           insts_before_pc acc1
-               in Some ((fst pc), add (snd pc) acc2).
+  let ip := map offset_uslh p in
+  let '(l, o) := pc in
+  match nth_error ip l with
+  | Some ib => match nth_error ib o with
+              | Some io => Some (l, io)
+              | _ => None
+              end
+  | _ => None
+  end.
 
 
 
@@ -167,11 +170,17 @@ Definition gen_pc_from_prog (p: prog) : G cptr :=
   off <- choose (0, max 0 (Datatypes.length(fst blk) - 1));;
   ret (iblk, off).
 
+Definition gen_wf_ret_addr (p: prog) : G cptr :=
+  let addrs := wf_ret_addrs p in
+  match addrs with
+  | [] => ret (0, 0)
+  | d :: _ => elems_ d addrs
+  end.
+
 Fixpoint gen_call_stack_from_prog_sized n (p: prog) : G (list cptr) :=
   match n with
   | 0 => ret []
-  | S n' => l1 <- gen_pc_from_prog p;;
-      oneOf (ret [l1] ;;; [liftM (cons l1) (gen_call_stack_from_prog_sized n' p)])
+  | S n' => liftM2 cons (gen_wf_ret_addr p) (gen_call_stack_from_prog_sized n' p)
   end.
 
 Definition gen_directive_from_ideal_cfg (p: prog) (pst: list nat) (ic: ideal_cfg) : G dirs :=
@@ -441,6 +450,7 @@ Definition single_step := (
   ))))))))).
 
 (*! QuickChick single_step. *)
+QuickChick single_step.
 
 
 Definition single_step_seq_ideal := (
@@ -456,6 +466,7 @@ Definition single_step_seq_ideal := (
   | (S_Running _, o1) =>
       match (ideal_step p (S_Running icfg) ds) with
       | (S_Running _, _, o2) => untrace (show o1 ++ " / " ++ show o2) (checker (obs_eqb o1 o2))
+      | (S_Undef, _, _) => collect "ideal undef (non-wf stack)"%string (checker tt)
       | _ => untrace "not running" (checker false)
       end
   | (S_Undef, o1) =>
@@ -476,6 +487,7 @@ Definition single_step_seq_ideal := (
   end
   )))))).
 (*! QuickChick single_step_seq_ideal. *)
+QuickChick single_step_seq_ideal.
 
 
 Definition single_step_trigger := (
@@ -491,6 +503,7 @@ Definition single_step_trigger := (
   | (S_Running _, o1) =>
       match (ideal_step p (S_Running icfg) ds) with
       | (S_Running icfg', _, o2) => untrace (show o1 ++ " / " ++ show o2) (checker ((obs_eqb o1 o2) && (match ds with [] => true | _ => snd icfg' end)))
+      | (S_Undef, _, _) => collect "ideal undef (non-wf stack)"%string (checker tt)
       | _ => untrace "not running" (checker false)
       end
   | (S_Undef, o1) =>
@@ -511,3 +524,4 @@ Definition single_step_trigger := (
   end
   ))))))).
 (*! QuickChick single_step_trigger. *)
+QuickChick single_step_trigger.

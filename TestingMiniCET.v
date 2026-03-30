@@ -66,15 +66,19 @@ Definition wt_exp_is_defined := (forAll arbitrary (fun (c : rctx) =>
             forAll (gen_exp_wt 4 c [3; 3; 1; 1]) (fun (exp : exp) =>
             implication (is_defined (eval state exp)) true)))).
 (*! QuickChick wt_exp_is_defined. *)
+QuickChick wt_exp_is_defined.
 
 Definition basic_block_test := (forAll (basic_block_gen_example) (fun (blk: list inst) => (basic_block_checker blk))).
 (*! QuickChick basic_block_test. *)
+QuickChick basic_block_test.
 
 Definition wt_wf := (forAll (gen_prog_wt max_block_size max_program_length) (fun (p : prog) => (wf p))).
 (*! QuickChick wt_wf. *)
-Definition wt_uslh_wf := (forAll (gen_prog_wt max_block_size max_program_length) (fun (p : prog) => (wf (uslh_prog p)))).
-(*! QuickChick wt_uslh_wf. *)
+QuickChick wt_wf.
 
+(* should fail *)
+Definition wt_uslh_wf := (forAll (gen_prog_wt max_block_size max_program_length) (fun (p : prog) => (wf (uslh_prog p)))).
+QuickChick wt_uslh_wf.
 
 Definition wt_expr_is_defined := (
     forAll arbitrary (fun (c : rctx) =>
@@ -86,6 +90,7 @@ Definition wt_expr_is_defined := (
     is_defined (eval r e)
   )))))).
 (*! QuickChick wt_expr_is_defined. *)
+QuickChick wt_expr_is_defined.
 
 Definition ty_prog_wf :=
   (forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, p) =>
@@ -100,18 +105,21 @@ Definition ty_prog_wf :=
 Definition load_store_trans_basic_blk := TS.load_store_trans_basic_blk.
 
 (*! QuickChick load_store_trans_basic_blk. *)
+QuickChick load_store_trans_basic_blk.
 
 
 
 Definition load_store_trans_stuck_free := TS.load_store_trans_stuck_free.
 
 (*! QuickChick load_store_trans_stuck_free. *)
+QuickChick load_store_trans_stuck_free.
 
 
 
 Definition no_obs_prog_no_obs := TS.no_obs_prog_no_obs.
 
 (*! QuickChick no_obs_prog_no_obs. *)
+QuickChick no_obs_prog_no_obs.
 
 
 
@@ -136,6 +144,7 @@ Definition unused_var_no_leak_transform_load_store :=
   unused_var_no_leak (fun c tm p => transform_load_store_prog c tm p).
 
 (*! QuickChick unused_var_no_leak_transform_load_store. *)
+QuickChick unused_var_no_leak_transform_load_store.
 
 
 
@@ -146,23 +155,26 @@ Definition gen_pub_equiv_same_ty := TS.gen_pub_equiv_same_ty.
 Definition gen_pub_equiv_is_pub_equiv := TS.gen_pub_equiv_is_pub_equiv.
 
 (*! QuickChick gen_pub_equiv_is_pub_equiv. *)
+QuickChick gen_pub_equiv_is_pub_equiv.
 
 Definition gen_reg_wt_is_wt := TS.gen_reg_wt_is_wt.
 
 (*! QuickChick gen_reg_wt_is_wt. *)
+QuickChick gen_reg_wt_is_wt.
 
 
 
 Definition gen_pub_mem_equiv_is_pub_equiv := TS.gen_pub_mem_equiv_is_pub_equiv.
 
 (*! QuickChick gen_pub_mem_equiv_is_pub_equiv. *)
+QuickChick gen_pub_mem_equiv_is_pub_equiv.
 
 
 
 Definition gen_mem_wt_is_wt := TS.gen_mem_wt_is_wt.
 
 (*! QuickChick gen_mem_wt_is_wt. *)
-
+QuickChick gen_mem_wt_is_wt.
 
 
 
@@ -170,6 +182,7 @@ Definition gen_mem_wt_is_wt := TS.gen_mem_wt_is_wt.
 Definition test_ni_transform_load_store :=
   test_ni (fun c tm p => transform_load_store_prog c tm p).
 (*! QuickChick test_ni_transform_load_store. *)
+QuickChick test_ni_transform_load_store.
 
 
 
@@ -177,6 +190,7 @@ Definition test_ni_transform_load_store :=
 Definition test_safety_preservation_uslh := test_safety_preservation uslh_prog gen_dbr gen_dcall gen_dret.
 
 (*! QuickChick test_safety_preservation_uslh. *)
+QuickChick test_safety_preservation_uslh.
 
 
 
@@ -186,6 +200,7 @@ Definition test_safety_preservation_uslh := test_safety_preservation uslh_prog g
 Definition test_relative_security_uslh := test_relative_security uslh_prog gen_dbr gen_dcall gen_dret.
 
 (*! QuickChick test_relative_security_uslh. *)
+QuickChick test_relative_security_uslh.
 
 
 
