@@ -94,7 +94,7 @@ Definition spec_cfg_sync (p: prog) (ic: ideal_cfg): option spec_cfg :=
   let '(pc, r, m, stk) := c in
   pc' <- pc_sync p pc;;
   (*! *)
-  stk' <- map_opt (pc_sync p) stk;;
+  stk' <- map_opt (ret_sync p) stk;;
   (*!! spec_cfg_sync-no-stack *)
   (*! let stk' := stk in *)
   ret (pc', r_sync r ms, m, stk', false, ms).
@@ -154,7 +154,7 @@ Definition steps_to_sync_point (tp: prog) (tsc: spec_cfg) (ds: dirs) : option na
       match (String.eqb x callee) with
       | true => match tp[[pc+1]] with
                 | Some <{{ret}}> => match ds with
-                                   | [DRet _] => Some 2
+                                   | [DRet _] => Some 3
                                    | _ => None
                                    end
                 | _ => Some 1
@@ -376,6 +376,7 @@ Definition single_step_cc := (
   end
   )))))))).
 
+(*! QuickChick single_step_cc. *)
 QuickChick single_step_cc.
 
 Definition single_step_sf := (
