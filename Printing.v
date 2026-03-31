@@ -58,7 +58,7 @@ Derive Show for observation.
          | IStore a e => "store[" ++ show a ++ "] <- " ++ show e
          | ICall fp => "call " ++ show fp
          | ICTarget => "ctarget"
-         | IPeek x => x ++ " <- peek"
+         (*| IPeek x => x ++ " <- peek"*)
          | IRet => "ret"
          end)%string
   }.

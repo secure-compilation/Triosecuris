@@ -795,7 +795,7 @@ Definition vars_inst (i: inst) : list string :=
   | IStore e1 e2 => vars_exp e1 ++ vars_exp e2
   | ICall e => vars_exp e
   | IDiv x e1 e2 => x :: (vars_exp e1 ++ vars_exp e2)
-  | IPeek _ => [] (* We don't want to generate peek for the source code. *)
+  (*| IPeek _ => [] [> We don't want to generate peek for the source code. <]*)
   end.
 
 Fixpoint vars_blk (blk: list inst) : list string :=
@@ -831,12 +831,17 @@ Definition gen_prog_wt_with_basic_blk (bsz pl: nat) : G (rctx * tmem * list nat 
   p <- _gen_prog_with_term_wt c tm bsz pl pst pst;;
   ret (c, tm, pst, p).
 
-Definition gen_wt_mem (tm: tmem) (pst: list nat) : G mem :=
+Fixpoint mkStk (sz: nat) := match sz with
+                            | O => []
+                            | S n => UV :: mkStk n
+                            end.
+
+Definition gen_wt_mem (tm: tmem) (pst: list nat) (stsize: nat): G mem :=
   let indices := seq 0 (Datatypes.length tm) in
   let idx_tm := combine indices tm in
   let gen_binds := mapGen (fun '(idx, t) => (v <- gen_val_wt t pst;; ret (idx, v))) idx_tm in
   r <- gen_binds;;
-  ret (snd (split r)).
+  ret (snd (split r) ++ mkStk stsize).
 
 
 

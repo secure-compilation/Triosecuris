@@ -171,14 +171,14 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
       | _ => None
       end
   (* YF: TBD with Yonghyun *)
-  | <{ x <- peek }> =>
-      match tctx with
-      | CDefault =>
-          let tx' := hd [] ts in
-          let tc' := (tpc, (x !-> tx'; trs), tm, ts) in
-          Some (tc', tobs)
-      | _ => None
-      end
+  (*| <{ x <- peek }> =>*)
+      (*match tctx with*)
+      (*| CDefault =>*)
+          (*let tx' := hd [] ts in*)
+          (*let tc' := (tpc, (x !-> tx'; trs), tm, ts) in*)
+          (*Some (tc', tobs)*)
+      (*| _ => None*)
+      (*end*)
   | <{ ret }> =>
       match tctx with
       | CDefault =>

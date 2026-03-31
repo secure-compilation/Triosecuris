@@ -179,7 +179,7 @@ Inductive inst : Type :=
   | IStore (a : exp) (e : exp)
   | ICall (fp:exp)
   | ICTarget
-  | IPeek (x : string)
+  (*| IPeek (x : string)*)
   | IRet.
 
 Notation "'skip'"  :=
@@ -215,10 +215,10 @@ Notation "'call' e" :=
     (in custom com at level 89, e custom com at level 99) : com_scope.
 Notation "'ctarget'"  :=
   ICTarget (in custom com at level 0) : com_scope.
-Notation "x '<-' 'peek'" :=
-  (IPeek x)
-    (in custom com at level 0, x constr at level 0,
-      no associativity) : com_scope.
+(*Notation "x '<-' 'peek'" :=*)
+  (*(IPeek x)*)
+    (*(in custom com at level 0, x constr at level 0,*)
+      (*no associativity) : com_scope.*)
 Notation "'ret'"  :=
   IRet (in custom com at level 0) : com_scope.
 
@@ -511,7 +511,7 @@ Definition uslh_inst (i: inst) (l: nat) (o: nat) : M (list inst) :=
       let e'' := <{ callee = &((l, o + 2)) }> in
       ret <{{ i[callee:=e'; call e'; (msf := (e'' ? msf : 1))] }}>
   | <{{ret}}> =>
-      ret <{{ i[callee <- peek; ret] }}>
+      ret <{{ i[callee <- load[AId "sp"%string]; ret] }}>
   | _ => ret [i]
   end.
 
@@ -603,7 +603,7 @@ Fixpoint wf_exp (p:prog) (e : exp) : bool :=
 
 Definition wf_inst (p:prog) (i : inst) : bool :=
   match i with
-  | <{{skip}}> | <{{ctarget}}> | <{{ret}}> | <{{_<-peek}}> => true
+  | <{{skip}}> | <{{ctarget}}> | <{{ret}}> => true
   | <{{_:=e}}> | <{{_<-load[e]}}> | <{{call e}}> => wf_exp p e
   | <{{_<-div e1, e2}}> => wf_exp p e1 && wf_exp p e2
   | <{{store[e]<-e'}}> => wf_exp p e && wf_exp p e'
@@ -672,7 +672,6 @@ Definition i_unused (x:string) (i:inst) : Prop :=
   | <{{y <- load[i]}}> => y <> x /\ e_unused x i
   | <{{store[i] <- e}}> => e_unused x i /\ e_unused x e
   | <{{y <- div e1, e2}}> => y <> x /\ e_unused x e1 /\ e_unused x e2
-  | <{{y <- peek}}> => y <> x
   | <{{call e}}> => e_unused x e
   end.
 

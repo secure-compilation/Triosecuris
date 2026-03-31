@@ -69,14 +69,14 @@ Inductive seq_eval_small_step_inst (p:prog) :
   | SSMI_Ret : forall pc r m sk pc',
       p[[pc]] = Some <{{ ret }}> ->
       p |- <(( S_Running (pc, r, m, pc'::sk) ))> -->^[] <(( S_Running (pc', r, m, sk) ))>
-  | SSMI_Peek : forall pc r m sk x, (* YH: Maybe we can assume source program does not contain peek instruction. *)
-      p[[pc]] = Some <{{x <- peek}}> ->
-      let val := match sk with 
-                | [] => UV
-                | pc' :: sk' => FP pc'
-                end
-      in
-      p |- <(( S_Running (pc, r, m, sk) ))> -->^[] <(( S_Running (pc+1, (x !-> val; r), m, sk) ))>
+  (*| SSMI_Peek : forall pc r m sk x, [> YH: Maybe we can assume source program does not contain peek instruction. <]*)
+      (*p[[pc]] = Some <{{x <- peek}}> ->*)
+      (*let val := match sk with *)
+                (*| [] => UV*)
+                (*| pc' :: sk' => FP pc'*)
+                (*end*)
+      (*in*)
+      (*p |- <(( S_Running (pc, r, m, sk) ))> -->^[] <(( S_Running (pc+1, (x !-> val; r), m, sk) ))>*)
   | SSMI_Term : forall pc r m,
       p[[pc]] = Some <{{ ret }}> ->
       p |- <(( S_Running (pc, r, m, []) ))> -->^[] <(( S_Term ))>
@@ -191,14 +191,14 @@ Inductive spec_eval_small_step (p:prog):
       wf_ret p pc'' ->
       ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) ->
       p |- <(( S_Running ((pc, r, m, pc'::sk), false, ms) ))> -->_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), false, ms') ))>
-  | SpecSMI_Peek : forall pc r m sk ms x,
-      p[[pc]] = Some <{{x <- peek}}> ->
-      let val := match sk with 
-                | [] => UV
-                | pc' :: sk' => FP pc'
-                end
-      in
-      p |- <(( S_Running (pc, r, m, sk, false, ms) ))> -->_[]^^[] <(( S_Running (pc+1, (x !-> val; r), m, sk, false, ms) ))>
+  (*| SpecSMI_Peek : forall pc r m sk ms x,*)
+      (*p[[pc]] = Some <{{x <- peek}}> ->*)
+      (*let val := match sk with *)
+                (*| [] => UV*)
+                (*| pc' :: sk' => FP pc'*)
+                (*end*)
+      (*in*)
+      (*p |- <(( S_Running (pc, r, m, sk, false, ms) ))> -->_[]^^[] <(( S_Running (pc+1, (x !-> val; r), m, sk, false, ms) ))>*)
   | SpecSMI_Term : forall pc r m ms,
       p[[pc]] = Some <{{ ret }}> ->
       p |- <(( S_Running ((pc, r, m, []), false, ms) ))> -->_[]^^[] <(( S_Term ))>
@@ -286,14 +286,14 @@ Inductive ideal_eval_small_step_inst (p:prog) :
       wf_ret p pc'' ->
       ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) ->
       p |- <(( S_Running ((pc, r, m, pc'::sk), ms) ))> -->i_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), ms') ))>
-  | ISMI_Peek : forall pc r m sk ms x, (* YH: Do we need this for source program? *)
-      p[[pc]] = Some <{{x <- peek}}> ->
-      let val := match sk with 
-                | [] => UV
-                | pc' :: sk' => FP pc'
-                end
-      in
-      p |- <(( S_Running (pc, r, m, sk, ms) ))> -->i_[]^^[] <(( S_Running (pc+1, (x !-> val; r), m, sk, ms) ))>
+  (*| ISMI_Peek : forall pc r m sk ms x, [> YH: Do we need this for source program? <]*)
+      (*p[[pc]] = Some <{{x <- peek}}> ->*)
+      (*let val := match sk with *)
+                (*| [] => UV*)
+                (*| pc' :: sk' => FP pc'*)
+                (*end*)
+      (*in*)
+      (*p |- <(( S_Running (pc, r, m, sk, ms) ))> -->i_[]^^[] <(( S_Running (pc+1, (x !-> val; r), m, sk, ms) ))>*)
   | ISMI_Term : forall pc r m ms,
       p[[pc]] = Some <{{ ret }}> ->
       p |- <(( S_Running ((pc, r, m, []), ms) ))> -->i_[]^^[] <(( S_Term ))>
@@ -569,7 +569,7 @@ Qed.
 
 Definition wf_instr (p: prog) (i: inst) : Prop :=
   match i with
-  | <{{skip}}> | <{{ctarget}}> | <{{ret}}> | <{{_<-peek}}> => True
+  | <{{skip}}> | <{{ctarget}}> | <{{ret}}> => True
   | <{{_:=e}}> | ILoad _ e | <{{call e}}> => wf_expr p e
   | <{{store[e]<-e'}}> => wf_expr p e /\ wf_expr p e'
   | <{{_<-div e1, e2}}> => wf_expr p e1 /\ wf_expr p e2
@@ -750,7 +750,7 @@ Open Scope monad_scope.
 
 Definition simple_inst (i: inst) : Prop :=
   match i with
-  | ISkip | IJump _ | ILoad _ _ | IStore _ _ | IAsgn _ _ | IDiv _ _ _ | IPeek _ => True
+  | ISkip | IJump _ | ILoad _ _ | IStore _ _ | IAsgn _ _ | IDiv _ _ _ => True
   | _ => False
   end.
 
@@ -772,8 +772,8 @@ Variant match_simple_inst_uslh : inst -> inst -> Prop :=
   (IDe1: e1' = <{{ (msf = 1) ? 0 : e1}}>)
   (IDe2: e2' = <{{ (msf = 1) ? 0 : e2}}>):
   match_simple_inst_uslh (IDiv x e1 e2) (IDiv x e1' e2')
-| uslh_peek x:
-  match_simple_inst_uslh (IPeek x) (IPeek x)
+(*| uslh_peek x:*)
+  (*match_simple_inst_uslh (IPeek x) (IPeek x)*)
 .
 
 Definition _branch_in_block (blk: list inst) : nat :=
@@ -827,7 +827,7 @@ Variant match_inst_uslh (p: prog) (pc: cptr) : inst -> inst -> Prop :=
 | uslh_ret tpc
   (SYNC: pc_sync p pc = Some tpc)
   (NXT: (uslh_prog p)[[tpc + 1]] = Some IRet) :
-  match_inst_uslh p pc IRet (IPeek callee)
+  match_inst_uslh p pc IRet (<{{ callee <- load[AId "sp"%string] }}>)
 .
 
 Lemma uslh_inst_simple i l o c iss np
@@ -1191,8 +1191,8 @@ Proof.
       exploit concat_nth_error; ss; eauto. ss.
     + esplits; [|econs]; eauto. rewrite plus_n_O at 1.
       exploit concat_nth_error; ss; eauto. ss.
-    + esplits; [|econs]; eauto. rewrite plus_n_O at 1.
-      exploit concat_nth_error; ss; eauto. ss.
+    (*+ esplits; [|econs]; eauto. rewrite plus_n_O at 1.*)
+      (*exploit concat_nth_error; ss; eauto. ss.*)
   - destruct i; ss; unfold MiniCET.uslh_ret in *; clarify.
     + exists ISkip; split; [|econs]. rewrite plus_n_O at 1.
       exploit concat_nth_error; ss; eauto. ss.
@@ -1206,8 +1206,8 @@ Proof.
       exploit concat_nth_error; ss; eauto. ss.
     + esplits; [|econs]; eauto. rewrite plus_n_O at 1.
       exploit concat_nth_error; ss; eauto. ss.
-    + esplits; [|econs]; eauto. rewrite plus_n_O at 1.
-      exploit concat_nth_error; ss; eauto. ss.
+    (*+ esplits; [|econs]; eauto. rewrite plus_n_O at 1.*)
+      (*exploit concat_nth_error; ss; eauto. ss.*)
 Qed.
 
 Lemma uslh_inst_np_length_aux
@@ -2156,7 +2156,7 @@ Variant match_cfgs_ext (p: prog) : state ideal_cfg -> state spec_cfg -> Prop :=
 | match_cfgs_ext_ret1 (* ret - ret match *)
   pc pc' r r' m m' stk stk' (ms: bool)
   (PC: pc_sync p pc = Some pc')
-  (FROM: (uslh_prog p) [[pc']] = Some <{{ callee <- peek }}>)
+  (FROM: (uslh_prog p) [[pc']] = Some <{{ callee <- load[AId "sp"%string] }}>)
   (TO: (uslh_prog p) [[pc'+1]] = Some <{{ ret }}>)
   (REG: Rsync p r r' ms)
   (MSC: Msync p m m')

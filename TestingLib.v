@@ -202,9 +202,9 @@ Definition stuck_free (f : nat) (p : prog) (c: cfg) : exec_result :=
 Definition load_store_trans_stuck_free := (
   forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
-  forAll (gen_wt_mem tm pst) (fun m =>
+  forAll (gen_wt_mem tm pst 1000) (fun m =>
   let p' := transform_load_store_prog c tm p in
-  let icfg := (ipc, rs, m, istk) in
+  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 1000); rs, m, istk) in
   let r1 := stuck_free 1000 p' icfg in
   match r1 with
   | ETerm st os => checker true
@@ -232,12 +232,12 @@ Definition gen_prog_and_unused_var : G (rctx * tmem * list nat * prog * string) 
     x <- elems_ "X0"%string unused_vars;;
     ret (c, tm, pst, p, x).
 
-Definition unused_var_no_leak
+Definition unused_var_no_leak `{Show input_st}
   (transform_prog : rctx -> tmem -> prog -> prog) := (
   forAll gen_prog_and_unused_var (fun '(c, tm, pst, p, unused_var) =>
   forAll (gen_reg_wt c pst) (fun rs =>
-  forAll (gen_wt_mem tm pst) (fun m =>
-  let icfg := (ipc, rs, m, istk) in
+  forAll (gen_wt_mem tm pst 105) (fun m =>
+  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 100); rs, m, istk) in
   let p' := transform_prog c tm p in
   match stuck_free 100 p' icfg with
   | ETerm (_, _, tobs) os =>
@@ -245,7 +245,7 @@ Definition unused_var_no_leak
       let leaked_vars := remove_dupes String.eqb ids in
       checker (negb (existsb (String.eqb unused_var) leaked_vars))
   | EOutOfFuel st os => checker tt
-  | EError st os => checker false
+  | EError st os => printTestCase (show st) (checker false)
   end)))).
 
 Definition gen_pub_equiv_same_ty (P : total_map label) (s: total_map val) : G (total_map val) :=
@@ -280,13 +280,13 @@ Definition gen_pub_mem_equiv_is_pub_equiv := (forAll gen_pub_mem (fun P =>
 
 Definition gen_mem_wt_is_wt := (
   forAll (gen_prog_ty_ctx_wt' max_block_size max_program_length) (fun '(c, tm, pst, p) =>
-  forAll (gen_wt_mem tm pst) (fun m => m_wtb m tm))).
+  forAll (gen_wt_mem tm pst 100) (fun m => m_wtb m tm))).
 
 Definition test_ni (transform : rctx -> tmem -> prog -> prog) := (
   forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
-  forAll (gen_wt_mem tm pst) (fun m =>
-  let icfg := (ipc, rs, m, istk) in
+  forAll (gen_wt_mem tm pst 100) (fun m =>
+  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 100); rs, m, istk) in
   let p' := transform c tm p in
   let r1 := taint_tracking 100 p' icfg in
   match r1 with
@@ -295,7 +295,7 @@ Definition test_ni (transform : rctx -> tmem -> prog -> prog) := (
       let PM := tms_to_pm (Datatypes.length m) tms in
       forAll (gen_pub_equiv_same_ty P rs) (fun rs' =>
       forAll (gen_pub_mem_equiv_same_ty PM m) (fun m' =>
-      let icfg' := (ipc, rs', m', istk) in
+      let icfg' := (ipc, "sp" !-> N (Datatypes.length m - 100); rs', m', istk) in
       let r2 := taint_tracking 100 p' icfg' in
       match r2 with
       | Some (os2', _, _) => checker (obs_eqb os1' os2')
@@ -309,7 +309,8 @@ Definition test_safety_preservation `{Show dir}
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
   forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
-  forAll (gen_wt_mem tm pst) (fun m =>
+  forAll (gen_wt_mem tm pst 200) (fun m =>
+  let rs := "sp" !-> N (Datatypes.length m - 200); rs in
   let icfg := (ipc, rs, m, istk) in
   let p' := transform_load_store_prog c tm p in
   let harden := harden p' in
@@ -330,7 +331,8 @@ Definition test_relative_security `{Show dir}
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
   forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs1 =>
-  forAll (gen_wt_mem tm pst) (fun m1 =>
+  forAll (gen_wt_mem tm pst 1000) (fun m1 =>
+  let rs1 := "sp" !-> N (Datatypes.length m1 - 1000); rs1 in
   let icfg1 := (ipc, rs1, m1, istk) in
   let p' := transform_load_store_prog c tm p in
   let r1 := taint_tracking 1000 p' icfg1 in
@@ -339,6 +341,7 @@ Definition test_relative_security `{Show dir}
       let P := (false, map (fun x => (x,true)) tvars) in
       let PM := tms_to_pm (Datatypes.length m1) tms in
       forAll (gen_pub_equiv_same_ty P rs1) (fun rs2 =>
+      let rs2 := "sp" !-> N (Datatypes.length m1 - 1000); rs2 in
       forAll (gen_pub_mem_equiv_same_ty PM m1) (fun m2 =>
       let icfg2 := (ipc, rs2, m2, istk) in
       let r2 := taint_tracking 1000 p' icfg2 in
@@ -359,7 +362,7 @@ Definition test_relative_security `{Show dir}
                      let iscfg2' := (icfg2', true, false) in
                      let sc_r2 := spec_steps_acc 1000 harden iscfg2' ds in
                      match sc_r2 with
-                     | SETerm _ os2 _ => checker (obs_eqb os1 os2)
+                     | SETerm _ os2 _ => printTestCase (show os1 ++ show os2) (checker (obs_eqb os1 os2))
                      | SEOutOfFuel _ _ _ => collect "se2 oof"%string (checker tt)
                      | _ => collect "2nd speculative execution fails!"%string (checker tt)
                      end
