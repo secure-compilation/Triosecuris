@@ -105,26 +105,37 @@ Proof.
   - destruct v1, v2; simpl in *; try discriminate.
     + rewrite Nat.eqb_eq in H. auto.
     + destruct pc. inversion H.
-    + admit.
+    + destruct pc, pc0; simpl in *.
+      eapply andb_prop in H. destruct H.
+      rewrite Nat.eqb_eq in H, H0. subst. auto.
     + destruct pc. inversion H.
     + auto.
-  - subst. admit.
-Admitted.
+  - subst. unfold val_eqb. destruct v2; auto.
+    { eapply Nat.eqb_refl. }
+    destruct pc. repeat rewrite Nat.eqb_refl. auto.
+Qed.
 
 Lemma val_eqb_spec':
   forall v1 v2, val_eqb v1 v2 = false <-> v1 <> v2.
 Proof.
-(*   intros. split; intros. *)
-(*   - red. intros. rewrite <- val_eqb_spec in H0. *)
-(*     rewrite H in H0. discriminate. *)
-(*   - destruct v1, v2; simpl in *; auto. *)
-(*     + rewrite Nat.eqb_neq. red. intros. subst. *)
-(*       apply H. auto. *)
-(*     + rewrite Nat.eqb_neq. red. intros. subst. *)
-(*       apply H. auto. *)
-(*     + contradiction. *)
-(* Qed. *)
-Admitted.
+  intros. split; intros.
+  - destruct v1, v2; simpl in *; try discriminate.
+    + rewrite Nat.eqb_neq in H. red. intros. inversion H0.
+      subst. contradiction.
+    + destruct pc, pc0; simpl in *. red. intros.
+      inversion H0. subst. 
+      repeat rewrite Nat.eqb_refl in H. simpl in H. inversion H.
+  - destruct v1, v2; simpl in *; auto.
+    + rewrite Nat.eqb_neq. red. intros. subst.
+      apply H. auto.
+    + destruct pc. auto.
+    + destruct pc, pc0.
+      destruct (n =? n1) eqn:X;
+        destruct (n0 =? n2) eqn:Y; simpl; auto.
+      rewrite Nat.eqb_eq in X, Y. exfalso. eapply H. subst; auto.
+    + destruct pc. auto.
+    + exfalso. eapply H. auto.
+Qed.
 
 Instance EqDec_val : EqDec val eq.
 Proof.
