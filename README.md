@@ -1,10 +1,10 @@
-# SpecIBT: Formally Verified Protection Against Speculative Control-Flow Hijacking
+# Triosecuris: Formally Verified Protection Against Speculative Control-Flow Hijacking
 
 ## Paper draft
 
-- [SpecIBT: Formally Verified Protection Against Speculative Control-Flow Hijacking](https://arxiv.org/abs/2601.22978).
+- [Triosecuris: Formally Verified Protection Against Speculative Control-Flow Hijacking](https://arxiv.org/abs/2601.22978).
   Jonathan Baumann, Yonghyun Kim, Yan Farba, Catalin Hritcu, and Julay Leatherman-Brooks.
-  Draft from Jan 2026.
+  Draft from April 2026.
 
 ## List of Claims
 
@@ -17,7 +17,7 @@ and compiles without any issues.
 2. In artifact directory, install a local opam switch and install the dependencies:
 
 ```bash
-opam switch create SpecIBT 4.14.1 &&
+opam switch create Triosecuris 4.14.1 &&
 eval $(opam env) &&
 opam pin add rocq-prover 9.0.0 -y &&
 opam repo add rocq-released https://rocq-prover.org/opam/released &&
@@ -32,14 +32,14 @@ make
 
 - Lemma 1 --> `seq_spec_safety_preservation_init` in Safe.v
 
-### Section 4: Defining SpecIBT
+### Section 4: Defining Triosecuris
 
 - Fig. 3 --> `exp`, `inst` in MiniCET.v
 - Fig. 4 --> `binop`, `eval_binop`, `eval` in MiniCET.v
 - Fig. 5 --> `spec_eval_small_step` in MiniCET_Index.v
 - Fig. 6 --> `uslh_inst`, `uslh_blk`, `uslh_prog` in MiniCET.v
 
-### Section 5: Formal Results for SpecIBT
+### Section 5: Formal Results for Triosecuris
 
 - Fig. 7 --> `ideal_eval_small_step_inst` in MiniCET_Index.v
 - Lemma 2 --> `ultimate_slh_bcc_init` in MiniCET_Index.v
