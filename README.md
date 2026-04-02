@@ -1,4 +1,4 @@
-<p align="center"><img src="triosecuris_logo_v21.svg" width="600"></p>
+<p align="center"><img src="triosecuris_logo_v20.svg" width="600"></p>
 
 ## Paper draft
 
