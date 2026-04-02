@@ -1,4 +1,4 @@
-# Triosecuris: Formally Verified Protection Against Speculative Control-Flow Hijacking
+![TriosecurisLogo](https://raw.githubusercontent.com/secure-compilation/Triosecuris/refs/heads/main/triosecuris_logo_v20.svg)
 
 ## Paper draft
 
