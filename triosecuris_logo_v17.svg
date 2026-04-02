@@ -1,7 +1,9 @@
-<svg width="100%" viewBox="0 0 680 400" xmlns="http://www.w3.org/2000/svg">
+<svg width="100%" viewBox="100 10 480 350" xmlns="http://www.w3.org/2000/svg">
 
 
-<g transform="translate(340, 140)" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">
+<text x="340" y="38" text-anchor="middle" font-family="sans-serif" font-size="34" font-weight="700" letter-spacing="6" style="fill:rgb(13, 40, 64);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:sans-serif;font-size:34px;font-weight:700;text-anchor:middle;dominant-baseline:auto">TRIOSECURIS</text>
+
+<g transform="translate(340, 155)" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">
 
 <g transform="translate(0, -8)" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">
 <path d="M0,-85 L55,-60 L55,15 Q55,65 0,90 Q-55,65 -55,15 L-55,-60 Z" stroke-width="1.5" style="fill:rgb(26, 58, 92);stroke:rgb(13, 40, 64);color:rgb(0, 0, 0);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
@@ -43,11 +45,9 @@
 
 </g>
 
-<text x="340" y="278" text-anchor="middle" font-family="sans-serif" font-size="32" font-weight="500" letter-spacing="6" style="fill:rgb(13, 40, 64);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:sans-serif;font-size:32px;font-weight:500;text-anchor:middle;dominant-baseline:auto">TRIOSECURIS</text>
+<text x="340" y="282" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="400" letter-spacing="8" style="fill:rgb(58, 106, 156);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:sans-serif;font-size:12px;font-weight:400;text-anchor:middle;dominant-baseline:auto">SPECTRE DEFENSE</text>
 
-<text x="340" y="306" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="400" letter-spacing="8" style="fill:rgb(58, 106, 156);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:sans-serif;font-size:12px;font-weight:400;text-anchor:middle;dominant-baseline:auto">SPECTRE DEFENSE</text>
-
-<g transform="translate(340, 334)" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">
+<g transform="translate(340, 308)" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">
 <line x1="-80" y1="0" x2="-20" y2="0" stroke-width="0.5" opacity="0.4" style="fill:rgb(0, 0, 0);stroke:rgb(26, 58, 92);color:rgb(0, 0, 0);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.4;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
 <circle cx="-10" cy="0" r="1.5" opacity="0.6" style="fill:rgb(26, 58, 92);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.6;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
 <circle cx="0" cy="0" r="2" opacity="0.8" style="fill:rgb(26, 58, 92);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.8;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
@@ -55,6 +55,6 @@
 <line x1="20" y1="0" x2="80" y2="0" stroke-width="0.5" opacity="0.4" style="fill:rgb(0, 0, 0);stroke:rgb(26, 58, 92);color:rgb(0, 0, 0);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.4;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
 </g>
 
-<text x="340" y="362" text-anchor="middle" font-family="sans-serif" font-size="11" font-weight="400" letter-spacing="3" opacity="0.6" style="fill:rgb(58, 106, 156);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.6;font-family:sans-serif;font-size:11px;font-weight:400;text-anchor:middle;dominant-baseline:auto">BTB · RSB · PHT</text>
+<text x="340" y="336" text-anchor="middle" font-family="sans-serif" font-size="11" font-weight="400" letter-spacing="3" opacity="0.6" style="fill:rgb(58, 106, 156);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.6;font-family:sans-serif;font-size:11px;font-weight:400;text-anchor:middle;dominant-baseline:auto">BTB · RSB · PHT</text>
 
 </svg>
