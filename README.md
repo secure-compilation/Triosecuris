@@ -1,4 +1,4 @@
-![TriosecurisLogo](https://raw.githubusercontent.com/secure-compilation/Triosecuris/refs/heads/main/triosecuris_logo_v20.svg)
+<p align="center"><img src="triosecuris_logo_v21.svg" width="600"></p>
 
 ## Paper draft
 
