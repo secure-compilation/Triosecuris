@@ -1345,10 +1345,20 @@ Proof.
     { eapply MiniCET_Index.SpecSMI_Term. eauto. }
 Qed.
 
+Definition wwf_prog (p: MiniCET.prog) :=
+  Forall nonempty_block p /\ nonempty_program p /\ Forall last_inst_terminator p.
+
+Lemma wf_wwf p (WF: wf_prog p) : wwf_prog (uslh_prog p).
+Proof.
+  red. esplits;
+    [eapply uslh_prog_nonempty_blk|eapply uslh_prog_nonempty|]; eauto.
+  eapply uslh_prog_last_inst_terminator; eauto.
+Qed.
+
 Lemma minicet_linear_bcc
   (p: MiniCET.prog) len (tp: prog) sc tc tct tds tos n
   (TRANSL: machine_prog p len = Some tp)
-  (WFP: Forall MiniCET_Index.last_inst_terminator p)
+  (WFP: wwf_prog p)
   (SAFE: spec_exec_safe p sc)
   (MATCH: match_states p tp len (S_Running sc) (S_Running tc))
   (WFDS: wf_ds tp len tds)
@@ -1358,6 +1368,7 @@ Lemma minicet_linear_bcc
              /\ match_states p tp len sct tct
              /\ match_dirs p len ds tds /\ match_obs p len os tos.
 Proof.
+  red in WFP. des. clear WFP WFP0.
   ginduction n; ii.
   { inv TGT. esplits; try econs. eauto. }
   assert (SAFE1: exists ds os sct, p |- <(( S_Running sc ))> -->_ ds ^^ os  <(( sct ))>).
@@ -1413,9 +1424,7 @@ Definition relative_secure_spec_mir_mc (p:MiniCET.prog) (len:nat) (tp: prog) (tr
 
 Lemma spec_eval_relative_secure_spec_mir_mc_aux
   p r1 r2 r1' r2' m1 m2 m1' m2' tp
-  (WFP1: Forall nonempty_block p)
-  (WFP2: nonempty_program p)
-  (WFP3: Forall last_inst_terminator p)
+  (WFP: wwf_prog p)
   (LEN1: Datatypes.length m1' = Datatypes.length m2')
   (REG1: match_reg p (Datatypes.length m1') r1 r1')
   (REG2: match_reg p (Datatypes.length m1') r2 r2')
@@ -1427,6 +1436,7 @@ Lemma spec_eval_relative_secure_spec_mir_mc_aux
   (ISAFE2: spec_exec_safe p (0, 0, r2, m2, [], true, false)):
   spec_same_obs_machine tp (Datatypes.length m1') r1' r2' (Datatypes.length m1') m1' m2' [] true.
 Proof.
+  dup WFP. destruct WFP as [WFP1 WFP]. destruct WFP as [WFP2 WFP3].
   assert (INITSAFE:exists i, p[[(0,0)]] = Some i).
   { simpl. destruct p; ss.
     - red in WFP2. ss. lia.
@@ -1489,9 +1499,7 @@ Qed.
 
 Lemma spec_eval_relative_secure_spec_mir_mc
   p r1 r2 r1' r2' m1 m2 m1' m2' tp
-  (WFP1: Forall nonempty_block p)
-  (WFP2: nonempty_program p)
-  (WFP3: Forall last_inst_terminator p)
+  (WFP: wwf_prog p)
   (LEN1: Datatypes.length m1' = Datatypes.length m2')
   (SPEC: spec_same_obs p (0, 0) r1 r2 m1 m2 [] true)
   (ISAFE1: spec_exec_safe p (0, 0, r1, m1, [], true, false))
@@ -1637,9 +1645,7 @@ Proof.
     destruct p0. ss. des_ifs. }
 
   eapply spec_eval_relative_secure_spec_mir_mc_aux; try eapply SPEC; eauto.
-  { eapply uslh_prog_nonempty_blk; eauto. }
-  { eapply uslh_prog_nonempty; eauto. }
-  { eapply uslh_prog_last_inst_terminator. eauto. }
+  { eapply wf_wwf; eauto. }
   - subst ir1. subst iir1. red in H0. des. red. i.
     destruct (string_dec x callee).
     { subst. rewrite CALLEE1. ss. rewrite ISYNC. ss. }

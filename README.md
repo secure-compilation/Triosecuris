@@ -46,6 +46,7 @@ make
 ### Section 6: Translation to Machine Code
 
 - Fig. 8 --> `spec_eval_small_step` in MoreLinearProof.v
+- wwf_prog --> `wwf_prog` in MoreLinearProof.v
 - Lemma 4 --> `minicet_linear_bcc` in MoreLinearProof.v
 - `\approx^{mc}_{s}` --> `spec_same_obs_machine` in MoreLinearProof.v
 - Lemma 5 --> `spec_eval_relative_secure_spec_mir_mc` in MoreLinearProof.v
