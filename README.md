@@ -13,7 +13,7 @@ and compiles without any issues.
 ```bash
 opam switch create SpecIBT 4.14.1 &&
 eval $(opam env) &&
-opam pin add rocq-prover 9.0.0 -y &&
+opam pin add coq 9.0.0 -y &&
 opam repo add rocq-released https://rocq-prover.org/opam/released &&
 opam config env &&
 opam pin add coq-quickchick 2.1.0 -y &&
