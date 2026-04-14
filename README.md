@@ -1,11 +1,5 @@
 # SpecIBT: Formally Verified Protection Against Speculative Control-Flow Hijacking
 
-## Paper draft
-
-- [SpecIBT: Formally Verified Protection Against Speculative Control-Flow Hijacking](https://arxiv.org/abs/2601.22978).
-  Jonathan Baumann, Yonghyun Kim, Yan Farba, Catalin Hritcu, and Julay Leatherman-Brooks.
-  Draft from Jan 2026.
-
 ## List of Claims
 
 We claim that the artifact provides a Coq development of the definitions and proofs

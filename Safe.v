@@ -88,12 +88,12 @@ Lemma seq_ideal_nonspec
   (SEQ: p |- <(( S_Running (pc, r, m, stk) ))> -->^ os <(( stt ))>) :
   exists ds stt',
     p |- <(( S_Running (pc, r, m, stk, false) ))> -->i_ ds ^^ os <(( stt' ))>.
-  (* /\ seq_ideal_match stt stt'. *)
+
 Proof.
   inv SEQ; try (sfby (esplits; try econs; eauto)).
-  (* - exists [DBranch (not_zero n)]. esplits. *)
-  (*   { econs; eauto. } *)
-  (*   ss. split; auto. rewrite eqb_reflx. ss. *)
+
+
+
   - exists [DCall l].
     destruct (nth_error p (fst l)) eqn:PL; cycle 1.
     { esplits. eapply ISMI_Call_F; eauto. ii. ss; clarify. }
@@ -402,7 +402,7 @@ Proof.
     + esplits. econs 2; eauto.
     + esplits. eapply SpecSMI_Jump; eauto.
     + esplits. econs 2; eauto.
-    (* In this case, the callee register stores the return target. *)
+
     + destruct stk'.
       * esplits. eapply SpecSMI_Term; eauto.
       * destruct c as [l' o'].

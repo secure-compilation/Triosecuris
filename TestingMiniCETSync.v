@@ -282,9 +282,7 @@ Theorem observation_beq : forall (n m : observation), {n = m} + {n <> m}.
 Proof.
   dec_eq.
 Defined.
-(* 
-Scheme Equality for val.
-Scheme Equality for observation. *)
+
 
 Check (@equiv_decb cptr Logic.eq _ _).
 

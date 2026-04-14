@@ -69,9 +69,9 @@ Inductive seq_eval_small_step_inst (p:prog) :
   | SSMI_Ret : forall pc r m sk pc',
       p[[pc]] = Some <{{ ret }}> ->
       p |- <(( S_Running (pc, r, m, pc'::sk) ))> -->^[] <(( S_Running (pc', r, m, sk) ))>
-  | SSMI_Peek : forall pc r m sk x, (* YH: Maybe we can assume source program does not contain peek instruction. *)
+  | SSMI_Peek : forall pc r m sk x,
       p[[pc]] = Some <{{x <- peek}}> ->
-      let val := match sk with 
+      let val := match sk with
                 | [] => UV
                 | pc' :: sk' => FP pc'
                 end
@@ -193,7 +193,7 @@ Inductive spec_eval_small_step (p:prog):
       p |- <(( S_Running ((pc, r, m, pc'::sk), false, ms) ))> -->_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), false, ms') ))>
   | SpecSMI_Peek : forall pc r m sk ms x,
       p[[pc]] = Some <{{x <- peek}}> ->
-      let val := match sk with 
+      let val := match sk with
                 | [] => UV
                 | pc' :: sk' => FP pc'
                 end
@@ -286,9 +286,9 @@ Inductive ideal_eval_small_step_inst (p:prog) :
       wf_ret p pc'' ->
       ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) ->
       p |- <(( S_Running ((pc, r, m, pc'::sk), ms) ))> -->i_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), ms') ))>
-  | ISMI_Peek : forall pc r m sk ms x, (* YH: Do we need this for source program? *)
+  | ISMI_Peek : forall pc r m sk ms x,
       p[[pc]] = Some <{{x <- peek}}> ->
-      let val := match sk with 
+      let val := match sk with
                 | [] => UV
                 | pc' :: sk' => FP pc'
                 end
@@ -341,32 +341,32 @@ Definition ms_true_sc (sc: spec_cfg) : bool :=
 Definition ms_true_ic (ic: ideal_cfg) : bool :=
   let '(c, ms) := ic in ms.
 
-(* Definition is_br_or_call (i : inst) := *)
-(*   match i with *)
-(*   | <{{branch _ to _}}> | <{{call _}}> => true *)
-(*   | _                                  => false *)
-(*   end. *)
 
-(* Definition pc_sync (p: prog) (pc: cptr) : option cptr := *)
-(*   match nth_error p (fst pc) with *)
-(*   | Some blk => match nth_error (fst blk) (snd pc) with *)
-(*                | Some i => *)
-(*                    let acc1 := if (Bool.eqb (snd blk) true) then 2 else 0 in *)
-(*                    let insts_before_pc := (firstn (snd pc) (fst blk)) in *)
-(*                    let acc2 := fold_left (fun acc (i: inst) => if (is_br_or_call i) *)
-(*                                                             then (add acc 1) *)
-(*                                                             else acc) *)
-(*                                  insts_before_pc acc1 *)
-(*                    in Some ((fst pc), add (snd pc) acc2) *)
-(*                | _ => None *)
-(*                end *)
-(*   | _ => None *)
-(*   end. *)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 Definition offset_uslh (bl: list inst * bool) : list nat :=
   _offset_uslh (fst bl) (if snd bl then 2 else 0).
 
-(* pc - the first element of uslh_inst result *)
+
 Definition pc_sync (p: prog) (pc: cptr) : option cptr :=
   let ip := map offset_uslh p in
   let '(l, o) := pc in
@@ -454,23 +454,23 @@ Variant match_cfgs (p: prog) : ideal_cfg -> spec_cfg -> Prop :=
   match_cfgs p ((pc, r, m, stk), ms) ((pc', r', m', stk'), false, ms)
 .
 
-(* Definition steps_to_sync_point' (p: prog) (ic: ideal_cfg) (ds: dirs) : option nat := *)
-(*   let '(c, ms) := ic in *)
-(*   let '(pc, r, m, sk) := c in *)
-(*   match p[[pc]] with *)
-(*   | Some i => match i with *)
-(*              | IBranch e l => match ds with *)
-(*                              | DBranch b :: ds' => Some (if b then 3 else 2) *)
-(*                              | _ => None *)
-(*                              end *)
-(*              | ICall e => match ds with *)
-(*                          | DCall pc' :: ds' => Some 4 *)
-(*                          | _ => None *)
-(*                          end *)
-(*              | _ => Some 1 *)
-(*              end *)
-(*   | _ => None *)
-(*   end. *)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 Definition get_reg_sc (sc: spec_cfg) : reg :=
   let '(c, ct, ms) := sc in
@@ -495,7 +495,7 @@ Definition get_pc_ic (ic: ideal_cfg) : cptr :=
 Definition wf_dir' (p: prog) (d: direction) : Prop :=
   match d with
   | DCall pc' => is_some p[[pc']] = true
-  (* | DRet pc' => wf_ret p pc' *)
+
   | _ => True
   end.
 
@@ -507,9 +507,9 @@ Definition match_ob (p: prog) (o1 o2: observation) : Prop :=
   | ODiv _ _, ODiv _ _ | OBranch _, OBranch _ | OLoad _, OLoad _ | OStore _, OStore _ => o1 = o2
   | OCall (l1, 0), OCall (l2, 0) => l1 = l2
   | OCall (l1, S o1), OCall (l2, S o2) => ret_sync p (l1, S o1) = Some (l2, S o2)
-                                         (* if (wf_retb (uslh_prog p) (l2, S o2)) *)
-                                         (* then ret_sync p (l1, S o1) = Some (l2, S o2) *)
-                                         (* else o1 = o2 *)
+
+
+
   | _, _ => False
   end.
 
@@ -548,7 +548,7 @@ Definition wf_lbl (p: prog) (is_proc: bool) (l: nat) : Prop :=
   | None => False
   end.
 
-(* JB: can we maybe deduplicate these w.r.t. MiniCET, where they are defined for bool? YH: Yes. We can. *)
+
 Fixpoint wf_expr (p: prog) (e: exp) : Prop :=
   match e with
   | ANum _ | AId _ => True
@@ -754,7 +754,7 @@ Definition simple_inst (i: inst) : Prop :=
   | _ => False
   end.
 
-(* lock-step instructions *)
+
 Variant match_simple_inst_uslh : inst -> inst -> Prop :=
 | uslh_skip :
   match_simple_inst_uslh ISkip ISkip
@@ -893,9 +893,9 @@ Proof.
   do 2 rewrite length_app. ss. lia.
 Qed.
 
-(* Definition blk_offset (blk: list inst * bool) (o: nat) := *)
-(*   fold_left (fun (acc : nat) (i0 : inst) => if is_br_or_call i0 then add acc 1 else acc) (firstn o (fst blk)) *)
-(*     (if Bool.eqb (snd blk) true then 2 else 0). *)
+
+
+
 
 Definition prefix_offset {A} (ll: list (list A)) (i: nat) (base: nat) :=
   fold_left (fun acc l => acc + (Datatypes.length l)) (firstn i ll) base.
@@ -967,39 +967,39 @@ Proof.
   simpl. erewrite uslh_inst_inst_sz; eauto.
 Qed.
 
-(* Lemma offset_eq_aux blk c' l0 p1 n o *)
-(*     (BLK: mapM uslh_inst blk c' = (l0, p1)) *)
-(*     (BDD: o <= Datatypes.length blk) : *)
-(*   prefix_offset l0 o n = *)
-(*   o + fold_left (fun (acc : nat) (i0 : inst) => if is_br_or_call i0 then add acc 1 else acc) (firstn o blk) n. *)
-(* Proof. *)
-(*   ginduction o; ii. *)
-(*   { ss. } *)
-(*   unfold prefix_offset. *)
 
-(*   exploit mapM_perserve_len; eauto. intros LEN. *)
-(*   destruct blk. *)
-(*   { ss. des_ifs. lia. } *)
-(*   destruct l0. *)
-(*   { ss. } *)
-(*   do 2 rewrite firstn_cons. *)
-(*   rewrite unfold_mapM in BLK. *)
-(*   exploit bind_inv; eauto. i. des. subst. ss. *)
-(*   unfold uslh_bind in x1. *)
-(*   destruct (mapM uslh_inst blk (c' + Datatypes.length pm)) eqn:X. ss. clarify. *)
-(*   exploit IHo. *)
-(*   { eauto. } *)
-(*   { lia. } *)
-(*   i. rewrite <- x1. *)
 
-(*   unfold prefix_offset. *)
-(*   replace (n + Datatypes.length l) with *)
-(*     (add (if is_br_or_call i then add n 1 else n) 1); auto. *)
-(*   2:{ destruct i; ss; unfold MiniCET.uslh_ret in *; ss; clarify; ss. *)
-(*       - unfold uslh_bind in x0. ss. clarify. ss. lia. *)
-(*       - lia. } *)
-(*   rewrite fold_left_add_init. lia. *)
-(* Qed. *)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 Lemma nth_error_add_index {A} (p: list A) l i
   (NTH: nth_error p l = Some i) :
@@ -1016,35 +1016,35 @@ Proof.
   ss. f_equal. eapply nth_error_nth. auto.
 Qed.
 
-(* Lemma add_index_uslh_offset_uslh_aux bl s l1 l2 *)
-(*   (IDX: split (_add_index_uslh bl s) = (l1, l2)) : *)
-(*   l1 = _offset_uslh bl s /\ l2 = bl. *)
-(* Proof. *)
-(*   unfold add_index_uslh, offset_uslh in *. *)
-(*   ginduction bl; ii. *)
-(*   { ss. clarify. } *)
-(*   unfold _offset_uslh. ss. des_ifs_safe. *)
-(*   exploit IHbl; eauto. i. des. subst. auto. *)
-(* Qed. *)
 
-(* Lemma uslh_offset_uslh_add_index_aux bl s l1 l2 *)
-(*   (L1: l1 = _offset_uslh bl s) *)
-(*   (L2: l2 = bl) : *)
-(*   split (_add_index_uslh bl s) = (l1, l2). *)
-(* Proof. *)
-(*   ginduction bl; ii; try (sfby ss; clarify). *)
-(*   subst. ss. des_ifs_safe. *)
-(*   erewrite IHbl in Heq; eauto. clarify. *)
-(* Qed. *)
 
-(* Lemma add_index_uslh_offset_uslh bl is_proc l1 l2 *)
-(*   (IDX: split (add_index_uslh bl is_proc) = (l1, l2)) : *)
-(*   l1 = offset_uslh (bl, is_proc) /\ l2 = bl. *)
-(* Proof. *)
-(*   unfold add_index_uslh, offset_uslh in *. *)
-(*   eapply split_combine in IDX.  *)
-(*   eapply add_index_uslh_offset_uslh_aux; eauto. *)
-(* Qed. *)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 Lemma uslh_offset_uslh_add_index bl is_proc l1 l2
   (L1: l1 = offset_uslh (bl, is_proc))
@@ -1066,11 +1066,11 @@ Proof.
   rewrite nth_error_cons_succ in *. eauto.
 Qed.
 
-(* Lemma offset_uslh *)
-(* : nth_error (map offset_uslh p) l = Some oblk *)
-(*   Heq1 : nth_error oblk o = Some o' *)
-(*   Heq : nth_error p l = Some (blk, is_proc) : *)
-(*   nth_error (offset_uslh (blk, is_proc)) o = Some o' *)
+
+
+
+
+
 Lemma src_skip_inv p tp pc tpc
   (TRP: uslh_prog p = tp)
   (PS: pc_sync p pc = Some tpc)
@@ -1097,10 +1097,10 @@ Proof.
   simpl.
   ss. unfold uslh_bind in x1. ss.
   des_ifs_safe. rename Heq2 into X.
-  (* destruct (concatM (mapM uslh_inst blk) c') eqn:X. *)
+
   unfold pc_sync in *. ss. des_ifs_safe.
-  (* replace (fold_left (fun (acc : nat) (i0 : inst) => if is_br_or_call i0 then add acc 1 else acc) (firstn o blk) *)
-  (*            (if Bool.eqb is_proc true then 2 else 0)) with (blk_offset (blk, is_proc) o) by ss. *)
+
+
   erewrite uslh_offset_uslh_add_index in X; eauto.
   unfold concatM in X. exploit bind_inv; eauto. i. des; subst.
   exploit mapM_nth_error; try eapply x1; eauto.
@@ -1458,7 +1458,7 @@ Proof.
   unfold concatM in H0. eapply bind_inv in H0. des.
   ss. unfold MiniCET.uslh_ret in *. clarify.
   erewrite uslh_offset_uslh_add_index in H0; eauto.
-  
+
   hexploit offset_eq_aux; eauto.
   { simpl. rewrite nth_error_map in Heq0. unfold option_map in Heq0. des_ifs_safe.
     unfold offset_uslh in Heq1. eauto. }
@@ -1470,7 +1470,7 @@ Proof.
       eapply nth_error_In in INST. eapply Forall_forall in NCT; eauto.
       red in NCT. eapply Forall_forall in NCT; eauto. red in NCT. clarify. }
 
-  (* branch *)
+
   - dup Heq0. rename Heq2 into TRNTH.
     rewrite nth_error_map in Heq0. unfold option_map in Heq0.
     des_ifs_safe. unfold offset_uslh in Heq1.
@@ -1490,7 +1490,7 @@ Proof.
         unfold add_block_M, add_block in x1. clarify.
         rewrite uslh_blk_np_length.
         f_equal. f_equal.
-        erewrite <- uslh_inst_np_length_same with (opc := 0). (* opc does not matter, so it would not be resolved by anything *)
+        erewrite <- uslh_inst_np_length_same with (opc := 0).
         2:{ eapply offset_uslh_length. }
         erewrite uslh_inst_np_length; eauto. }
       econs 2; eauto.
@@ -1506,7 +1506,7 @@ Proof.
     des_ifs; eauto.
     replace (prefix_offset a0 o 2) with (S (S (prefix_offset a0 o 0))); simpl; eauto.
     unfold prefix_offset at 2. rewrite fold_left_init_0 at 1. unfold prefix_offset. lia.
-  (* call *)
+
   - dup Heq0. rename Heq2 into TRNTH.
     rewrite nth_error_map in Heq0. unfold option_map in Heq0.
     des_ifs_safe. unfold offset_uslh in Heq1.
@@ -1538,7 +1538,7 @@ Proof.
     des_ifs; eauto.
     replace (prefix_offset a0 o 2) with (S (S (prefix_offset a0 o 0))); simpl; eauto.
     unfold prefix_offset at 2. rewrite fold_left_init_0 at 1. unfold prefix_offset. lia.
-  (* ret *)
+
   - dup Heq0. rename Heq2 into TRNTH.
     rewrite nth_error_map in Heq0. unfold option_map in Heq0.
     des_ifs_safe. unfold offset_uslh in Heq1.
@@ -1556,18 +1556,18 @@ Proof.
         exploit (concat_nth_error a0 _ _ 0); eauto; [ss|]. i.
         esplits; eauto.
         econs 4; eauto.
-        { ss. rewrite TRNTH. unfold offset_uslh. ss. rewrite Heq1. eauto. } 
+        { ss. rewrite TRNTH. unfold offset_uslh. ss. rewrite Heq1. eauto. }
         {
             simpl. rewrite H. simpl. des_ifs.
             - replace (prefix_offset a0 o 2) with (S (S (prefix_offset a0 o 0))); simpl.
               2:{ unfold prefix_offset at 2. rewrite fold_left_init_0 at 1. unfold prefix_offset. lia. }
               eapply concat_nth_error; eauto.
-            - eapply concat_nth_error; eauto. 
+            - eapply concat_nth_error; eauto.
         }
     }
     des_ifs; eauto.
     replace (prefix_offset a0 o 2) with (S (S (prefix_offset a0 o 0))); simpl; eauto.
-    unfold prefix_offset at 2. rewrite fold_left_init_0 at 1. unfold prefix_offset. lia.  
+    unfold prefix_offset at 2. rewrite fold_left_init_0 at 1. unfold prefix_offset. lia.
 Qed.
 
 Lemma firstnth_error : forall (l: list inst) (n: nat) (i: inst),
@@ -1640,7 +1640,7 @@ Proof.
     - i. cbn. split.
       + constructor. 2: apply IHl.
         specialize (IHl (x + uslh_inst_sz a)) as [_ IHl]. rewrite Forall_forall in IHl.
-        intro H. apply IHl in H. 
+        intro H. apply IHl in H.
         assert (uslh_inst_sz a > 0). { destruct a; ss; lia. }
         lia.
       + specialize (IHl (x + uslh_inst_sz a)) as [_ IHl].
@@ -1684,7 +1684,7 @@ Lemma match_ob_functional p o o'1 o'2:
 Proof.
     destruct o, o'1, o'2; try contradiction; try congruence.
     all: destruct l.
-    all: match goal with 
+    all: match goal with
          | |- match_ob _ (OCall (_, ?n)) _ -> _ => try (destruct n; contradiction)
          end.
     destruct l0, l1. unfold match_ob. destruct n0, n4, n2; try contradiction.
@@ -1692,7 +1692,7 @@ Proof.
     - unfold ret_sync.
       destruct (p [[(n, n0)]]); try discriminate.
       destruct i; try discriminate.
-      destruct (pc_sync p (n, n0)); try discriminate. 
+      destruct (pc_sync p (n, n0)); try discriminate.
       destruct c. i. inv H. inv H0. reflexivity.
 Qed.
 
@@ -1710,7 +1710,7 @@ Proof.
     exploit IHe1; eauto. i.
     exploit IHe2; eauto. i.
     unfold eval_binop.
-    destruct (eval r e1), (eval r e2), (eval r' e1), (eval r' e2); ss; subst. 
+    destruct (eval r e1), (eval r e2), (eval r' e1), (eval r' e2); ss; subst.
     all: try (destruct pc; contradiction). 1: reflexivity.
     + destruct pc0; contradiction.
     + destruct o; ss. destruct pc, pc0, pc1, pc2. ss. destruct (n0 =? 0)%nat eqn:?, (n2 =? 0)%nat eqn:?; des; subst.
@@ -2153,7 +2153,7 @@ Variant match_cfgs_ext (p: prog) : state ideal_cfg -> state spec_cfg -> Prop :=
   (STK: map_opt (ret_sync p) stk = Some stk') :
   match_cfgs_ext p (S_Running ((pc + 1, r, m, stk), ms))
                    (S_Running ((pc' + 1, r', m', stk'), false, ms))
-| match_cfgs_ext_ret1 (* ret - ret match *)
+| match_cfgs_ext_ret1
   pc pc' r r' m m' stk stk' (ms: bool)
   (PC: pc_sync p pc = Some pc')
   (FROM: (uslh_prog p) [[pc']] = Some <{{ callee <- peek }}>)
@@ -2167,9 +2167,9 @@ Variant match_cfgs_ext (p: prog) : state ideal_cfg -> state spec_cfg -> Prop :=
                      end) :
   match_cfgs_ext p (S_Running ((pc, r, m, stk), ms))
                    (S_Running ((pc' + 1, r', m', stk'), false, ms))
-| match_cfgs_ext_ret2 (* after return *)
+| match_cfgs_ext_ret2
   l o l' o' r r' m m' stk stk' (ms:bool) e
-  (PC: pc_sync p (l, o - 1) = Some (l', o')) (* call - callee asgn match *)
+  (PC: pc_sync p (l, o - 1) = Some (l', o'))
   (FROM: p[[(l, o - 1)]] = Some (ICall e))
   (POS: o > 0)
   (TO: (uslh_prog p) [[(l', o' + 2)]] = Some <{{ msf := (callee = (& (l', o' + 2))) ? msf : 1 }}>)
@@ -2304,26 +2304,26 @@ Proof.
   eapply mapM_cons_inv in MAP. des. subst.
   simpl in NTH.
   destruct (lt_dec pos (Datatypes.length res_hd)).
-  - (* ICall is in the expansion of instruction a *)
+  -
     rewrite nth_error_app1 in NTH; auto.
     destruct a; ss; unfold MiniCET.uslh_ret in *; clarify;
     try (exfalso;
          destruct pos; simpl in NTH; try discriminate NTH;
          destruct pos; simpl in NTH; try discriminate NTH;
          rewrite nth_error_nil in NTH; discriminate NTH).
-    (* branch case *)
+
     + exfalso. eapply bind_inv in MAP. des.
       unfold add_block_M, add_block in MAP. clarify.
       destruct pos; simpl in NTH; [discriminate NTH|].
       destruct pos; simpl in NTH; [discriminate NTH|].
       rewrite nth_error_nil in NTH. discriminate NTH.
-    (* call case *)
+
     + exists 0, fp. split; [auto|].
       destruct pos; [exfalso; simpl in NTH; discriminate NTH|].
       destruct pos; [simpl in NTH; clarify; auto|].
       exfalso. destruct pos; simpl in NTH; [discriminate NTH|].
       rewrite nth_error_nil in NTH. discriminate NTH.
-  - (* ICall is in the rest *)
+  -
     rewrite nth_error_app2 in NTH; [|lia].
     exploit IHblk; eauto. i. des.
     exists (S o_src), src_e. split; [auto|].
@@ -2348,7 +2348,7 @@ Proof.
   rename Heq into TBLK.
   des. rename WFR0 into CALL_AT. rename WFR1 into OGT0.
 
-  (* Step 1: show l < length p *)
+
   assert (LBD: l < Datatypes.length p).
   { unfold uslh_prog in TBLK. des_ifs_safe.
     exploit mapM_perserve_len; eauto. i.
@@ -2361,32 +2361,31 @@ Proof.
     eapply (new_prog_no_call _ _ _ _ Heq) in TBLK.
     eapply TBLK. simpl. eauto. }
 
-  (* Step 2: get source block *)
+
   assert (SRC_BLK: exists sblk, nth_error p l = Some sblk).
   { destruct (nth_error p l) eqn:E; [eauto|].
     exfalso. eapply nth_error_None in E. lia. }
   des.
 
-  (* Step 3: use label_inv *)
+
   hexploit label_inv; eauto. i. des.
   rename H into TBLK'. rename H0 into USLH_BLK. rename H1 into C_EQ.
 
-  (* TBLK': nth_error (uslh_prog p) l = Some blk' *)
-  (* USLH_BLK: uslh_blk (l, sblk) c = (blk', np') *)
+
+
   rewrite TBLK in TBLK'. injection TBLK' as TBLK'. subst.
 
-  (* Now unfold uslh_blk *)
+
   destruct sblk as [sbl s_proc]. simpl in USLH_BLK.
   eapply bind_inv in USLH_BLK. des. subst.
   unfold concatM in USLH_BLK. eapply bind_inv in USLH_BLK. des.
   ss. unfold MiniCET.uslh_ret in *. clarify.
   erewrite uslh_offset_uslh_add_index in USLH_BLK; eauto.
 
-  (* Now tblk = (if s_proc then [ctarget; msf_init] ++ concat a else concat a, s_proc)
-     CALL_AT: nth_error tblk (o-1) = Some (ICall e) *)
-  (* The ICall must be in concat a (not in ctarget/msf_init header) *)
 
-  (* Step 4: use concat_call_find *)
+
+
+
   assert (CALL_IN_CONCAT: exists pos', nth_error (List.concat a0) pos' = Some (ICall e) /\
           (if s_proc then add pos' 2 = o - 1 else pos' = o - 1)).
   { des_ifs; simpl in CALL_AT.
@@ -2398,7 +2397,7 @@ Proof.
   des.
   exploit concat_call_find; eauto. i. des.
 
-  (* Step 5: establish pc_sync *)
+
   assert (OFS: exists io, nth_error (_offset_uslh sbl (if s_proc then 2 else 0)) o_src = Some io).
   { destruct (nth_error (_offset_uslh sbl (if s_proc then 2 else 0)) o_src) eqn:E; [eauto|].
     exfalso. eapply nth_error_None in E. rewrite _offset_uslh_length in E.
@@ -2407,39 +2406,39 @@ Proof.
 
   hexploit offset_eq_aux; eauto.
   { pose proof (proj1 (nth_error_Some (_offset_uslh sbl (if s_proc then 2 else 0)) o_src)) as HH. rewrite _offset_uslh_length in HH. simpl. apply HH. rewrite OFS. discriminate. }
-  i. (* H: prefix_offset a0 o_src (if s_proc then 2 else 0) = io *)
+  i.
 
-  (* From prefix_offset a0 o_src base = io and pos' = prefix_offset a0 o_src 0 + 1 *)
+
   assert (IO_EQ: io = (if s_proc then add (prefix_offset a0 o_src 0) 2 else prefix_offset a0 o_src 0)).
   { unfold prefix_offset in H |- *. rewrite fold_left_init_0 in H.
     destruct s_proc.
     - rewrite <- H. simpl. lia.
     - rewrite <- H. simpl. lia. }
 
-  (* The ICall in tblk is at position o-1 which equals io+1 *)
+
   assert (O_EQ: o - 1 = add io 1).
   { subst. des_ifs; lia. }
 
-  (* So o = io + 2 *)
+
   assert (O_EQ2: o = add io 2).
   { lia. }
 
-  (* pc_sync p (l, o_src) maps to (l, io) *)
+
   assert (PCSYNC: pc_sync p (l, o_src) = Some (l, io)).
   { unfold pc_sync. simpl. rewrite nth_error_map. rewrite SRC_BLK.
     simpl. unfold offset_uslh. simpl. rewrite OFS. auto. }
 
-  (* ret_sync p (l, S o_src) = Some (l, io + 2) = Some (l, o) *)
+
   assert (RETSYNC: ret_sync p (l, S o_src) = Some (l, o)).
   { simpl in x0. unfold ret_sync. simpl.
     change (p[[(l, o_src)]]) with (fetch p (l, o_src)).
     unfold fetch. rewrite SRC_BLK. simpl. rewrite x0.
     fold (pc_sync p (l, o_src)). rewrite PCSYNC. f_equal. f_equal. lia. }
 
-  (* wf_ret p (l, S o_src) *)
+
   assert (WF_RET_SRC: wf_ret p (l, S o_src)).
   { red. simpl. split.
-    - (* p[[(l, S o_src)]] <> None *)
+    -
       assert (FETCH_SRC: fetch p (l, o_src) = Some (ICall src_e)).
       { unfold fetch. rewrite SRC_BLK. simpl. auto. }
       exploit (block_always_terminator_prog p (l, o_src) (ICall src_e) WFP FETCH_SRC).
@@ -2451,7 +2450,7 @@ Proof.
     - exists src_e. simpl. split; [|lia].
       unfold fetch. rewrite SRC_BLK. simpl. simpl in x0. rewrite Nat.sub_0_r. exact x0. }
 
-  (* (uslh_prog p)[[l, o]] *)
+
   assert (TGT_FETCH: (uslh_prog p)[[(l, o)]] =
     Some <{{ msf := (callee = (& (l, o))) ? msf : 1 }}>).
   { rename H into PFX. clear O_EQ2 RETSYNC PCSYNC.
@@ -2461,7 +2460,7 @@ Proof.
     ss. unfold MiniCET.uslh_ret in *. clarify.
     exploit (concat_nth_error a0 _ _ 2); eauto; [ss|]. intro CNE. des.
     destruct s_proc; ss; unfold MiniCET.uslh_ret in *; clarify.
-    + (* s_proc = true: header [ctarget; msf_init] ++ concat a0 *)
+    +
       unfold fetch. rewrite TBLK. simpl.
       destruct o; [lia|]. destruct o; [lia|]. simpl.
         assert (OO: o = prefix_offset a0 o_src 0 + 2) by lia.
@@ -2469,12 +2468,12 @@ Proof.
         assert (PP: prefix_offset a0 o_src 2 + 2 = S (S (prefix_offset a0 o_src 0 + 2))) by
           (unfold prefix_offset; rewrite fold_left_init_0; lia).
         rewrite PP. reflexivity.
-    + (* s_proc = false *)
+    +
       unfold fetch. rewrite TBLK. simpl.
       assert (OO: o = prefix_offset a0 o_src 0 + 2) by lia.
       rewrite OO. rewrite CNE. reflexivity. }
 
-  (* Now assemble *)
+
   exists o_src.
   refine (conj WF_RET_SRC (conj RETSYNC (conj _ (conj TGT_FETCH _)))).
   - unfold pc_sync in PCSYNC. rewrite PCSYNC. do 2 f_equal. lia.
@@ -2488,7 +2487,7 @@ Proof. ss. des_ifs. Qed.
 
 Lemma wf_ret_src p pc tpc
   (WFP: wf_prog p)
-  (* (NCT: no_ct_prog p) *)
+
   (RET: ret_sync p pc = Some tpc) :
   wf_ret p pc.
 Proof.
@@ -2632,7 +2631,7 @@ Lemma ultimate_slh_bcc_single (p: prog) ic1 sc1 sc2 ds os
                /\ match_obs p os' os.
 Proof.
   inv MATCH; try sfby inv TGT.
-  (* pc_sync match *)
+
   - inv TGT; inv MATCH0; clarify.
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
       replace (@nil direction) with ((@nil direction) ++ []) by ss.
@@ -2674,10 +2673,10 @@ Proof.
           - rewrite t_update_neq; eauto. ii; clarify. }
         { rewrite t_update_eq. rewrite eval_unused_update; eauto.
           exploit unused_prog_lookup; try eapply x1; eauto. i. ss. }
-    (* div *)
+
     + exploit tgt_inv; eauto. i. des. inv x0.
       inv MATCH.
-      replace (@nil direction) with ((@nil direction) ++ []) by ss. 
+      replace (@nil direction) with ((@nil direction) ++ []) by ss.
       replace ([ODiv v1 v2]) with (([ODiv v1 v2]) ++ []) by ss.
       esplits.
       { econs 2; [|econs].
@@ -2696,9 +2695,9 @@ Proof.
       }
       { fold res. econs. econs. 3: assumption.
         - exploit block_always_terminator_prog; try eapply x1; eauto. i. des.
-          exploit pc_sync_next; eauto. now destruct pc. 
-        - econs. (* This seems like it would be needed more often, extract as lemma? *)
-          + i. destruct (string_dec x x0). 
+          exploit pc_sync_next; eauto. now destruct pc.
+        - econs.
+          + i. destruct (string_dec x x0).
             * subst. rewrite! t_update_eq. destruct v2; ss.
             * do 2 (rewrite t_update_neq; [|assumption]). now apply REG.
           + eapply unused_prog_lookup in UNUSED1; eauto.
@@ -2707,7 +2706,7 @@ Proof.
       }
       { ss. }
       { repeat econs. }
-    (* branch *)
+
     + exploit tgt_inv; eauto. i. des. inv x1.
       { inv MATCH. }
       clarify.
@@ -2737,11 +2736,11 @@ Proof.
           destruct ms; ss. unfold to_nat in H1. des_ifs_safe.
           destruct n; ss; clarify. }
         { inv REG. red. eauto. }
-    (* jump *)
+
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
       replace (@nil direction) with ((@nil direction) ++ []) by ss.
       replace (@nil observation) with ((@nil observation) ++ []) by ss.
-      
+
       exists ([] ++ []), ([] ++ []), (S_Running (l, 0, r0, m0, stk, ms)). splits; econs; [|econs|].
       * eapply ISMI_Jump; eauto.
       * econs; eauto.
@@ -2755,7 +2754,7 @@ Proof.
         destruct l0; [ss; lia|].
         unfold pc_sync. ss.
         rewrite nth_error_map. rewrite BLK. ss.
-    (* load *)
+
     + exploit tgt_inv; eauto. i. des. inv x0. inv MATCH.
       dup MSC. specialize (MSC0 n). rewrite H2 in MSC0. des_ifs_safe.
       exists ([] ++ []), ([OLoad n] ++ []), (S_Running ((pc0 + 1), x !-> v; r0, m0, stk, ms)).
@@ -2775,14 +2774,14 @@ Proof.
       * econs; eauto.
         { exploit block_always_terminator_prog; try eapply x1; eauto. i. des.
           exploit pc_sync_next; eauto.
-          (* erewrite firstnth_error; eauto. rewrite fold_left_app. cbn. *)
-          (* rewrite add_1_r. auto. *) }
+
+            }
         { red. splits; i.
           - destruct (string_dec x x0); subst.
             { do 2 rewrite t_update_eq; eauto. }
             { rewrite t_update_neq; eauto. rewrite t_update_neq; eauto. now apply REG. }
           - inv REG. ss. des. rewrite t_update_neq; eauto. }
-    (* store *)
+
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
       eapply unused_prog_lookup in UNUSED1; eauto.
       eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
@@ -2799,7 +2798,7 @@ Proof.
         inv REG. rewrite <- H1. rewrite H2. destruct ms; ss.
         erewrite eval_regs_eq_nat; eauto. apply wf_expr_wf_exp. apply x1.
       * dup REG. inv REG. econs.
-        (* erewrite <- eval_regs_eq with (r := r0) (r' := r); eauto. *)
+
         econs; eauto.
         { exploit block_always_terminator_prog; try eapply x0; eauto. i. des.
           exploit pc_sync_next; eauto. }
@@ -2807,7 +2806,7 @@ Proof.
           unfold Msync. i. destruct (i =? n)%nat eqn:Heq.
           - apply Nat.eqb_eq in Heq.  subst.
             assert (Datatypes.length (upd n m (eval r e')) = Datatypes.length (upd n m0 (eval r0 e'))).
-            { clear - MSC. rewrite! upd_length. unfold Msync in MSC. 
+            { clear - MSC. rewrite! upd_length. unfold Msync in MSC.
               induction m in m0, MSC |-*; i; destruct m0; ss. 1, 2: specialize (MSC 0); ss.
               f_equal. apply IHm. i. specialize (MSC (S i)); ss. }
             pose proof (ge_dec n (Datatypes.length (upd n m (eval r e')))) as [Hlen | Hlen].
@@ -2822,16 +2821,16 @@ Proof.
             apply MSC.
         }
 
-    (* call - asgn *)
+
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
 
-    (* 0th - ctarget *)
+
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
 
-    (* ret *)
-    + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH. 
 
-    (* peek *)
+    + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
+
+
     + exploit tgt_inv; eauto. i. des. inv x0.
       { inv MATCH.
         replace (@nil direction) with ((@nil direction) ++ []) by ss.
@@ -2866,10 +2865,10 @@ Proof.
         i; rewrite t_update_neq; [now apply REG | des; symmetry; eauto].
       }
 
-    (* ret - termination *)
+
     + exploit tgt_inv; eauto. i. des. inv x1. inv MATCH.
 
-  (* procedure entry - ctarget *)
+
   - inv TGT; clarify. esplits.
     + econs.
     + eapply match_cfgs_ext_ct2; eauto.
@@ -2877,7 +2876,7 @@ Proof.
     + econs.
     + econs.
 
-  (* procedure entry - msf update *)
+
   - inv TGT; clarify.
     esplits; econs.
     econs; eauto.
@@ -2891,17 +2890,17 @@ Proof.
       * i. des. rewrite t_update_neq; eauto.
       * rewrite t_update_eq. eauto.
 
-  (* call - call *)
+
   - inv TGT; clarify.
     destruct pc'0 as [l' o'].
     exploit unused_prog_lookup; try eapply UNUSED1; eauto.
     exploit unused_prog_lookup; try eapply UNUSED2; eauto. i.
     destruct ((uslh_prog p)[[(l', o')]]) eqn:NXT.
-    (* Target Fault - instruction lookup failed.  *)
+
     2:{ replace [DCall(l', o')] with ([DCall (l', o')] ++ []) by ss.
         replace [OCall l] with ([OCall l] ++ []) by ss.
         destruct l as [l o]. destruct o.
-        (* o = 0 *)
+
         - exists ([DCall (l', o')] ++ []), ([OCall (l, 0)] ++ []). esplits.
           { econs; [|econs].
             eapply ISMI_Call_F; eauto.
@@ -2914,7 +2913,7 @@ Proof.
               des_ifs.
               { des. rewrite Nat.eqb_eq in Heq1. subst. auto. }
               { eapply ret_sync_nonzero in x2. clarify. }
-            (* This currently does not hold: A program might attempt to call a register that holds a value produced by peek. Unless we want to disallow peek in the source program, this means that we need to map val_match onto observations as well*)
+
             - i. simpl in H, NXT. des_ifs.
               2:{ clear - H Heq. exploit label_inv; eauto. i. des. clarify. }
               simpl. right. ii. subst. clear -Heq NXT WFP.
@@ -2923,7 +2922,7 @@ Proof.
           { econs. ii. clarify. }
           { repeat econs. }
           { repeat econs. }
-        (* o = S n *)
+
         - assert (WFRT: wf_ret (uslh_prog p) (l, S o)).
           { dup REG. inv REG. simpl in H8. rewrite H0 in H8.
             unfold to_fp in H8. des_ifs.
@@ -2956,7 +2955,7 @@ Proof.
     assert (i = ICTarget \/ i <> ICTarget).
     { destruct i; try (sfby (right; ii; clarify)). auto. }
     des; subst.
-    (* Normal Call Steps *)
+
     + exploit head_call_target; eauto. i. des; clarify.
       replace [DCall(l0, 0)] with ([DCall (l0, 0)] ++ []) by ss.
       replace [OCall l] with ([OCall l] ++ []) by ss.
@@ -3043,11 +3042,11 @@ Proof.
             ss. clarify. do 2 rewrite andb_false_r. simpl. auto. }
         { repeat econs. }
         { repeat econs. red. eauto. }
-    (* Fault - not ctarget *)
+
     + replace [DCall(l', o')] with ([DCall (l', o')] ++ []) by ss.
       replace [OCall l] with ([OCall l] ++ []) by ss.
       destruct l as [l o]. destruct o.
-      (* o = 0 *)
+
       * exists ([DCall (l', o')] ++ []), ([OCall (l, 0)] ++ []). esplits.
         { econs; [|econs].
           eapply ISMI_Call_F; eauto.
@@ -3066,7 +3065,7 @@ Proof.
           { econs. ii. clarify. }
           { repeat econs. }
           { repeat econs. }
-      (* o = S n *)
+
       * assert (WFRT: wf_ret (uslh_prog p) (l, S o)).
         { dup REG. inv REG. simpl in H8. rewrite H1 in H8.
           unfold to_fp in H8. des_ifs.
@@ -3140,21 +3139,21 @@ Proof.
     + econs.
     + econs.
 
-  (* ret after peek *)
+
   - inv TGT; clarify. 1: destruct stk. 1: cbn in STK; inv STK.
-    + (* Destruct STK to get ret_sync for head and tail *)
+    +
       simpl in STK.
       destruct (ret_sync p c) eqn:RET_C; [|discriminate].
       destruct (map_opt (ret_sync p) stk) eqn:MAP_REST; [|discriminate].
       inv STK.
-      (* Get source instruction: p[[pc]] = Some ret *)
+
       exploit tgt_inv; try eapply FROM; eauto. i. des.
       inv x1.
-      { (* uslh_simple: source has IPeek callee, contradicts unused_prog *)
+      {
         inv MATCH. eapply unused_prog_lookup in UNUSED2; eauto. ss. }
-      (* Get source pc info from wf_ret (uslh_prog p) pc'' *)
+
       exploit wf_ret_uslh_src; eauto. i. des.
-      (* Show c and direction are related via ret_sync_injective *)
+
       assert (C_IFF: c = (fst pc'', S o_src) <-> pc'0 = pc'').
       { split; intro; subst.
         - assert (ret_sync p (fst pc'', S o_src) = Some pc'0) by exact RET_C.
@@ -3162,7 +3161,7 @@ Proof.
         - destruct c, pc''. exploit ret_sync_inj; [exact RET_C | exact x2 |]. i. des. subst. auto. }
       destruct pc'' as [l_tgt o_tgt].
       simpl in C_IFF, x1, x2, x3, x4, x5.
-      (* Prove ms comparison equality *)
+
       assert (MS_EQ: (fst c =? l_tgt)%nat && (snd c =? S o_src)%nat =
                       (fst pc'0 =? l_tgt)%nat && (snd pc'0 =? o_tgt)%nat).
       { destruct c as [c1 c2]. destruct pc'0 as [p1 p2]. simpl in *.
@@ -3193,27 +3192,27 @@ Proof.
         - inv REG. eauto.
         - exact MSC.
         - exact MAP_REST.
-        - (* MS: eval of msf check expression *)
+        -
           replace (o_tgt - 2 + 2) with o_tgt by lia.
           destruct pc'0 as [p1 p2]. simpl in MS.
-          (* r' ! callee = FP (p1, p2) *)
+
           ss. rewrite MS. ss.
           destruct ((p1 =? l_tgt)%nat && (p2 =? o_tgt)%nat) eqn:CMP; simpl.
-          { (* CMP = true: eval gives msf *)
+          {
             red in REG. destruct REG as [_ MSF_EQ]. rewrite MSF_EQ.
             destruct ms; auto. }
-          { (* CMP = false: eval gives N 1 *)
+          {
             destruct ms; auto. } }
       { repeat econs. unfold match_dir. simpl. eauto. }
     + exists [], [], S_Term. split.
       * change (@nil direction) with (@nil direction ++ []).
         change (@nil observation) with (@nil observation ++ []).
         econs 2. 2: econs.
-        destruct stk; ss. 2: destruct (ret_sync p c); [destruct (map_opt (ret_sync p) stk); discriminate |discriminate].   
+        destruct stk; ss. 2: destruct (ret_sync p c); [destruct (map_opt (ret_sync p) stk); discriminate |discriminate].
         econs. exploit tgt_inv; try eapply FROM; eauto. i. des. inv x1. 2: assumption.
         inv MATCH. eapply unused_prog_lookup in UNUSED2; eauto. now destruct UNUSED2.
       * split; repeat econs.
-  (* after return *)
+
   - inv TGT; clarify.
     exists [], []. esplits; try sfby (repeat econs).
     econs. econs.
@@ -3443,7 +3442,7 @@ Proof.
     rewrite negb_involutive in H16.
     symmetry in H16. apply eqb_prop in H16 as ->. reflexivity.
   - cbn in H14. apply (f_equal negb) in H14. cbn in H14. rewrite negb_involutive in H14.
-    symmetry in H14. 
+    symmetry in H14.
     apply andb_prop in H14. rewrite! Nat.eqb_eq in H14. des.
     destruct pc', l; cbn in *; subst.
     econstructor; eassumption.
@@ -3568,11 +3567,11 @@ Proof.
       change (@nil direction) with ((@nil direction) ++ []).
       econstructor. 2: eassumption.
       now constructor.
-    (* + edestruct IHmulti_ideal_inst as (pc'' & r' & m' & stk' & Hsteps & H). 1, 2: reflexivity. *)
-    (*   repeat eexists. 2: exact H. *)
-    (*   change (@nil direction) with ((@nil direction) ++ []). *)
-    (*   econstructor. 2: eassumption. *)
-    (*   now constructor. *)
+
+
+
+
+
     + inv H0. 2: inv H1.
       repeat eexists. 2: right; split.
       * cbn; constructor.
@@ -3751,39 +3750,39 @@ Proof.
         1: change (OStore n :: x8) with ([OStore n] ++ x8).
         2: change (OStore n0 :: x9) with ([OStore n0] ++ x9).
         all: econstructor; eassumption.
-    + 
-       inv x. rewrite H20 in H6. inv H6. 
-       assert (l = l0). 
-       { 
-         clear Hexec1 IHHexec1 Hexec2. 
-         unfold seq_same_obs in Hseq_same. 
-         specialize (Hseq_same ([OCall l]) ([OCall l0])). 
-         edestruct Hseq_same. 
-         - rewrite <- app_nil_r. econstructor. 2: constructor. 
-           eapply SSMI_Call. all: eassumption. 
-         - rewrite <- app_nil_r. econstructor. 2: constructor. 
-           eapply SSMI_Call. all: eassumption. 
-         - destruct H1 as [? H1]. now inv H1. 
-         - destruct H1 as [? H1]. now inv H1. 
-       } 
-       rewrite <- H1 in *. 
-       destruct ((fst pc' =? fst l) && (snd pc' =? snd l))%nat. 
-         * cbn in *. 
-           eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption. 
-           destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?). 
-           repeat eexists. 
-           1,2: change (DCall pc' :: ds2) with ([DCall pc'] ++ ds2). 
-           1: change (OCall l :: os0) with ([OCall l] ++ os0). 
-           2: change (OCall l :: os3) with ([OCall l] ++ os3). 
-           1,2: econstructor 2. 2: exact H2. 1: exact H. 2: exact H3. 1: exact H0. 
-           destruct H4 as [H4 | H4]. 
-           -- repeat destruct H4 as [-> H4]. left. repeat split ; try reflexivity;  apply H4. 
-           -- right. repeat destruct H4 as [? H4]. subst. 
-              repeat eexists. 2: exact H4. 
-              simpl. f_equal. assumption. 
-         * repeat eexists. 1, 2: econstructor. 
-           right. repeat eexists. right. 
-           repeat eexists. 1, 2: rewrite cons_app; reflexivity. all: eassumption. 
+    +
+       inv x. rewrite H20 in H6. inv H6.
+       assert (l = l0).
+       {
+         clear Hexec1 IHHexec1 Hexec2.
+         unfold seq_same_obs in Hseq_same.
+         specialize (Hseq_same ([OCall l]) ([OCall l0])).
+         edestruct Hseq_same.
+         - rewrite <- app_nil_r. econstructor. 2: constructor.
+           eapply SSMI_Call. all: eassumption.
+         - rewrite <- app_nil_r. econstructor. 2: constructor.
+           eapply SSMI_Call. all: eassumption.
+         - destruct H1 as [? H1]. now inv H1.
+         - destruct H1 as [? H1]. now inv H1.
+       }
+       rewrite <- H1 in *.
+       destruct ((fst pc' =? fst l) && (snd pc' =? snd l))%nat.
+         * cbn in *.
+           eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
+           destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
+           repeat eexists.
+           1,2: change (DCall pc' :: ds2) with ([DCall pc'] ++ ds2).
+           1: change (OCall l :: os0) with ([OCall l] ++ os0).
+           2: change (OCall l :: os3) with ([OCall l] ++ os3).
+           1,2: econstructor 2. 2: exact H2. 1: exact H. 2: exact H3. 1: exact H0.
+           destruct H4 as [H4 | H4].
+           -- repeat destruct H4 as [-> H4]. left. repeat split ; try reflexivity;  apply H4.
+           -- right. repeat destruct H4 as [? H4]. subst.
+              repeat eexists. 2: exact H4.
+              simpl. f_equal. assumption.
+         * repeat eexists. 1, 2: econstructor.
+           right. repeat eexists. right.
+           repeat eexists. 1, 2: rewrite cons_app; reflexivity. all: eassumption.
     +
       inv x. apply H25 in H12 as [H12 | H12].
       all: congruence.
@@ -3798,19 +3797,19 @@ Proof.
       inv Hexec2. 2: inv H1.
       repeat split; try reflexivity. 1: assumption.
       inv x. assumption.
-    + 
+    +
        inv H16. inv x.
        destruct ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat); cbn in *.
-         * 
-           eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption. 
-           destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?). 
-           destruct H3 as [H3 | H3]. 
-           -- repeat destruct H3 as [-> H3]. 
-              repeat eexists. 3: left; repeat split; try reflexivity; apply H3. 
-              all: change (DRet pc'' :: ds2) with ([DRet pc''] ++ ds2). 
-              1: change os0 with ([] ++ os0). 
-              2: change os3 with ([] ++ os3). 
-              all: econstructor; eassumption. 
+         *
+           eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
+           destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
+           destruct H3 as [H3 | H3].
+           -- repeat destruct H3 as [-> H3].
+              repeat eexists. 3: left; repeat split; try reflexivity; apply H3.
+              all: change (DRet pc'' :: ds2) with ([DRet pc''] ++ ds2).
+              1: change os0 with ([] ++ os0).
+              2: change os3 with ([] ++ os3).
+              all: econstructor; eassumption.
            -- repeat destruct H3 as [? H3]. subst.
               repeat eexists. 3: {
                   right. repeat eexists. 1: rewrite app_comm_cons; reflexivity. 1: assumption.
@@ -3823,7 +3822,7 @@ Proof.
          * repeat eexists. 1, 2: econstructor.
            right. repeat eexists. right.
            repeat eexists. 1, 2: rewrite app_nil_l; reflexivity. all: eassumption.
-    + 
+    +
       rewrite H9 in H18. inv H18.
       eapply IHHexec1 in Hexec2. 3: reflexivity. 2: eapply ideal_nonspec_step_preserves_seq_same_obs; eassumption.
       destruct Hexec2 as (?&?&?&?&?&?&?&?&?&?&?&?&?&?).
@@ -3882,7 +3881,7 @@ Proof.
     + eapply IHHexec1; try eassumption. reflexivity.
     + eapply IHHexec1; try eassumption. reflexivity.
     + inv H10. inv H11. inv H12. inv H13.
-      edestruct IHHexec1. 1: reflexivity. 1: eassumption. 
+      edestruct IHHexec1. 1: reflexivity. 1: eassumption.
       * left. now apply prefix_cons.
       * right. now apply prefix_cons.
     + inv x. rewrite H6 in H5; inv H5. inv H10. inv  H11.
@@ -3912,7 +3911,7 @@ Proof.
       inv Hexec2. 2: inv H.
       inv H12. inv H10.
       left. exists []. reflexivity.
-    + inv x. eapply IHHexec1; try eassumption. reflexivity. 
+    + inv x. eapply IHHexec1; try eassumption. reflexivity.
     + eapply IHHexec1; try eassumption. reflexivity.
     + inv Hexec2. 2: inv H.
       right. exists os0. reflexivity.
@@ -3957,7 +3956,7 @@ Proof.
         all: do 2 rewrite app_nil_r in H.
         all: destruct H.
         all: now inv H.
-      - reflexivity. 
+      - reflexivity.
     }
     edestruct (ideal_misspec_unwinding Hspec1 Hspec2).
     + left. now do 2 apply prefix_append_front.
@@ -4039,7 +4038,7 @@ Proof.
   eapply ultimate_slh_bcc_init in SSTEP2; eauto. des. subst.
   assert (ds'0 = ds') as ->.
   { clear - SSTEP0 SSTEP4. induction SSTEP0 in ds'0, SSTEP4 |-*; inv SSTEP4. 1: reflexivity.
-    exploit match_dir_inj; [exact H | exact H3|]. i. subst. f_equal. apply IHSSTEP0. exact H4. } 
+    exploit match_dir_inj; [exact H | exact H3|]. i. subst. f_equal. apply IHSSTEP0. exact H4. }
   exploit ideal_eval_relative_secure; eauto. i.
   clear - x0 SSTEP3 SSTEP5.
   induction SSTEP3 in os'0, os2, SSTEP5, x0 |-*; inv SSTEP5.
@@ -4069,4 +4068,4 @@ Proof.
   11:{ eapply H1. }
   all: eauto.
 Qed.
- 
+

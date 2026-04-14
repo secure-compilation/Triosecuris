@@ -67,7 +67,7 @@ Inductive seq_eval_small_step_inst (p:prog) :
   | SSMI_Ret : forall pc r m sk pc',
       fetch p (Datatypes.length m) pc = Some <{{ ret }}> ->
       p |- <(( S_Running (pc, r, m, pc'::sk) ))> -->^[] <(( S_Running (pc', r, m, sk) ))>
-  | SSMI_Peek : forall pc r m sk x, (* YH: Maybe we can assume source program does not contain peek instruction. *)
+  | SSMI_Peek : forall pc r m sk x,
       fetch p (Datatypes.length m) pc = Some <{{x <- peek}}> ->
       let val := match sk with
                 | [] => UV
@@ -406,7 +406,7 @@ Definition match_obs (p: MiniCET.prog) (len: nat) (ds: MiniCET.obs) (ds': obs) :
 Definition wf_dir (p: prog) (len: nat) (d: direction) : Prop :=
   match d with
   | DCall pc' => is_some (nth_error p (pc' - len)) && (len <=? pc')%nat
-  (* | DRet pc' => wf_ret p len pc' *)
+
   | _ => True
   end.
 
@@ -505,14 +505,14 @@ Proof.
     rewrite nth_error_nil in NTH. clarify. }
   unfold _machine_prog in MC. simpl in MC. des_ifs_safe.
   inv BLKS. destruct a as [blk ct_a].
-  (* Heq0: machine_blk p_ctx len (blk, ct_a) = Some l0 *)
-  (* Heq1: transpose (map (machine_blk p_ctx len) p) = Some l1 *)
+
+
   assert (MC_REST: _machine_prog p_ctx p len = Some (List.concat l1)).
   { unfold _machine_prog. rewrite Heq1. auto. }
-  (* NTH is about concat (l0 :: l1) = l0 ++ concat l1 *)
+
   change (List.concat (l0 :: l1)) with (l0 ++ List.concat l1) in NTH.
   rewrite nth_error_app in NTH. des_ifs.
-  - (* Call is in first block l0 *)
+  -
     exploit machine_blk_inv; eauto.
     intros (isrc & NTH_SRC & MINST).
     assert (exists e_src, isrc = ICall e_src).
@@ -529,7 +529,7 @@ Proof.
     eexists.
     change (List.concat (l0 :: l1)) with (l0 ++ List.concat l1).
     rewrite nth_error_app1; eauto.
-  - (* Call is in remaining blocks *)
+  -
     assert (NLE: Datatypes.length l0 <= n).
     { rewrite ltb_ge in *. lia. }
     exploit IHp; eauto.
@@ -596,13 +596,13 @@ Proof.
     simpl in MM.
     exploit mapM_cons_inv; eauto. i. des. subst.
     destruct bl as [|b bl'].
-    + (* singleton: [a] — last element is a terminator *)
+    +
       destruct ll. 2:{ simpl in LEN. lia. }
       unfold mapM in x1. ss. unfold MiniCET.uslh_ret in x1. clarify.
       simpl. rewrite List.app_nil_r.
       unfold last_inst_terminator in TERM. simpl fst in TERM.
       eapply uslh_inst_terminator_res; eauto.
-    + (* cons: a :: b :: bl' *)
+    +
       assert (TERM': last_inst_terminator (b :: bl', false)).
       { eapply last_inst_terminator_tail; eauto. discriminate. }
       assert (LEN': Datatypes.length ll = Datatypes.length (b :: bl')).
@@ -673,7 +673,7 @@ Lemma uslh_prog_last_inst_terminator p
 Proof.
   unfold uslh_prog. des_ifs_safe.
   rewrite Forall_app. split.
-  - (* transformed blocks p' *)
+  -
     exploit mapM_perserve_len; eauto. intros LEN. rewrite length_add_index in LEN.
     rewrite Forall_forall. intros blk IN.
     eapply In_nth_error in IN. des.
@@ -692,7 +692,7 @@ Proof.
       eapply nth_error_In in SRC. eapply H0 in SRC. auto. }
     red in WFB. des.
     eapply uslh_blk_last_terminator_res; eauto.
-  - (* new blocks *)
+  -
     eapply new_prog_last_terminator; eauto.
 Qed.
 
@@ -1026,7 +1026,7 @@ Lemma wf_stk_step (p: MiniCET.prog) sc a ds os
   MiniCET_Index.wf_stk p (sc_stk a).
 Proof.
   inv STEP; ss; auto.
-  - (* SpecSMI_Call: stk goes from sk to (pc+1)::sk *)
+  -
     apply Forall_cons; auto.
     unfold MiniCET_Index.wf_ret.
     destruct pc0 as [lc oc]. simpl.
@@ -1037,7 +1037,7 @@ Proof.
     exists e. split.
     { replace (Nat.sub (Nat.add oc 1) 1) with oc by lia. eauto. }
     { lia. }
-  - (* SpecSMI_Ret: stk goes from pc'::sk to sk *)
+  -
     inv WFSTK. eauto.
 Qed.
 
@@ -1055,9 +1055,9 @@ Lemma minicet_linear_bcc_single
              /\ match_dirs p len ds tds /\ match_obs p len os tos.
 Proof.
   inv MATCH; cycle 1.
-  (* fault *)
+
   { inv TGT; clarify. esplits; try sfby econs. }
-  (* call *)
+
   { inv TGT; clarify. esplits.
     { eapply MiniCET_Index.SpecSMI_CTarget; eauto. }
     { econs; eauto. i. exploit pc_inj_inc; try eapply SYNC; eauto. }
@@ -1078,7 +1078,7 @@ Proof.
     destruct (string_dec x x0); subst.
     { do 2 rewrite MiniCET_Index.t_update_eq. eapply eval_inject; eauto. }
     do 2 (rewrite MiniCET_Index.t_update_neq; eauto).
-  (* div *)
+
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1.
     destruct i0; ss; clarify; try sfby des_ifs. des_ifs_safe.
     inv SAFE; clarify.
@@ -1102,7 +1102,7 @@ Proof.
       - i. exploit pc_inj_inc; eauto.
       - subst res. eapply asgn_match_reg; auto.
         des_ifs; ss. }
-  (* branch *)
+
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1.
     destruct i0; ss; clarify; try sfby des_ifs. des_ifs_safe.
     esplits.
@@ -1115,12 +1115,12 @@ Proof.
     2:{ repeat econs. }
     econs; eauto. i. destruct b'; auto.
     exploit pc_inj_inc; try eapply PC; eauto.
-  (* jump *)
+
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     esplits; try sfby (repeat econs).
     { econs 5; eauto. }
     econs; eauto.
-  (* load *)
+
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x0. des_ifs.
     inv SAFE; clarify.
     assert (n0 = n).
@@ -1139,7 +1139,7 @@ Proof.
     { red. i. unfold match_mem in MEM.
       esplits; try sfby (repeat econs).
       { eapply asgn_match_reg; eauto. } }
-  (* store *)
+
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     inv SAFE; clarify.
     assert (n0 = n).
@@ -1156,7 +1156,7 @@ Proof.
     { i. exploit pc_inj_inc; try eapply PC; eauto. }
     { rewrite upd_length. auto. }
     eapply store_match_mem; eauto.
-  (* call *)
+
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     inv SAFE; clarify.
 
@@ -1216,31 +1216,31 @@ Proof.
     { repeat econs. red. eauto. }
     { repeat econs. unfold match_ob, val_inject in *. des_ifs. }
 
-  (* ctarget *)
+
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
     inv SAFE; clarify.
     esplits; eauto. 3-4: repeat econs.
     { eapply MiniCET_Index.SpecSMI_CTarget. eauto. }
     econs; eauto. ii. exploit pc_inj_inc; try eapply PC; eauto.
 
-  (* return *)
+
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x1. des_ifs.
-    (* Save the wf_ret hypothesis before it gets overwritten by inv STK *)
+
     match goal with H: wf_ret tp _ pc'' |- _ => rename H into WFR_TGT end.
     inv STK. inv SAFE; clarify.
 
-    (* Get wf_ret info for BCC nondeterministic target pc'' *)
+
     assert (SRCT: exists pc''_src, pc_inj p (Datatypes.length m') pc''_src = Some (pc'')
                            /\ MiniCET_Index.wf_ret p pc''_src).
-    { (* From wf_ret tp len pc'', strengthened: pc'' >= len + 1 *)
-      (* WFR_TGT: wf_ret tp (Datatypes.length m') pc'' *)
+    {
+
       red in WFR_TGT. des.
-      (* H2: fetch tp (Datatypes.length m') (pc'' - 1) = Some (ICall e) *)
-      (* H3: pc'' >= (Datatypes.length m') + 1 *)
-      (* So pc'' - 1 >= Datatypes.length m' *)
+
+
+
       assert (LLEN: pc'' - 1 >= Datatypes.length m') by lia.
       unfold fetch, MoreLinear.fetch in H2.
-      (* H2: nth_error tp (pc'' - 1 - Datatypes.length m') = Some (ICall e) *)
+
       exploit lookup_from_target.
       { eauto. }
       { unfold machine_prog in TRANSL. eauto. }
@@ -1264,9 +1264,9 @@ Proof.
       { lia. }
       rewrite H_addpc. intros INJ_RET.
       esplits; [eauto |].
-      (* Goal: MiniCET_Index.wf_ret p (pc_call + 1) *)
-      (* INXT: p[[pc_call + 1]] = Some i_next *)
-      (* ISRC_CALL: p[[pc_call]] = Some (ICall fp) *)
+
+
+
       destruct pc_call as [lc oc].
       unfold MiniCET_Index.wf_ret. simpl.
       split.
@@ -1278,7 +1278,7 @@ Proof.
 
     esplits; eauto. 3-4: repeat econs.
     { eapply MiniCET_Index.SpecSMI_Ret; eauto. }
-    + (* match_states after ret *)
+    +
       assert (INJH: p[[x]] <> None -> pc_inj p (Datatypes.length m') x = Some pc'0).
       { eapply H2. }
       assert (PNNX: p[[x]] <> None).
@@ -1315,10 +1315,10 @@ Proof.
       }
       rewrite EQ_MS.
       econs; eauto.
-    + (* match_dirs: DRet case *)
+    +
       repeat econs. red. eauto.
 
-  (* peek *)
+
   - exploit tgt_inv; eauto. i. des. unfold machine_inst in x0. des_ifs.
     esplits; try sfby econs.
     { eapply MiniCET_Index.SpecSMI_Peek. eauto. }
@@ -1525,7 +1525,7 @@ Definition val_sync (p:MiniCET.prog) (v: val) : val :=
   match v with
   | FP (l, S o) => match ret_sync p (l, S o) with
                   | Some pc => FP pc
-                  | _ => UV (* unreachable *)
+                  | _ => UV
                   end
   | _ => v
   end.
@@ -1589,7 +1589,7 @@ Proof.
 
   set (im1 := map (val_sync p) m1).
   set (im2 := map (val_sync p) m2).
-  
+
   hexploit (spec_eval_relative_secure p r1 r2 ir1 ir2 m1 m2 im1 im2); eauto.
   intros REL. red in REL.
 

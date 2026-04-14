@@ -76,7 +76,7 @@ Definition wt_wf := (forAll (gen_prog_wt max_block_size max_program_length) (fun
 (*! QuickChick wt_wf. *)
 QuickChick wt_wf.
 
-(* should fail *)
+
 Definition wt_uslh_wf := (forAll (gen_prog_wt max_block_size max_program_length) (fun (p : prog) => (wf (uslh_prog p)))).
 QuickChick wt_uslh_wf.
 

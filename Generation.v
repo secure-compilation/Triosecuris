@@ -123,7 +123,7 @@ Proof.
     + rewrite Nat.eqb_neq in H. red. intros. inversion H0.
       subst. contradiction.
     + destruct pc, pc0; simpl in *. red. intros.
-      inversion H0. subst. 
+      inversion H0. subst.
       repeat rewrite Nat.eqb_refl in H. simpl in H. inversion H.
   - destruct v1, v2; simpl in *; auto.
     + rewrite Nat.eqb_neq. red. intros. subst.
@@ -806,7 +806,7 @@ Definition vars_inst (i: inst) : list string :=
   | IStore e1 e2 => vars_exp e1 ++ vars_exp e2
   | ICall e => vars_exp e
   | IDiv x e1 e2 => x :: (vars_exp e1 ++ vars_exp e2)
-  | IPeek _ => [] (* We don't want to generate peek for the source code. *)
+  | IPeek _ => []
   end.
 
 Fixpoint vars_blk (blk: list inst) : list string :=

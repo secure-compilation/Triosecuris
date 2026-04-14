@@ -115,7 +115,7 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
           Some (tc', tobs)
       | _ => None
       end
-  (* YF: TBD with Yonghyun *)
+
   | <{ x <- div e1, e2 }> =>
       match tctx with
       | CDefault =>
@@ -123,7 +123,7 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
         let te2 := _calc_taint_exp e2 trs in
         let tx := join_taints (join_taints te1 te2) tpc in
         let tc' := (tpc, (x !-> tx; trs), tm, ts) in
-        let tobs' := join_taints tobs (join_taints (join_taints te1 te2) tpc) in (* YF: We add the taints of v1 and v2, since the actual observation would be [ODiv v1 v2], right? *)
+        let tobs' := join_taints tobs (join_taints (join_taints te1 te2) tpc) in
         Some (tc', tobs')
       | _ => None
       end
@@ -151,9 +151,9 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
   | <{ store[e] <- e' }> =>
       match tctx with
       | CMem n =>
-          let te := (_calc_taint_exp e trs) in (* *)
+          let te := (_calc_taint_exp e trs) in
           let te' := (_calc_taint_exp e' trs) in
-          let tm_val := join_taints (* (join_taints te te') *) te' tpc in (* YH: te is actually need for tm_val? let's remove te and run the tests to see. *)
+          let tm_val := join_taints   te' tpc in
           let tc' := (tpc, trs, upd n tm tm_val, ts) in
           let tobs' := join_taints (join_taints te tpc) tobs in
           Some (tc', tobs')
@@ -170,7 +170,7 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
           Some (tc', tobs')
       | _ => None
       end
-  (* YF: TBD with Yonghyun *)
+
   | <{ x <- peek }> =>
       match tctx with
       | CDefault =>

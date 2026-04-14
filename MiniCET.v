@@ -1,4 +1,4 @@
-(** MiniMIR **)
+
 
 Set Warnings "-notation-overridden,-parsing,-deprecated-hint-without-locality".
 From Stdlib Require Import Strings.String String.
@@ -191,7 +191,7 @@ Notation "x := y"  :=
 Notation "x '<-' 'div' e1 ',' e2" :=
   (IDiv x e1 e2)
     (in custom com at level 0, x constr at level 0,
-    e1 custom com, e2 custom com, (* JB: unsure of the levels here, automatic ones seem fine? *)
+    e1 custom com, e2 custom com,
       no associativity) : com_scope.
 Notation "'branch' e 'to' l"  :=
   (IBranch e l)
@@ -254,7 +254,7 @@ Inductive observation : Type :=
   | OLoad (n:nat)
   | OStore (n:nat)
   | OCall (l: cptr).
-  (*JB: We don't need an observation for returns, correct? *)
+
 
 Definition obs := list observation.
 
@@ -336,11 +336,11 @@ Definition uslh_bind {A B: Type} (m: M A) (f: A -> M B) : M B :=
     bind := @uslh_bind
   }.
 
-(* Definition map2 {A B C} (f: A -> B -> C) (l1: list A) (l2: list B) : list C := *)
-(*   map (fun '(a, b) => f a b) (combine l1 l2). *)
 
-(* Definition mapM {A B C: Type} (f: A -> B -> M C) (l: list A) (pcl: list B) : M (list C) := *)
-(*   sequence (map2 f l pcl). *)
+
+
+
+
 
 Definition mapM {A B: Type} (f: A -> M B) (l: list A) : M (list B) :=
   sequence (List.map f l).
@@ -492,9 +492,9 @@ Qed.
 Definition uslh_inst (i: inst) (l: nat) (o: nat) : M (list inst) :=
   match i with
   | <{{ctarget}}> => ret [<{{skip}}>]
-  | <{{x<-div e1,e2}}> => 
+  | <{{x<-div e1,e2}}> =>
       let e1' := <{ (msf=1) ? 0 : e1 }> in
-      let e2' := <{ (msf=1) ? 0 : e2}> in (*JB: Is masking to 0 fine here? *)
+      let e2' := <{ (msf=1) ? 0 : e2}> in
       ret [<{{x<-div e1', e2'}}>]
   | <{{x<-load[e]}}> =>
       let e' := <{ (msf=1) ? 0 : e }> in
@@ -643,7 +643,7 @@ Definition wf_direction (pc: cptr) (p: prog) (d: direction) : bool :=
   | DBranch b, Some (IBranch e l) => is_some p[[(l, 0)]]
 
   | DCall pc', Some (ICall e) => is_some p[[pc']]
-  | DRet (l, S o), Some (IRet) => match p[[(l, o)]] with 
+  | DRet (l, S o), Some (IRet) => match p[[(l, o)]] with
                                   | Some (ICall e) => true
                                   | _ => false
                                   end

@@ -1,4 +1,4 @@
-(** MiniMC **)
+
 
 Set Warnings "-notation-overridden,-parsing,-deprecated-hint-without-locality".
 From Stdlib Require Import Strings.String.
@@ -251,7 +251,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
       | Some n1 => if not_zero n1 then eval st e1 else eval st e2
       | None => UV
       end
-  | <{&l}> => N 0 (* unreachable *)
+  | <{&l}> => N 0
   end.
 
 End MoreLinearCommon.
