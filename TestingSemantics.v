@@ -135,7 +135,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
               | Some (c, o) => (S_Running c, o)
               | None => (S_Undef, [])
               end
-            (*| <{{x <- peek}}> =>̂*)
+            (*| <{{x <- peek}}> =>*)
               (*let val := *)
                 (*match sk with*)
                 (*| [] => UV*)
