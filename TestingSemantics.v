@@ -298,12 +298,12 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
       let '(c, ms) := ic in
       let '(pc, r, m, sk) := c in
       match fetch p pc with
-        None => trace ("lookup fail" ++ nl) (S_Undef, ds, [])
+        None => untrace ("lookup fail" ++ nl) (S_Undef, ds, [])
       | Some i =>
           match i with
             | <{{branch e to l}}> =>
               if seq.nilp ds then
-                trace ("idealBranch: directions are empty!" ++ nl) (S_Undef, ds, [])
+                untrace ("idealBranch: directions are empty!" ++ nl) (S_Undef, ds, [])
               else
                 match
                   d <- hd_error ds;;
@@ -326,7 +326,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                 end
             | <{{call e}}> =>
               if seq.nilp ds then
-                trace ("idealCall: directions are empty!" ++ nl) (S_Undef, ds, [])
+                untrace ("idealCall: directions are empty!" ++ nl) (S_Undef, ds, [])
               else
                 match
                   d <- hd_error ds;;
@@ -378,7 +378,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
               | _::sk' =>
                 match
                   if seq.nilp ds then
-                    trace ("ideal ret: Directions are empty!" ++ nl) None
+                    untrace ("ideal ret: Directions are empty!" ++ nl) None
                   else
                     d <- hd_error ds;;
                     pc'' <- is_dret d;;
@@ -389,7 +389,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                     let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
                     ret ((S_Running ((pc'', "sp" !-> N (sp - 1); r, m, sk'), ms'), tl ds), [])
                 with
-                | None => trace ("ideal ret failed. STACK: " ++ show sk ++ "; PC: " ++ show pc ++ "; PROGRAM: " ++ show p ++ nl) (S_Undef, ds, [])
+                | None => untrace ("ideal ret failed. STACK: " ++ show sk ++ "; PC: " ++ show pc ++ "; PROGRAM: " ++ show p ++ nl) (S_Undef, ds, [])
                 | Some (c, ds, os) => (c, ds, os)
                 end
               end
