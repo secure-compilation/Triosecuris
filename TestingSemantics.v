@@ -10,7 +10,8 @@ From SECF Require Import
     MapsFunctor
     MiniCET
     Utils
-    ListMaps.
+    ListMaps
+    Printing.
 Require Import Stdlib.Classes.EquivDec.
 Require Export ExtLib.Structures.Monads.
 Require Import ExtLib.Structures.Traversable.
@@ -291,18 +292,18 @@ Module IdealStepSemantics (Import ST : Semantics ListTotalMap with Definition pc
 
 From QuickChick Require Import QuickChick.
 
-Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs) : (state ideal_cfg * dirs * obs) :=
+Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_cfg * dirs * obs) :=
   match sic with
   | S_Running ic =>
       let '(c, ms) := ic in
       let '(pc, r, m, sk) := c in
       match fetch p pc with
-        None => untrace "lookup fail" (S_Undef, ds, [])
+        None => trace ("lookup fail" ++ nl) (S_Undef, ds, [])
       | Some i =>
           match i with
             | <{{branch e to l}}> =>
               if seq.nilp ds then
-                untrace "idealBranch: directions are empty!" (S_Undef, ds, [])
+                trace ("idealBranch: directions are empty!" ++ nl) (S_Undef, ds, [])
               else
                 match
                   d <- hd_error ds;;
@@ -325,7 +326,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs) : (state ideal
                 end
             | <{{call e}}> =>
               if seq.nilp ds then
-                untrace "idealCall: directions are empty!" (S_Undef, ds, [])
+                trace ("idealCall: directions are empty!" ++ nl) (S_Undef, ds, [])
               else
                 match
                   d <- hd_error ds;;
@@ -377,7 +378,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs) : (state ideal
               | _::sk' =>
                 match
                   if seq.nilp ds then
-                    untrace "idealRet: Directions are empty!" None
+                    trace ("ideal ret: Directions are empty!" ++ nl) None
                   else
                     d <- hd_error ds;;
                     pc'' <- is_dret d;;
@@ -388,7 +389,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs) : (state ideal
                     let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
                     ret ((S_Running ((pc'', "sp" !-> N (sp - 1); r, m, sk'), ms'), tl ds), [])
                 with
-                | None => untrace "idealRet fail" (S_Undef, ds, [])
+                | None => trace ("ideal ret failed. STACK: " ++ show sk ++ "; PC: " ++ show pc ++ "; PROGRAM: " ++ show p ++ nl) (S_Undef, ds, [])
                 | Some (c, ds, os) => (c, ds, os)
                 end
               end

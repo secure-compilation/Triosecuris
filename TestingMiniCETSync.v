@@ -19,7 +19,7 @@ Import MonadNotation. Open Scope monad_scope.
 From SECF Require Import TestingLib.
 From Stdlib Require Import String.
 
-From SECF Require Import Utils.
+From SECF Require Import Utils Printing.
 From SECF Require Import ListMaps MapsFunctor.
 Require Import Stdlib.Classes.EquivDec.
 From SECF Require Import MiniCET.
@@ -410,19 +410,24 @@ Definition spec_cfg_eqb_up_to_callee (st1 st2 : spec_cfg) :=
   && (m1 ==b m2)
   && pub_equivb (t_empty public) r1 (callee !-> (r1 ! callee) ; r2).
 
-Compute ideal_step ([ ([ <{{skip}}> ], true) ]) (S_Running (((0,0)), (t_empty UV), [UV; UV; UV], [], false)) [].
+Instance showCfg : Show cfg := {
+  show '(pc, reg, mem, stk) := 
+    ("pc: " ++ show pc ++ ";" ++ nl ++ "reg: " ++ show reg ++ ";" ++ nl ++ "mem: " ++ show mem ++ ";" ++ nl ++ "stk: " ++ show stk)%string
+}.
 
-Definition single_step_cc `{Show cfg} := (
+Definition single_step_cc := (
   let stk_size := 3 in
   forAll (gen_prog_wt_with_basic_blk 3 8) (fun '(c, tm, pst, p) =>
+  let p := transform_load_store_prog c tm p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack stk_size p) (fun stk =>
   forAll ( @arbitrary bool _)  (fun ms =>
   let icfg := (cfg_with_stack pc rs1 m1 stk stk_alloc, ms) in
-  printTestCase (show icfg) (
-  printTestCase (show (uslh_prog p)) (
+  let '((_, reg, mem, stk'), _) := icfg in
+  printTestCase ("Reg: " ++ nl ++ show reg ++ nl ++ "Injected mem: " ++ nl ++ show mem ++ nl)%string (
+  printTestCase ("Hardened program:" ++ nl ++ show (uslh_prog p))%string (
   match (spec_cfg_sync p icfg) with
   | None => collect "hello"%string (checker false)
   | Some tcfg =>
@@ -484,11 +489,6 @@ Definition single_step_sf := (
   | _ => checker true
   end)))))).
 
-
-
-
-
-
 Definition single_step_ideal_sf := (
   forAll (gen_prog_wt_with_basic_blk 3 8) (fun '(c, tm, pst, p) =>
   let p' := transform_load_store_prog c tm p in
@@ -509,6 +509,7 @@ Definition single_step_ideal_sf := (
 
 Definition single_step := (
   forAll (gen_prog_wt_with_basic_blk 3 8) (fun '(c, tm, pst, p) =>
+  let p := transform_load_store_prog c tm p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_reg_wt c pst) (fun rs2 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
@@ -596,7 +597,7 @@ Definition single_step_trigger := (
   | (S_Running _, o1) =>
       match (ideal_step p (S_Running icfg) ds) with
       | (S_Running icfg', _, o2) => untrace (show o1 ++ " / " ++ show o2) (checker ((obs_eqb o1 o2) && (match ds with [] => true | _ => snd icfg' end)))
-      | (S_Undef, _, _) => collect "ideal undef (non-wf stack)"%string (checker tt)
+      | (S_Undef, _, _) => collect "ideal undef (non-wf stack)"%string (checker false)
       | _ => untrace "not running" (checker false)
       end
   | (S_Undef, o1) =>

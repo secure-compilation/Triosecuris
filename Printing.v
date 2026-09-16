@@ -4,7 +4,7 @@ Require Export ExtLib.Structures.Monads.
 Require Import ExtLib.Data.List.
 Import MonadNotation.
 
-From SECF Require Import MiniCET.
+From SECF Require Import MiniCET Utils.
 
 Derive Show for observation.
 
@@ -64,3 +64,8 @@ Derive Show for observation.
   }.
 
 Derive Show for ty.
+
+#[export] Instance showProg : Show prog :=
+  {show p :=
+    (nl ++ fold_left (fun acc '(i, (blk, l)) => acc ++ show i ++ " (callable: " ++ show l ++ "): " ++ show blk ++ nl) (add_index p) "")%string
+  }.
