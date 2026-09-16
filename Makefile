@@ -1,7 +1,7 @@
 COQMFFLAGS := -Q . SECF
 
 # For tests: EXCLUDE := MiniCET_Index.v MoreLinearProof.v Safe.v
-EXCLUDE := MiniCET_Index.v MoreLinear.v MoreLinearProof.v Safe.v TestingMiniCET.v
+EXCLUDE := MiniCET_Index.v MoreLinear.v MoreLinearProof.v Safe.v
 ALLVFILES := $(filter-out $(EXCLUDE), $(wildcard *.v))
 QC := quickChick # ../QuickChick/quickChickTool/quickChickTool.exe
 QCFLAGS := -color -top SECF -N 10000 -failfast -cmd "make -j >/dev/null 2>&1 && echo 'compilation done'" # -ntests 100,1000,10000
