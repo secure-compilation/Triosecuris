@@ -64,7 +64,6 @@ Definition is_br_or_call (i : inst) :=
 
 
 
-
 Definition offset_uslh (bl: list inst * bool) : list nat :=
   _offset_uslh (fst bl) (if snd bl then 2 else 0).
 
@@ -254,9 +253,6 @@ Definition inject_stack_to_mem (stk: list cptr) (m: mem) (base: nat): mem :=
   List.fold_left (fun acc '(i, ptr) => upd i acc (FP ptr))
     (combine (stk_slots base (Datatypes.length stk)) stk) m.
 
-(* Size of the stack region [gen_wt_mem] appends after the typed memory. *)
-Definition stk_alloc := 1000.
-
 (* Build a configuration whose call stack lives in the top [stk_alloc] cells of
    [m] (the region [gen_wt_mem] appends), keeping sp, sk and memory consistent. *)
 Definition cfg_with_stack (pc: cptr) (r: reg) (m: mem) (stk: list cptr)
@@ -321,6 +317,16 @@ Definition get_directive_for_seq_behaviour (p: prog) (pst: list nat) (ic: ideal_
   | None => untrace "lookup error" ([])
   end.
 
+(* Instructions [ideal_step] refuses to execute without a directive. *)
+Definition needs_dir (p: prog) (ic: ideal_cfg) : bool :=
+  let '(c, _) := ic in
+  let '(pc, _, _, sk) := c in
+  match p[[pc]] with
+  | Some <{{branch _ to _}}> | Some <{{call _}}> => true
+  | Some <{{ret}}> => negb (seq.nilp sk)
+  | _ => false
+  end.
+
 Definition gen_directive_triggering_misspec (p: prog) (pst: list nat) (ic: ideal_cfg) : G dirs :=
   let '(c, ms) := ic in
   let '(pc, r, m, sk) := c in
@@ -330,10 +336,13 @@ Definition gen_directive_triggering_misspec (p: prog) (pst: list nat) (ic: ideal
       | <{{branch e to _}}> =>
         match (to_nat (eval r e)) with
         | None => ret []
-        | Some n => ret [DBranch (negb (not_zero n))]
+        (* [ideal_step] takes the branch on [(negb ms) && not_zero n], so that
+           is the outcome the directive has to contradict. *)
+        | Some n => ret [DBranch (negb ((negb ms) && not_zero n))]
         end
       | <{{call e}}> =>
-        match (to_fp (eval r e)) with
+        (* [ideal_step] calls (0, 0) while already mis-speculating. *)
+        match (if ms then Some (0, 0) else to_fp (eval r e)) with
         | None => ret []
         | Some l =>
             let targets := (proc_hd pst) in
@@ -397,8 +406,8 @@ Proof.
     + right. now intros [= H].
 Defined.
 
-Compute ([DBranch true] <>b []).
-Compute ([] <>b [DBranch true]).
+(* Compute ([DBranch true] <>b []).
+Compute ([] <>b [DBranch true]). *)
 
 
 Definition spec_cfg_eqb_up_to_callee (st1 st2 : spec_cfg) :=
@@ -593,6 +602,12 @@ Definition single_step_trigger := (
   let cfg := cfg_with_stack pc rs1 m1 stk stk_alloc in
   let icfg := (cfg, false) in
   forAll (gen_directive_triggering_misspec p pst icfg) (fun ds =>
+  (* An empty [ds] here means no mis-speculating directive exists at this pc --
+     a [ret] whose return address is the program's only well-formed one, say --
+     and [ideal_step] would just report S_Undef for the missing direction. *)
+  if seq.nilp ds && needs_dir p icfg then
+    collect "no mis-speculating direction exists"%string (checker tt)
+  else
   match (step p (S_Running cfg)) with
   | (S_Running _, o1) =>
       match (ideal_step p (S_Running icfg) ds) with
