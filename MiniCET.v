@@ -617,6 +617,26 @@ Definition wf_blk (p:prog) (blb : list inst * bool) : bool :=
 Definition wf (p:prog) : bool :=
   forallb (wf_blk p) p.
 
+Definition wf_retb (p: prog) (pc: cptr) : bool :=
+  let '(l, o) := pc in
+  match MiniCET.fetch p (l, o) with
+  | Some _ => match o with
+             | 0 => false
+             | S o' => match MiniCET.fetch p (l, o') with
+                      | Some (ICall _) => true
+                      | _ => false
+                      end
+             end
+  | _ => false
+  end.
+
+Definition wf_ret_addrs (p: prog) : list cptr :=
+  let fix all_cptrs (l: nat) (blocks: prog) :=
+    match blocks with
+    | [] => []
+    | (blk, _) :: rest => map (fun o => (l, o)) (seq 0 (List.length blk)) ++ all_cptrs (S l) rest
+    end
+  in filter (wf_retb p) (all_cptrs 0 p).
 
 
 Definition nonempty_block (blk: list inst * bool) : bool :=

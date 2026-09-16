@@ -30,14 +30,6 @@ Definition gen_dbr : G dir :=
 Definition gen_dcall (pst: list nat) : G dir :=
   l <- (elems_ (0, 0) (proc_hd pst));; ret (DCall l).
 
-Definition wf_ret_addrs (p: prog) : list cptr :=
-  let fix all_cptrs (l: nat) (blocks: prog) :=
-    match blocks with
-    | [] => []
-    | (blk, _) :: rest => map (fun o => (l, o)) (seq 0 (List.length blk)) ++ all_cptrs (S l) rest
-    end
-  in filter (wf_retb p) (all_cptrs 0 p).
-
 Definition gen_dret (p: prog) : G dir :=
   l <- elems_ (0, 0) (wf_ret_addrs p);; ret (DRet l).
 

@@ -23,12 +23,32 @@ From SECF Require Import Utils.
 From SECF Require Import ListMaps MapsFunctor.
 Require Import Stdlib.Classes.EquivDec.
 From SECF Require Import MiniCET.
-From SECF Require Import TestingMiniCET TestingSemantics ListMaps.
+From SECF Require Import TestingSemantics ListMaps.
 
 (*! Section testing_sync *)
 Module Import MCC := MiniCETCommon(ListTotalMap).
 Local Module Import MCSemantics := MiniCETSemantics(ListTotalMap).
 Local Module Import IS := IdealStepSemantics(MCSemantics).
+
+Definition gen_dbr : G dir :=
+  b <- arbitrary;; ret (DBranch b).
+
+Definition gen_dcall (pst: list nat) : G dir :=
+  l <- (elems_ (0, 0) (proc_hd pst));; ret (DCall l).
+
+Definition gen_dret (p: prog) : G dir :=
+  l <- elems_ (0, 0) (wf_ret_addrs p);; ret (DRet l).
+
+Instance ShowDirection : Show dir := {
+  show dir := match dir with
+    | DBranch b => ("DBranch " ++ show b)%string
+    | DCall cptr => ("DCall " ++ show cptr)%string
+    | DRet cptr => ("DRet" ++ show cptr)%string
+  end
+}.
+
+(* Size of the stack region [gen_wt_mem] appends after the typed memory. *)
+Definition stk_alloc := 10.
 
 Definition lookup_sp (m : mem) (r : reg) : option cptr :=
     sp <- to_nat (r ! "sp");;

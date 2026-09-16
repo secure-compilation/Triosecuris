@@ -163,19 +163,6 @@ Fixpoint eval (st : reg) (e: exp) : val :=
     | s => (s, [])
     end.
 
-  Definition wf_retb (p: prog) (pc: cptr) : bool :=
-    let '(l, o) := pc in
-    match MiniCET.fetch p (l, o) with
-    | Some _ => match o with
-               | 0 => false
-               | S o' => match MiniCET.fetch p (l, o') with
-                        | Some (ICall _) => true
-                        | _ => false
-                        end
-               end
-    | _ => false
-    end.
-
   Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg * dirs * obs) :=
     match ssc with
     | S_Running sc =>
@@ -302,18 +289,7 @@ End MiniCETSemantics.
 
 Module IdealStepSemantics (Import ST : Semantics ListTotalMap with Definition pc := cptr).
 
-Definition wf_retb (p: prog) (pc: cptr) : bool :=
-  let '(l, o) := pc in
-  match MiniCET.fetch p (l, o) with
-  | Some _ => match o with
-             | 0 => false
-             | S o' => match MiniCET.fetch p (l, o') with
-                      | Some (ICall _) => true
-                      | _ => false
-                      end
-             end
-  | _ => false
-  end.
+From QuickChick Require Import QuickChick.
 
 Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs) : (state ideal_cfg * dirs * obs) :=
   match sic with
