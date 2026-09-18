@@ -758,7 +758,9 @@ Definition no_callee_msf (r: reg) : Prop :=
   | _, _ => False
   end.
 
-Definition cfg : Type := ((cptr*reg)*mem)*list cptr.
+(* The call stack lives in memory, pointed at by the "sp" register, so there is
+   no stack component in the configuration. *)
+Definition cfg : Type := ((cptr*reg)*mem).
 Definition spec_cfg : Type := ((cfg * bool) * bool).
 Definition ideal_cfg : Type := cfg * bool.
 
@@ -776,12 +778,23 @@ Fixpoint eval (st : reg) (e: exp) : val :=
   end.
 
 
+(* "sp" points at the slot holding the return address of the current frame. At
+   the bottom of the stack that slot holds no code pointer -- nothing was ever
+   pushed there -- which is how a [ret] detects that it ends the execution. *)
+Definition ret_addr (r: reg) (m: mem) : option cptr :=
+  sp <- to_nat (r ! "sp"%string);;
+  v <- nth_error m sp;;
+  to_fp v.
+
 Definition final_spec_cfg (p: prog) (sc: spec_cfg) : bool :=
   let '(c, ct, ms) := sc in
-  let '(pc, rs, m, stk) := c in
+  let '(pc, rs, m) := c in
   match fetch p pc with
   | Some i => match i with
-             | IRet => if seq.nilp stk then true else false
+             | IRet => match ret_addr rs m with
+                      | Some _ => false
+                      | None => true
+                      end
              | ICTarget => if ct
                           then false
                           else true

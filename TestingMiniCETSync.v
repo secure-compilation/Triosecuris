@@ -50,11 +50,9 @@ Instance ShowDirection : Show dir := {
 (* Size of the stack region [gen_wt_mem] appends after the typed memory. *)
 Definition stk_alloc := 10.
 
-Definition lookup_sp (m : mem) (r : reg) : option cptr :=
-    sp <- to_nat (r ! "sp");;
-    pc_val <- nth_error m sp;;
-    pc_fp <- to_fp pc_val;;
-    ret pc_fp.
+(* The return address of the current frame, or None at the bottom of the stack.
+   Same test the semantics uses to decide that a [ret] terminates. *)
+Definition lookup_sp (m : mem) (r : reg) : option cptr := ret_addr r m.
 
 Definition is_br_or_call (i : inst) :=
   match i with
@@ -138,23 +136,22 @@ Definition r_sync (p: prog) (r: reg) (ms: bool) : option reg :=
 
 Definition spec_cfg_sync (p: prog) (ic: ideal_cfg): option spec_cfg :=
   let '(c, ms) := ic in
-  let '(pc, r, m, stk) := c in
+  let '(pc, r, m) := c in
   pc' <- pc_sync p pc;;
   r' <- r_sync p r ms;;
-  (* The stack lives in memory now, so the return addresses it holds are synced
-     as part of the memory. This has to cover every cell, not just the slots
-     listed in [stk]: a popped slot still holds the return address the caller
-     left there, translated on the hardened side. [stk] itself is a list of
-     slot indices and so is identical on both sides. *)
+  (* The stack lives in memory, so the return addresses it holds are synced as
+     part of the memory: every cell, not just the live stack slots -- a popped
+     slot still holds the return address the caller left there, translated on
+     the hardened side. *)
   (*! *)
   m' <- map_opt (val_sync p) m;;
   (*!! spec_cfg_sync-no-stack *)
   (*! let m' := m in *)
-  ret (pc', r', m', stk, false, ms).
+  ret (pc', r', m', false, ms).
 
 Definition steps_to_sync_point (tp: prog) (tsc: spec_cfg) (ds: dirs) : option nat :=
   let '(tc, ct, ms) := tsc in
-  let '(pc, r, m, sk) := tc in
+  let '(pc, r, m) := tc in
 
     blk <- nth_error tp (fst pc);;
     i <- nth_error (fst blk) (snd pc);;
@@ -245,26 +242,30 @@ Fixpoint gen_call_stack_from_prog_sized n (p: prog) : G (list cptr) :=
 Definition gen_call_stack (n: nat) (p: prog) : G (list cptr) :=
   if seq.nilp (wf_ret_addrs p) then ret [] else gen_call_stack_from_prog_sized n p.
 
-(* Layout of the in-memory call stack, as implemented by [step]/[ideal_step] *)
+(* Layout of the in-memory call stack, as implemented by [step]/[ideal_step]: a
+   call sets sp to (S sp) and stores its return address at that slot, so with
+   [base] the value of sp on an empty stack, a stack of depth n occupies the
+   slots base+1 .. base+n and sp = base+n. *)
 Definition stk_slots (base: nat) (n: nat) : list nat := rev (seq (S base) n).
 
-(* [stk] is given top first, like sk: its head goes to the highest slot. *)
+(* [stk] is given top of stack first: its head goes to the highest slot. *)
 Definition inject_stack_to_mem (stk: list cptr) (m: mem) (base: nat): mem :=
   List.fold_left (fun acc '(i, ptr) => upd i acc (FP ptr))
     (combine (stk_slots base (Datatypes.length stk)) stk) m.
 
 (* Build a configuration whose call stack lives in the top [stk_alloc] cells of
-   [m] (the region [gen_wt_mem] appends), keeping sp, sk and memory consistent. *)
+   [m] (the region [gen_wt_mem] appends), keeping sp and memory consistent. The
+   slot [base] itself is left untouched, so it holds no return address and a
+   [ret] with an empty stack terminates. *)
 Definition cfg_with_stack (pc: cptr) (r: reg) (m: mem) (stk: list cptr)
   (stk_alloc: nat) : cfg :=
   let base := Datatypes.length m - stk_alloc in
   let n := Datatypes.length stk in
-  (pc, "sp"%string !-> N (base + n); r, inject_stack_to_mem stk m base,
-   stk_slots base n).
+  (pc, "sp"%string !-> N (base + n); r, inject_stack_to_mem stk m base).
 
 Definition gen_directive_from_ideal_cfg (p: prog) (pst: list nat) (ic: ideal_cfg) : G dirs :=
   let '(c, ms) := ic in
-  let '(pc, r, m, sk) := c in
+  let '(pc, r, m) := c in
   match p[[pc]] with
   | Some i =>
       match i with
@@ -278,9 +279,11 @@ Definition gen_directive_from_ideal_cfg (p: prog) (pst: list nat) (ic: ideal_cfg
           [ pc <- gen_pc_from_prog p ;; ret [DCall pc] ]
         )
       | <{{ret}}> =>
-        match sk with
-        | [] => ret []
-        | _ :: _ => d <- gen_dret p;; ret [d]
+        (* no return address at "sp" means the bottom of the stack, where the
+           [ret] terminates and takes no directive *)
+        match lookup_sp m r with
+        | None => ret []
+        | Some _ => d <- gen_dret p;; ret [d]
         end
       | _ => ret []
       end
@@ -289,7 +292,7 @@ Definition gen_directive_from_ideal_cfg (p: prog) (pst: list nat) (ic: ideal_cfg
 
 Definition get_directive_for_seq_behaviour (p: prog) (pst: list nat) (ic: ideal_cfg) : dirs :=
   let '(c, ms) := ic in
-  let '(pc, r, m, sk) := c in
+  let '(pc, r, m) := c in
   match p[[pc]] with
   | Some i =>
       match i with
@@ -304,13 +307,9 @@ Definition get_directive_for_seq_behaviour (p: prog) (pst: list nat) (ic: ideal_
         | Some l => [DCall l]
         end
       | <{{ret}}> =>
-        match sk with
-        | [] => []
-        | _ :: _ => 
-          match lookup_sp m r with
-          | Some pc => if wf_retb p pc then [DRet pc] else []
-          | None => untrace "lookup error: wrong return stack lookup" ([])
-          end
+        match lookup_sp m r with
+        | Some pc => if wf_retb p pc then [DRet pc] else []
+        | None => []
         end
       | _ => []
       end
@@ -320,16 +319,16 @@ Definition get_directive_for_seq_behaviour (p: prog) (pst: list nat) (ic: ideal_
 (* Instructions [ideal_step] refuses to execute without a directive. *)
 Definition needs_dir (p: prog) (ic: ideal_cfg) : bool :=
   let '(c, _) := ic in
-  let '(pc, _, _, sk) := c in
+  let '(pc, r, m) := c in
   match p[[pc]] with
   | Some <{{branch _ to _}}> | Some <{{call _}}> => true
-  | Some <{{ret}}> => negb (seq.nilp sk)
+  | Some <{{ret}}> => match lookup_sp m r with Some _ => true | None => false end
   | _ => false
   end.
 
 Definition gen_directive_triggering_misspec (p: prog) (pst: list nat) (ic: ideal_cfg) : G dirs :=
   let '(c, ms) := ic in
-  let '(pc, r, m, sk) := c in
+  let '(pc, r, m) := c in
   match p[[pc]] with
   | Some i =>
       match i with
@@ -354,11 +353,8 @@ Definition gen_directive_triggering_misspec (p: prog) (pst: list nat) (ic: ideal
             end
         end
       | <{{ret}}> =>
-        match sk with
-        | [] => ret []
-        | _ :: _ =>
             match lookup_sp m r with
-            | None => untrace "lookup_error: couldn't lookup sp" (ret [])
+            | None => ret []
             | Some pc' =>
               let addrs := wf_ret_addrs p in
               let other_addrs := filter (fun x => negb (x ==b pc')) addrs in
@@ -367,7 +363,6 @@ Definition gen_directive_triggering_misspec (p: prog) (pst: list nat) (ic: ideal
               | e :: tl => t <- elems_ e (e :: tl);; ret [DRet t]
               end
             end
-        end
       | _ => ret []
       end
   | None => untrace "lookup error" (ret [])
@@ -411,17 +406,16 @@ Compute ([] <>b [DBranch true]). *)
 
 
 Definition spec_cfg_eqb_up_to_callee (st1 st2 : spec_cfg) :=
-  let '(pc1, r1, m1, sk1, c1, ms1) := st1 in
-  let '(pc2, r2, m2, sk2, c2, ms2) := st2 in
+  let '(pc1, r1, m1, c1, ms1) := st1 in
+  let '(pc2, r2, m2, c2, ms2) := st2 in
   (pc1 ==b pc2)
-  && (sk1 ==b sk2)
   && (c1 ==b c2) && (ms1 ==b ms2)
   && (m1 ==b m2)
   && pub_equivb (t_empty public) r1 (callee !-> (r1 ! callee) ; r2).
 
 Instance showCfg : Show cfg := {
-  show '(pc, reg, mem, stk) := 
-    ("pc: " ++ show pc ++ ";" ++ nl ++ "reg: " ++ show reg ++ ";" ++ nl ++ "mem: " ++ show mem ++ ";" ++ nl ++ "stk: " ++ show stk)%string
+  show '(pc, reg, mem) :=
+    ("pc: " ++ show pc ++ ";" ++ nl ++ "reg: " ++ show reg ++ ";" ++ nl ++ "mem: " ++ show mem)%string
 }.
 
 Definition single_step_cc := (
@@ -434,7 +428,7 @@ Definition single_step_cc := (
   forAll (gen_call_stack stk_size p) (fun stk =>
   forAll ( @arbitrary bool _)  (fun ms =>
   let icfg := (cfg_with_stack pc rs1 m1 stk stk_alloc, ms) in
-  let '((_, reg, mem, stk'), _) := icfg in
+  let '((_, reg, mem), _) := icfg in
   printTestCase ("Reg: " ++ nl ++ show reg ++ nl ++ "Injected mem: " ++ nl ++ show mem ++ nl)%string (
   printTestCase ("Hardened program:" ++ nl ++ show (uslh_prog p))%string (
   match (spec_cfg_sync p icfg) with

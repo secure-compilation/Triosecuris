@@ -118,7 +118,9 @@ QuickChick no_obs_prog_no_obs.
 Example implicit_flow_test p rs icfg
   (P: p = [([ IBranch (AId "x") 1; IJump 1 ], true); ([ IAsgn "y"%string (ANum 1); IRet], false)])
   (RS: rs = (N 0, [("x"%string, N 10); ("y"%string, N 0)]))
-  (ICFG: icfg = (ipc, rs, [], [])):
+  (* one memory cell, and sp = 0 (the register default) points at it: it holds
+     no return address, so the final [ret] terminates *)
+  (ICFG: icfg = (ipc, rs, [UV])):
   match taint_tracking 10 p icfg with
   | Some (obs, leaked_vars, _) =>
       existsb (String.eqb "x") leaked_vars

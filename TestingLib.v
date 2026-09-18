@@ -68,7 +68,7 @@ Variant sc_output_st : Type :=
 
 Definition gen_step_direction (i: inst) (c: cfg) (pst: list nat)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) : G dirs :=
-  let '(pc, rs, m, s) := c in
+  let '(pc, rs, m) := c in
   match i with
   | <{ branch e to l }> => db <- gen_dbr;; ret [db]
   | <{ call e }> =>  dc <- gen_dcall pst;; ret [dc]
@@ -78,7 +78,7 @@ Definition gen_step_direction (i: inst) (c: cfg) (pst: list nat)
 Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir): G sc_output_st :=
   let '(c, ct, ms) := sc in
-  let '(pc, r, m, sk) := c in
+  let '(pc, r, m) := c in
   match fetch p pc with
   | Some i =>
       match i with
@@ -95,14 +95,17 @@ Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
                | _ => SRError [] [] sc
                end)
       | <{{ret}}> =>
-          match sk with
-          | [] =>
+          (* At the bottom of the in-memory stack the slot "sp" points at holds
+             no return address, and the [ret] needs no directive. *)
+          match (sp <- to_nat (ListTotalMap.t_apply r "sp");;
+                 v <- nth_error m sp;; to_fp v) with
+          | None =>
               ret (match spec_step p (S_Running sc) [] with
                    | (S_Term, _, _) => SRTerm [] [] sc
                    | (S_Running sc', dir', os') => SRStep os' [] sc'
                    | _ => SRError [] [] sc
                    end)
-          | _ :: _ =>
+          | Some _ =>
               d <- gen_dret p;;
               ret (match spec_step p (S_Running sc) [d] with
                    | (S_Running sc', dir', os') => SRStep os' [d] sc'
@@ -190,7 +193,7 @@ Definition load_store_trans_basic_blk := (
 ).
 
 Definition stuck_free (f : nat) (p : prog) (c: cfg) : exec_result :=
-  let '(pc, rs, m, ts) := c in
+  let '(pc, rs, m) := c in
   let tpc := [] in
   let trs := ([], map (fun x => (x,[@inl reg_id mem_addr x])) (map_dom (snd rs))) in
   let tm := init_taint_mem m in
@@ -204,7 +207,7 @@ Definition load_store_trans_stuck_free := (
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 1000) (fun m =>
   let p' := transform_load_store_prog c tm p in
-  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 1000); rs, m, istk) in
+  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 1000); rs, m) in
   let r1 := stuck_free 1000 p' icfg in
   match r1 with
   | ETerm st os => checker true
@@ -214,7 +217,9 @@ Definition load_store_trans_stuck_free := (
 
 Definition no_obs_prog_no_obs := (
   forAll gen_no_obs_prog (fun p =>
-  let icfg := (ipc, empty_rs, empty_mem, istk) in
+  (* a small in-memory stack: sp starts at slot 0, which holds no return
+     address, so a [ret] there terminates *)
+  let icfg := (ipc, "sp" !-> N 0; empty_rs, mkStk 10) in
     match taint_tracking 10 p icfg with
     | Some (_, leaked_vars, leaked_mems) =>
         checker (seq.nilp leaked_vars && seq.nilp leaked_mems)
@@ -237,7 +242,7 @@ Definition unused_var_no_leak `{Show input_st}
   forAll gen_prog_and_unused_var (fun '(c, tm, pst, p, unused_var) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 105) (fun m =>
-  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 100); rs, m, istk) in
+  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 100); rs, m) in
   let p' := transform_prog c tm p in
   match stuck_free 100 p' icfg with
   | ETerm (_, _, tobs) os =>
@@ -286,7 +291,7 @@ Definition test_ni (transform : rctx -> tmem -> prog -> prog) := (
   forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 100) (fun m =>
-  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 100); rs, m, istk) in
+  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 100); rs, m) in
   let p' := transform c tm p in
   let r1 := taint_tracking 100 p' icfg in
   match r1 with
@@ -295,7 +300,7 @@ Definition test_ni (transform : rctx -> tmem -> prog -> prog) := (
       let PM := tms_to_pm (Datatypes.length m) tms in
       forAll (gen_pub_equiv_same_ty P rs) (fun rs' =>
       forAll (gen_pub_mem_equiv_same_ty PM m) (fun m' =>
-      let icfg' := (ipc, "sp" !-> N (Datatypes.length m - 100); rs', m', istk) in
+      let icfg' := (ipc, "sp" !-> N (Datatypes.length m - 100); rs', m') in
       let r2 := taint_tracking 100 p' icfg' in
       match r2 with
       | Some (os2', _, _) => checker (obs_eqb os1' os2')
@@ -311,11 +316,11 @@ Definition test_safety_preservation `{Show dir}
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 200) (fun m =>
   let rs := "sp" !-> N (Datatypes.length m - 200); rs in
-  let icfg := (ipc, rs, m, istk) in
+  let icfg := (ipc, rs, m) in
   let p' := transform_load_store_prog c tm p in
   let harden := harden p' in
   let rs' := spec_rs rs in
-  let icfg' := (ipc, rs', m, istk) in
+  let icfg' := (ipc, rs', m) in
   let iscfg := (icfg', true, false) in
   let h_pst := pst_calc harden in
   forAll (gen_spec_steps_sized 200 harden h_pst iscfg gen_dbr gen_dcall gen_dret) (fun ods =>
@@ -333,7 +338,7 @@ Definition test_relative_security `{Show dir}
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst 1000) (fun m1 =>
   let rs1 := "sp" !-> N (Datatypes.length m1 - 1000); rs1 in
-  let icfg1 := (ipc, rs1, m1, istk) in
+  let icfg1 := (ipc, rs1, m1) in
   let p' := transform_load_store_prog c tm p in
   let r1 := taint_tracking 1000 p' icfg1 in
   match r1 with
@@ -343,14 +348,14 @@ Definition test_relative_security `{Show dir}
       forAll (gen_pub_equiv_same_ty P rs1) (fun rs2 =>
       let rs2 := "sp" !-> N (Datatypes.length m1 - 1000); rs2 in
       forAll (gen_pub_mem_equiv_same_ty PM m1) (fun m2 =>
-      let icfg2 := (ipc, rs2, m2, istk) in
+      let icfg2 := (ipc, rs2, m2) in
       let r2 := taint_tracking 1000 p' icfg2 in
       match r2 with
       | Some (os2', _, _) =>
           if (obs_eqb os1' os2')
           then (let harden := harden p' in
                 let rs1' := spec_rs rs1 in
-                let icfg1' := (ipc, rs1', m1, istk) in
+                let icfg1' := (ipc, rs1', m1) in
                 let iscfg1' := (icfg1', true, false) in
                 let h_pst := pst_calc harden in
                 forAll (gen_spec_steps_sized 1000 harden h_pst iscfg1' gen_dbr gen_dcall gen_dret) (fun ods1 =>
@@ -358,7 +363,7 @@ Definition test_relative_security `{Show dir}
                  | SETerm _ os1 ds =>
 
                      let rs2' := spec_rs rs2 in
-                     let icfg2' := (ipc, rs2', m2, istk) in
+                     let icfg2' := (ipc, rs2', m2) in
                      let iscfg2' := (icfg2', true, false) in
                      let sc_r2 := spec_steps_acc 1000 harden iscfg2' ds in
                      match sc_r2 with
@@ -368,7 +373,7 @@ Definition test_relative_security `{Show dir}
                      end
                  | SEOutOfFuel _ os1 ds =>
                      let rs2' := spec_rs rs2 in
-                     let icfg2' := (ipc, rs2', m2, istk) in
+                     let icfg2' := (ipc, rs2', m2) in
                      let iscfg2' := (icfg2', true, false) in
                      let sc_r2 := spec_steps_acc 1000 harden iscfg2' ds in
                      match sc_r2 with
