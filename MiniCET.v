@@ -95,6 +95,8 @@ Definition W : string := "W".
 Definition X : string := "X".
 Definition Y : string := "Y".
 Definition Z : string := "Z".
+Definition sp : string := "sp".
+Definition fp : string := "fp".
 Definition AP : string := "AP".
 Definition AS : string := "AS".
 Definition msf : string := "msf".
@@ -253,7 +255,8 @@ Inductive observation : Type :=
   | OBranch (b:bool)
   | OLoad (n:nat)
   | OStore (n:nat)
-  | OCall (l: cptr).
+  | OCall (l: cptr) (sp: nat)
+  | ORet (l: cptr) (sp: nat).
   (*JB: We don't need an observation for returns, correct? *)
 
 Definition obs := list observation.
@@ -263,7 +266,8 @@ Definition observation_eqb (os1 : observation) (os2 : observation) : bool :=
   | OBranch b, OBranch b' => Bool.eqb b b'
   | OLoad i, OLoad i' => (i =? i')
   | OStore i, OStore i' => (i =? i')
-  | OCall v, OCall v' => (fst v =? fst v') && (snd v =? snd v')
+  | OCall v sp, OCall v' sp' => (fst v =? fst v') && (snd v =? snd v') && (sp =? sp')
+  | ORet v sp, ORet v' sp' => (fst v =? fst v') && (snd v =? snd v') && (sp =? sp')
   | _, _ => false
   end.
 

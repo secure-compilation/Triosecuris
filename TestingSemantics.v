@@ -129,7 +129,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
               match
                 l <- to_fp (eval r e);;
                 sp <- to_nat (M.t_apply r "sp");;
-                ret ((l, "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), [OCall l])
+                ret ((l, "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), [OCall l sp])
               with
               | Some (c, o) => (S_Running c, o)
               | None => (S_Undef, [])
@@ -154,7 +154,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
                 (* bottom of the stack: nothing was pushed there, so this
                    returns out of the program *)
                 | None => (S_Term, [])
-                | Some pc' => (S_Running (pc', "sp" !-> N(sp - 1); r, m), [])
+                | Some pc' => (S_Running (pc', "sp" !-> N(sp - 1); r, m), [ORet pc' sp])
                 end
               end
             end
@@ -201,7 +201,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
                   sp <- to_nat (M.t_apply r "sp");;
                   let ms' := ms || negb ((fst pc' =? fst l) && (snd l =? (snd pc')%nat)) in
                   (*! *)
-                  ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), true, ms'), tl ds), [OCall l])
+                  ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), true, ms'), tl ds), [OCall l sp])
                   (*!! spec-call-no-set-ct *)
                   (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), ct, ms'), tl ds), [OCall l]) *)
                   (*!! spec-call-push-pc *)
@@ -245,7 +245,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
                       is_true (wf_retb p pc'');;
                       let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
                       (*! *)
-                      ret ((S_Running ((pc'', "sp" !-> N(sp - 1); r, m), false, ms'), tl ds), [])
+                      ret ((S_Running ((pc'', "sp" !-> N(sp - 1); r, m), false, ms'), tl ds), [ORet pc'' sp])
                       (*!! spec-ret-no-sp-restore *)
                       (*! ret ((S_Running ((pc'', r, m), false, ms'), tl ds), []) *)
                   with
@@ -352,12 +352,12 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                   (*! if true then *)
                     let ms' := ms || negb ((fst pc' =? fst l) && (snd pc' =? snd l)) in
                     (*! *)
-                    ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), ms'), tl ds), [OCall l])
+                    ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), ms'), tl ds), [OCall l sp])
                     (*!! ideal-call-push-at-sp *)
                     (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd sp m (FP (pc+1))), ms'), tl ds), [OCall l]) *)
                     (*!! ideal-call-no-sp-bump *)
                     (*! ret ((S_Running ((pc', r, upd (S sp) m (FP (pc+1))), ms'), tl ds), [OCall l]) *)
-                  else Some (S_Fault, ds, [OCall l])
+                  else Some (S_Fault, ds, [OCall l sp])
                 with
                 | None => (S_Undef, ds, [])
                 | Some (c, ds, os) => (c, ds, os)
@@ -413,7 +413,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                       MiniCET.is_true (wf_retb p pc'');;
                       let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
                       (*! *)
-                      ret ((S_Running ((pc'', "sp" !-> N (sp - 1); r, m), ms'), tl ds), [])
+                      ret ((S_Running ((pc'', "sp" !-> N (sp - 1); r, m), ms'), tl ds), [ORet pc'' sp])
                       (*!! ideal-ret-no-sp-restore *)
                       (*! ret ((S_Running ((pc'', r, m), ms'), tl ds), []) *)
                   with
