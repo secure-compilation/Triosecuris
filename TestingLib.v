@@ -136,8 +136,8 @@ Variant spec_exec_result : Type :=
   {show :=fun ser =>
       match ser with
       | SETerm sc os ds => show ds
-      | SEError _ _ ds => ("error!!"%string ++ show ds)%string
-      | SEOutOfFuel _ _ ds => ("oof!!"%string ++ show ds)%string
+      | SEError _ _ ds => ("Error!"%string ++ nl ++ show ds ++ nl)%string
+      | SEOutOfFuel _ _ ds => ("Out-of-fuel!"%string ++ nl ++ show ds ++ nl)%string
       end
   }.
 
@@ -151,7 +151,6 @@ Fixpoint _gen_spec_steps_sized (f : nat) (p:prog) (pst: list nat) (sc: spec_cfg)
       | SRStep os1 ds1 sc1 =>
           _gen_spec_steps_sized f' p pst sc1 (os ++ os1) (ds ++ ds1) gen_dbr gen_dcall gen_dret
       | SRError os1 ds1 sc1 =>
-
           (ret (SEError sc1 (os ++ os1) (ds ++ ds1)))
       | SRTerm  os1 ds1 sc1 =>
           ret (SETerm sc1 (os ++ os1) (ds ++ ds1))
