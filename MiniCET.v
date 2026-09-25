@@ -95,8 +95,8 @@ Definition W : string := "W".
 Definition X : string := "X".
 Definition Y : string := "Y".
 Definition Z : string := "Z".
-Definition sp : string := "sp".
-Definition fp : string := "fp".
+Notation sp := "sp"%string.
+Notation fp := "fp"%string.
 Definition AP : string := "AP".
 Definition AS : string := "AS".
 Definition msf : string := "msf".
@@ -112,20 +112,31 @@ Notation "f x .. y" := (.. (f x) .. y)
                   (in custom com at level 0, only parsing,
                   f constr at level 0, x constr at level 9,
                   y constr at level 9) : com_scope.
-Notation "x + y"   := (APlus x y) (in custom com at level 50, left associativity).
-Notation "x - y"   := (AMinus x y) (in custom com at level 50, left associativity).
-Notation "x * y"   := (AMult x y) (in custom com at level 40, left associativity).
+(* The notations below unfold to constructors only (not to [APlus], [BNot], ...),
+   so that they can also be used in patterns. *)
+Notation "x + y"   := (ABin BinPlus x y) (in custom com at level 50, left associativity).
+Notation "x - y"   := (ABin BinMinus x y) (in custom com at level 50, left associativity).
+Notation "x * y"   := (ABin BinMult x y) (in custom com at level 40, left associativity).
 Notation "'true'"  := true (at level 1).
-Notation "'true'"  := BTrue (in custom com at level 0).
+(* only parsing, or every [ANum 1] / [ANum 0] would be printed as true / false *)
+Notation "'true'"  := (ANum 1) (in custom com at level 0, only parsing).
 Notation "'false'" := false (at level 1).
-Notation "'false'" := BFalse (in custom com at level 0).
-Notation "x <= y"  := (BLe x y) (in custom com at level 70, no associativity).
-Notation "x > y"   := (BGt x y) (in custom com at level 70, no associativity).
-Notation "x < y"   := (BLt x y) (in custom com at level 70, no associativity).
-Notation "x = y"   := (BEq x y) (in custom com at level 70, no associativity).
-Notation "x <> y"  := (BNeq x y) (in custom com at level 70, no associativity).
-Notation "x && y"  := (BAnd x y) (in custom com at level 80, left associativity).
-Notation "'~' b"   := (BNot b) (in custom com at level 75, right associativity).
+Notation "'false'" := (ANum 0) (in custom com at level 0, only parsing).
+Notation "x <= y"  := (ABin BinLe x y) (in custom com at level 70, no associativity).
+Notation "x > y"   := (ABin BinImpl (ABin BinLe x y) (ANum 0)) (in custom com at level 70, no associativity).
+Notation "x < y"   := (ABin BinImpl (ABin BinLe y x) (ANum 0)) (in custom com at level 70, no associativity).
+Notation "x = y"   := (ABin BinEq x y) (in custom com at level 70, no associativity).
+Notation "x <> y"  := (ABin BinImpl (ABin BinEq x y) (ANum 0)) (in custom com at level 70, no associativity).
+Notation "x && y"  := (ABin BinAnd x y) (in custom com at level 80, left associativity).
+Notation "'~' b"   := (ABin BinImpl b (ANum 0)) (in custom com at level 75, right associativity).
+
+(* Coercions are not inserted in patterns, so leaves have to be written
+   explicitly there: [#n] for [ANum n] and [$x] for [AId x], e.g.
+   [match i with <{{ fp := $sp - #1 }}> => ...]. *)
+Notation "'#' n" := (ANum n)
+  (in custom com at level 0, n constr at level 0, only parsing) : com_scope.
+Notation "'$' x" := (AId x)
+  (in custom com at level 0, x constr at level 0, only parsing) : com_scope.
 
 Notation "be '?' e1 ':' e2"  := (ACTIf be e1 e2)
                  (in custom com at level 20, no associativity).
@@ -266,8 +277,8 @@ Definition observation_eqb (os1 : observation) (os2 : observation) : bool :=
   | OBranch b, OBranch b' => Bool.eqb b b'
   | OLoad i, OLoad i' => (i =? i')
   | OStore i, OStore i' => (i =? i')
-  | OCall v sp, OCall v' sp' => (fst v =? fst v') && (snd v =? snd v') && (sp =? sp')
-  | ORet v sp, ORet v' sp' => (fst v =? fst v') && (snd v =? snd v') && (sp =? sp')
+  | OCall v n, OCall v' n' => (fst v =? fst v') && (snd v =? snd v') && (n =? n')
+  | ORet v n, ORet v' n' => (fst v =? fst v') && (snd v =? snd v') && (n =? n')
   | _, _ => false
   end.
 
@@ -587,9 +598,18 @@ Definition pst_calc (p: prog) : list nat := (map proc_map (group_by_proc p)).
 
 Compute (pst_calc sample_prog_for_grouping).
 
+Definition proc_prologue (frame_sz: nat) : list inst :=
+  <{{ i[ store[(sp + 1)] <- fp; (* spill the caller's fp just above the frame base *)
+         fp := sp; (* sp is currently at a return address: that is the frame base *)
+         sp := sp + frame_sz ] (* allocating a new frame *) }}>.
 
-
-
+(* Mentions no frame size: sp is recovered from fp, and the caller's fp from the
+   slot the prologue spilled it into, so frames may differ in size.  sp has to be
+   restored first, while fp still points at this frame. *)
+Definition proc_epilogue : list inst :=
+  <{{ i[ sp := fp; (* return address *)
+         fp <- load[sp + 1]; (* spilled old fp *)
+         ret ] (* return *) }}>.
 
 Definition wf_label (p:prog) (is_proc:bool) (l:nat) : bool :=
   match nth_error p l with
@@ -618,8 +638,27 @@ Definition wf_inst (p:prog) (i : inst) : bool :=
 Definition wf_blk (p:prog) (blb : list inst * bool) : bool :=
   forallb (wf_inst p) (fst blb).
 
+Definition wf_blk_calling_convention (p: prog) (blb: list inst * bool) : bool :=
+  let '(blk, flag) := blb in
+  match flag with
+  (* a procedure's entry block starts with [proc_prologue] *)
+  | true => match blk with
+    | <{{ store[($sp + #1)] <- $fp }}> :: <{{ fp := $sp }}> :: <{{ sp := $sp + _ }}> :: _ => true
+    | _ => false
+    end
+  (* a block ending in [ret] ends with [proc_epilogue] *)
+  | false => match rev blk with
+    | <{{ ret }}> :: <{{ fp <- load[$sp + 1] }}> :: <{{ sp := $fp }}> :: _ => true
+    | <{{ ret }}> :: _ => false
+    | _ => true
+    end
+  end && wf_blk p blb.
+
 Definition wf (p:prog) : bool :=
   forallb (wf_blk p) p.
+
+Definition wf_calling_convention (p : prog) : bool :=
+  forallb (wf_blk_calling_convention p) p.
 
 Definition wf_retb (p: prog) (pc: cptr) : bool :=
   let '(l, o) := pc in
@@ -641,7 +680,6 @@ Definition wf_ret_addrs (p: prog) : list cptr :=
     | (blk, _) :: rest => map (fun o => (l, o)) (seq 0 (List.length blk)) ++ all_cptrs (S l) rest
     end
   in filter (wf_retb p) (all_cptrs 0 p).
-
 
 Definition nonempty_block (blk: list inst * bool) : bool :=
   negb (seq.nilp (fst blk)).

@@ -56,7 +56,7 @@ Derive Show for observation.
          | IJump l => "jump " ++ show l
          | ILoad x a => x ++ " <- load[" ++ show a ++ "]"
          | IStore a e => "store[" ++ show a ++ "] <- " ++ show e
-         | ICall fp => "call " ++ show fp
+         | ICall e => "call " ++ show e
          | ICTarget => "ctarget"
          (*| IPeek x => x ++ " <- peek"*)
          | IRet => "ret"
