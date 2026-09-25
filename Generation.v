@@ -702,22 +702,6 @@ Definition transform_load_store_blk (c : rctx) (mem : tmem) (nblk : list inst * 
   folded <- fold_rightM (split_and_merge c mem) bl <{{ i[ ret ] }}>;;
   ret (folded, is_proc).
 
-(* WARNING: this transformation currently neutralises every stack access.
-   [compose_load_store_guard] admits an address only if it equals one of the
-   type-matching indices of the typed memory [mem] *and* is below [length mem].
-   Frame slots live above the typed memory -- [gen_wt_mem] appends the stack
-   region after it -- so no sp- or fp-relative address can satisfy the guard,
-   and every such load or store is routed to the merge block and never
-   performed.  That silently disables the prologue's spill of the caller's fp,
-   the epilogue's reload of it, the caller-side view shift and all local-variable
-   traffic; in the hardened output it shows up as guards like
-   [branch (... ((fp - 1) = 1) && (2 <= (fp - 1))) to _].
-
-   Fixing it means either exempting accesses whose address mentions sp or fp
-   (they are emitted by the calling convention and are in bounds by
-   construction) or widening the guard to admit the stack region.  Until then,
-   programs that go through this transformation do not exercise the frame
-   layout. *)
 Definition transform_load_store_prog (c : rctx) (mem : tmem) (p : prog) :=
   let '(p', newp) := mapM (transform_load_store_blk c mem) p (Datatypes.length p) in
   (p' ++ newp).
