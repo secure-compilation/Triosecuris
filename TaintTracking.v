@@ -178,7 +178,7 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
       | _ => None
       end
   | <{ ret }> =>
-      (* sequentially does <{{ pc <- load[sp]; sp := sp - 1 }}> with call *)
+      (* sequentially does <{{ pc <- load[sp]; sp := sp - 1 }}> with ret *)
       match tctx with
       | CMem _sp =>
           let tv := nth _sp tm [] in
