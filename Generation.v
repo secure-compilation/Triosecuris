@@ -13,7 +13,7 @@ Require Export ExtLib.Structures.Monads.
 Require Import ExtLib.Data.List.
 Import MonadNotation.
 
-From SECF Require Import MiniCET MapsFunctor ListMaps Shrinking.
+From SECF Require Import MiniCET MapsFunctor ListMaps Shrinking Utils.
 Module Import MCC := MiniCETCommon(ListTotalMap).
 
 Definition label := bool.
@@ -403,9 +403,190 @@ Fixpoint gen_exp_wt (sz: nat) (c: rctx) (pst: list nat) : G exp :=
           ]
   end.
 
-Fixpoint gen_exp_ty_wt (t: ty) (sz: nat) (c: rctx) (pst: list nat) : G exp :=
+(* ********** In-memory stack: frame layout, prologue/epilogue and call stacks ********** *)
+
+(* The layout below mirrors Appel's "A stack frame" (Modern Compiler
+   Implementation, Figure 6.2) onto the stack this language actually has.  In
+   the figure the stack grows towards *lower* addresses; here [step] grows it
+   towards higher indices ([call] stores its return address at [S sp] and moves
+   sp there, [ret] reads it back at [sp]), so the figure is mirrored: "deeper in
+   the stack" means "higher index".
+
+   A procedure entered by [call] starts with sp pointing at the slot holding its
+   return address; write [R] for that slot.  The prologue sets fp to [R] and
+   allocates [frame_sz] further slots, giving, for a frame with [ARG_SLOTS = a]:
+
+     index          contents                     Appel's name
+     -------------------------------------------------------------------------
+     fp - a         incoming argument a-1  \
+     ...            ...                     |  incoming arguments -- these slots
+     fp - 2         incoming argument 1     |  belong to the *caller's* frame,
+     fp - 1         incoming static link   /   which wrote them as its outgoing
+                                               arguments (the "view shift")
+     ---------------------------------------- frame boundary
+     fp + 0  (= R) <--fp return address        pushed by [call] itself
+     fp + 1         saved caller fp            saved registers
+     fp + 2         local / temporary      \
+     ...            ...                     |  local variables, temporaries
+     fp + frame_sz-a    local / temporary  /
+     fp + frame_sz-a+1  outgoing argument a-1 \
+     ...            ...                        |  outgoing arguments
+     fp + frame_sz-1    outgoing argument 1    |
+     fp + frame_sz  <--sp outgoing static link/
+
+   So sp = fp + frame_sz throughout the body.  fp sits on the return-address
+   slot, as ebp does on x86 after [push ebp; mov ebp, esp]: the caller's sp was
+   [R - 1], so the argument the caller wrote at [sp - j] is the one this
+   procedure reads at [fp - (j+1)].  That correspondence is the view shift, and
+   it is why the caller-side argument stores use sp while the body uses fp. *)
+
+(* Slots reserved at the top of every frame for outgoing arguments: the static
+   link plus [ARG_SLOTS - 1] arguments. *)
+Definition ARG_SLOTS := 3.
+
+(* A frame needs the saved-fp slot plus the outgoing-argument area; anything
+   above that is locals and temporaries. *)
+(* [S ARG_SLOTS], not [ARG_SLOTS + 1]: MiniCET's "pc + 1" notation captures the
+   literal [+ 1] and would read this as [inc ARG_SLOTS]. *)
+Definition MIN_STACK_FRAME_SIZE := S ARG_SLOTS.
+Definition MAX_STACK_FRAME_SIZE := ARG_SLOTS + 8.
+
+(* Number of local/temporary slots in a frame of size [frame_sz], i.e. the slots
+   fp+2 .. fp+frame_sz-ARG_SLOTS. *)
+Definition frame_locals (frame_sz: nat) : nat := frame_sz - ARG_SLOTS - 1.
+
+(* An address inside the current frame, reached through fp as in the layout
+   comment at the top of this file: either an incoming argument the caller wrote
+   into its outgoing-argument area, or one of this frame's own locals.  The
+   return address (fp+0) and the saved caller fp (fp+1) are deliberately not
+   generated, so no generated instruction can break the frame chain -- which is
+   also why the incoming arguments start at [fp - 1] rather than [fp]. *)
+Definition gen_frame_slot (frame_sz: nat) : G exp :=
+  let incoming := map (fun (j:nat) => let n := ANum j in <{{ fp - n }}>)
+                      (seq 1 ARG_SLOTS) in
+  let locals := map (fun (j:nat) => let n := ANum j in <{{ fp + n }}>)
+                    (seq 2 (frame_locals frame_sz)) in
+  (* The default is unreachable while ARG_SLOTS > 0, and is a typed-memory
+     address rather than a frame slot so that it cannot name fp+0 or fp+1. *)
+  elems_ (ANum 0) (incoming ++ locals).
+
+(* Caller-side view shift.  [call] moves sp to [S sp] and the callee's prologue
+   points fp there, so the callee's fp is this procedure's sp plus one: the slot
+   written here as [sp - j] is the slot the callee reads as [fp - (j+1)].  See
+   the layout comment at the top of this file.  The static link at [sp] is the
+   caller's own fp, as in Appel's figure.  The remaining slots carry ordinary
+   arguments, taken from the TNum variables of the context and padded with 0, so
+   that every incoming slot the callee may read has been written. *)
+Definition view_shift_stores (c: rctx) : list inst :=
+  let nums := filter_vars_by_ty TNum c in
+  let arg (j: nat) : exp :=
+    match nth_error nums (j - 1) with
+    | Some x => AId x
+    | None => ANum 0
+    end in
+  map (fun (j:nat) => let n := ANum j in let a := arg j in
+        <{{ store[(sp - n)] <- a }}>)
+      (seq 1 (ARG_SLOTS - 1))
+  ++ <{{ i[ store[(sp)] <- fp ] }}>.
+
+(* The stores have to stay immediately in front of the call, with no control
+   flow in between, so they are spliced in per instruction rather than per
+   block. *)
+Fixpoint blk_view_shift (c: rctx) (blk: list inst) : list inst :=
+  match blk with
+  | [] => []
+  | <{{ call e }}> :: tl =>
+      view_shift_stores c ++ (<{{ call e }}> :: blk_view_shift c tl)
+  | i :: tl => i :: blk_view_shift c tl
+  end.
+
+Definition transform_prog_for_view_shift (c: rctx) (p: prog) : prog * (list nat) :=
+  let view_shift := List.map (fun '(blk, flag) => 
+    let shifted_blk := blk_view_shift c blk in
+    ((shifted_blk, flag), List.length shifted_blk)) p in
+  let (prog, pst) := List.split view_shift in
+  (prog, pst).
+
+(* Blocks a jump or branch inside one procedure may target.  A procedure with
+   [fsz] generated blocks whose entry is block [base] occupies [base .. base+fsz]
+   once [transform_proc_with_term_for_epilogue] has appended its epilogue block,
+   so its non-entry blocks -- the epilogue among them, since jumping there is
+   just an early return -- are [base+1 .. base+fsz].  The entry itself is
+   excluded: only [call] may target it, and [wf_label p false] rejects it. *)
+Definition proc_jump_targets (base fsz: nat) : list nat := seq (S base) fsz.
+
+(* Every [ret] becomes a jump to the procedure's single epilogue block, so the
+   epilogue runs on every path out of the procedure.  Instructions after a [ret]
+   are unreachable and dropped; the block still ends in a terminator, so
+   [basic_block_checker] is preserved. *)
+Fixpoint blk_rets_to_jump (done: nat) (blk: list inst) : list inst :=
+  match blk with
+  | [] => []
+  | <{{ ret }}> :: _ => <{{ i[ jump done ] }}>
+  | i :: tl => i :: blk_rets_to_jump done tl
+  end.
+
+(* In order to always execute epilogue in the procedure, we change all rets to jumps of the artificially
+   created "done" block in the very end of the procedure.
+
+   [base] is where this procedure's entry block sits in the whole program, which
+   is what makes [done] a usable label: block labels index [prog], so a
+   procedure-local [length proc] would only be right for the procedure at 0. *)
+Definition transform_proc_with_term_for_epilogue (base: nat)
+  (proc: list (list inst * bool)) : list (list inst * bool) :=
+  let done := base + Datatypes.length proc in
+  List.map (fun '(blk, flag) => (blk_rets_to_jump done blk, flag)) proc
+  ++ [(proc_epilogue, false)].
+
+Definition gen_wf_ret_addr (p: prog) : G cptr :=
+  let addrs := wf_ret_addrs p in
+  match addrs with
+  | [] => ret (0, 0)
+  | d :: _ => elems_ d addrs
+  end.
+
+Fixpoint gen_call_stack_from_prog_sized n (p: prog) : G (list cptr) :=
+  match n with
+  | 0 => ret []
+  | S n' => liftM2 cons (gen_wf_ret_addr p) (gen_call_stack_from_prog_sized n' p)
+  end.
+
+(* [gen_wf_ret_addr] falls back to (0,0) when [p] has no call at all, and (0,0)
+   is not a well-formed return address, so generate an empty stack instead. *)
+Definition gen_call_stack (n: nat) (p: prog) : G (list cptr) :=
+  if seq.nilp (wf_ret_addrs p) then ret [] else gen_call_stack_from_prog_sized n p.
+
+(* Layout of the in-memory call stack, as implemented by [step]/[ideal_step]: a
+   call sets sp to (S sp) and stores its return address at that slot, so with
+   [base] the value of sp on an empty stack, a stack of depth n occupies the
+   slots base+1 .. base+n and sp = base+n. *)
+Definition stk_slots (base: nat) (n: nat) : list nat := rev (seq (S base) n).
+
+(* [stk] is given top of stack first: its head goes to the highest slot. *)
+Definition inject_stack_to_mem (stk: list cptr) (m: mem) (base: nat): mem :=
+  List.fold_left (fun acc '(i, ptr) => upd i acc (FP ptr))
+    (combine (stk_slots base (Datatypes.length stk)) stk) m.
+
+(* Build a configuration whose call stack lives in the top [stk_alloc] cells of
+   [m] (the region [gen_wt_mem] appends), keeping sp and memory consistent. The
+   slot [base] itself is left untouched, so it holds no return address and a
+   [ret] with an empty stack terminates. *)
+Definition cfg_with_stack (pc: cptr) (r: reg) (m: mem) (stk: list cptr)
+  (stk_alloc: nat) : cfg :=
+  let base := Datatypes.length m - stk_alloc in
+  let n := Datatypes.length stk in
+  (* fp has to be a number, not whatever the register default happens to be, or
+     every [fp]-relative frame access evaluates to UV and the step goes
+     S_Undef.  [base + n] is the return-address slot of the innermost frame,
+     which is exactly where its prologue would have pointed fp. *)
+  (pc, "fp"%string !-> N (base + n); "sp"%string !-> N (base + n); r,
+   inject_stack_to_mem stk m base).
+
+
+
+Definition gen_exp_ty_wt (t: ty) (sz: nat) (c: rctx) (pst: list nat) (frame_size: nat) : G exp :=
   match t with
-  | TNum => gen_exp_no_ptr_wt sz c pst
+  | TNum => freq [ (10, gen_exp_no_ptr_wt sz c pst); (1, gen_frame_slot frame_size) ]
   | TPtr => gen_exp_ptr_wt sz c pst
   end.
 
@@ -425,29 +606,31 @@ Definition gen_reg_wt (c: rctx) (pst: list nat) : G reg :=
   b <- gen_binds;;
   ret (default_val, b).
 
-Definition gen_asgn_wt (t: ty) (c: rctx) (pst: list nat) : G inst :=
+Definition gen_asgn_wt (t: ty) (c: rctx) (pst: list nat) (frame_size: nat) : G inst :=
   let tlst := filter (fun '(_, t') => ty_eqb t t') (snd c) in
   let vars := map_dom tlst in
   if seq.nilp vars
   then ret <{ skip }>
   else
     x <- elems_ "X0"%string vars;;
-    a <- gen_exp_ty_wt t 1 c pst;;
+    a <- gen_exp_ty_wt t 1 c pst frame_size;;
     ret <{ x := a }>.
 
 Definition add_zeros (l: list nat) : list (nat * nat) :=
   map (fun x => (x, 0)) l.
 
-Definition gen_branch_wt (c: rctx) (pl: nat) (pst: list nat) (default : nat * nat) : G inst :=
-  let vars := (map_dom (snd c)) in
-  let jlst := (list_minus (add_zeros (seq 0 pl)) (proc_hd pst)) in
-  e <- gen_exp_ty_wt TNum 1 c pst;;
+(* [jlst] is the list of blocks a jump or branch may target: the non-entry
+   blocks of the *enclosing* procedure, and nothing else.  Leaving the procedure
+   would run another procedure's epilogue against this frame, restoring sp and
+   fp from the wrong slots.  See [proc_jump_targets]. *)
+Definition gen_branch_wt (c: rctx) (jlst: list nat) (pst: list nat) (default : nat) (frame_size: nat): G inst :=
+  e <- gen_exp_ty_wt TNum 1 c pst frame_size;;
   l <- elems_ default jlst;;
-  ret <{ branch e to (fst l) }>.
+  ret <{ branch e to l }>.
 
-Definition gen_jump_wt (pl: nat) (pst: list nat) (default : nat * nat) : G inst :=
-  l <- elems_ default (list_minus (add_zeros (seq 0 pl)) (proc_hd pst));;
-  ret <{ jump (fst l) }>.
+Definition gen_jump_wt (jlst: list nat) (default : nat) : G inst :=
+  l <- elems_ default jlst;;
+  ret <{ jump l }>.
 
 Definition filter_typed {A : Type} (t : ty) (l : list (A * ty)): list A :=
   map fst (filter (fun '(_, t') => ty_eqb t t') l).
@@ -455,10 +638,10 @@ Definition filter_typed {A : Type} (t : ty) (l : list (A * ty)): list A :=
 Notation " 'elems' ( h ;;; tl )" := (elems_ h (cons h tl))
   (at level 1, no associativity) : qc_scope.
 
-Definition gen_load_wt (t: ty) (c: rctx) (tm: tmem) (pl: nat) (pst: list nat) : G inst :=
+Definition gen_load_wt (t: ty) (c: rctx) (tm: tmem) (pst: list nat) (frame_size: nat) : G inst :=
   let vars := filter_typed t (snd c) in
   sz <- choose(1, 3);;
-  exp <- gen_exp_ty_wt TNum sz c pst;;
+  exp <- gen_exp_ty_wt TNum sz c pst frame_size ;;
   match vars with
   | h :: tl =>
     x <- elems ( h ;;; tl);;
@@ -466,12 +649,12 @@ Definition gen_load_wt (t: ty) (c: rctx) (tm: tmem) (pl: nat) (pst: list nat) : 
   | _ => ret <{ skip }>
   end.
 
-Definition gen_store_wt (c: rctx) (tm: tmem) (pl: nat) (pst: list nat) : G inst :=
+Definition gen_store_wt (c: rctx) (tm: tmem) (pst: list nat) (frame_size: nat) : G inst :=
   match tm with
   | h :: tl =>
     t <- elems (h ;;; tl);;
-    e1 <- gen_exp_ty_wt TNum 1 c pst;;
-    e2 <- gen_exp_ty_wt t 1 c pst;;
+    e1 <- gen_exp_ty_wt TNum 1 c pst frame_size ;;
+    e2 <- gen_exp_ty_wt t 1 c pst frame_size ;;
     ret <{ store[e1] <- e2 }>
   | _ => ret <{ skip }>
   end.
@@ -519,34 +702,47 @@ Definition transform_load_store_blk (c : rctx) (mem : tmem) (nblk : list inst * 
   folded <- fold_rightM (split_and_merge c mem) bl <{{ i[ ret ] }}>;;
   ret (folded, is_proc).
 
+(* WARNING: this transformation currently neutralises every stack access.
+   [compose_load_store_guard] admits an address only if it equals one of the
+   type-matching indices of the typed memory [mem] *and* is below [length mem].
+   Frame slots live above the typed memory -- [gen_wt_mem] appends the stack
+   region after it -- so no sp- or fp-relative address can satisfy the guard,
+   and every such load or store is routed to the merge block and never
+   performed.  That silently disables the prologue's spill of the caller's fp,
+   the epilogue's reload of it, the caller-side view shift and all local-variable
+   traffic; in the hardened output it shows up as guards like
+   [branch (... ((fp - 1) = 1) && (2 <= (fp - 1))) to _].
+
+   Fixing it means either exempting accesses whose address mentions sp or fp
+   (they are emitted by the calling convention and are in bounds by
+   construction) or widening the guard to admit the stack region.  Until then,
+   programs that go through this transformation do not exercise the frame
+   layout. *)
 Definition transform_load_store_prog (c : rctx) (mem : tmem) (p : prog) :=
   let '(p', newp) := mapM (transform_load_store_blk c mem) p (Datatypes.length p) in
   (p' ++ newp).
-
-
 
 Definition gen_call_wt (c: rctx) (pst: list nat) : G inst :=
   e <- gen_exp_ptr_wt 1 c pst;;
   ret <{ call e }>.
 
-Definition _gen_inst_wt (gen_asgn : ty -> rctx -> list nat -> G inst)
-                        (gen_branch : rctx -> nat -> list nat -> nat * nat -> G inst)
-                        (gen_jump : nat -> list nat -> nat * nat -> G inst)
-                        (gen_load : ty -> rctx -> tmem -> nat -> list nat -> G inst)
-                        (gen_store : rctx -> tmem -> nat -> list nat -> G inst)
+Definition _gen_inst_wt (gen_asgn : ty -> rctx -> list nat -> nat -> G inst)
+                        (gen_branch : rctx -> list nat -> list nat -> nat -> nat -> G inst)
+                        (gen_jump : list nat -> nat -> G inst)
+                        (gen_load : ty -> rctx -> tmem -> list nat -> nat -> G inst)
+                        (gen_store : rctx -> tmem -> list nat -> nat -> G inst)
                         (gen_call : rctx -> list nat -> G inst)
-                        (c: rctx) (tm: tmem) (sz:nat) (pl: nat) (pst: list nat) : G inst :=
+                        (c: rctx) (tm: tmem) (sz:nat) (pst: list nat) (jlst: list nat) (frame_size: nat) : G inst :=
   let insts :=
      [ (1, ret ISkip);
-       (1, ret IRet);
-       (sz, t <- arbitrary;; gen_asgn t c pst);
-       (sz, t <- arbitrary;; gen_load t c tm pl pst);
-       (sz, gen_store c tm pl pst);
+       (* (1, ret IRet); no ret's inside of the block *)
+       (sz, t <- arbitrary;; gen_asgn t c pst frame_size);
+       (sz, t <- arbitrary;; gen_load t c tm pst frame_size);
+       (sz, gen_store c tm pst frame_size);
        (sz, gen_call c pst) ] in
-  let non_proc_labels := list_minus (add_zeros (seq 0 pl)) (proc_hd pst) in
-  match non_proc_labels with
+  match jlst with
   | nil => freq_ (ret ISkip) insts
-  | hd :: _ => freq_ (ret ISkip) (insts ++ [ (2, gen_branch c pl pst hd) ])
+  | hd :: _ => freq_ (ret ISkip) (insts ++ [ (2, gen_branch c jlst pst hd frame_size) ])
   end.
 
 
@@ -561,31 +757,30 @@ Definition gen_nonterm_wt (gen_asgn : ty -> rctx -> list nat -> G inst)
          (sz, gen_store c tm pl pst);
          (sz, gen_call c pst)].
 
-Definition _gen_term_wt (gen_branch : rctx -> nat -> list nat -> nat * nat -> G inst)
-                      (gen_jump : nat -> list nat -> nat * nat -> G inst)
-                      (c: rctx) (tm: tmem)   (pl: nat) (pst: list nat) : G inst :=
-  let non_proc_labels := list_minus (add_zeros (seq 0 pl)) (proc_hd pst) in
-  match non_proc_labels with
+Definition _gen_term_wt (gen_branch : rctx -> list nat -> list nat -> nat -> nat -> G inst)
+                        (gen_jump : list nat -> nat -> G inst)
+                        (c: rctx) (tm: tmem) (pst: list nat) (jlst: list nat) : G inst :=
+  match jlst with
   | nil => ret IRet
-  | hd :: _ => freq_ (ret IRet) ([(1, ret IRet) ; (2, gen_jump pl pst hd)])
+  | hd :: _ => freq_ (ret IRet) ([(1, ret IRet) ; (2, gen_jump jlst hd)])
   end.
 
-Definition gen_term_wt (c: rctx) (tm: tmem) (pl: nat) (pst: list nat) : G inst :=
-  _gen_term_wt gen_branch_wt gen_jump_wt c tm pl pst.
+Definition gen_term_wt (c: rctx) (tm: tmem) (pst: list nat) (jlst: list nat) (frame_size: nat) : G inst :=
+  _gen_term_wt gen_branch_wt gen_jump_wt c tm pst jlst.
 
-Definition gen_inst_wt (c: rctx) (tm: tmem) (sz:nat) (pl: nat) (pst: list nat) : G inst :=
+Definition gen_inst_wt (c: rctx) (tm: tmem) (sz:nat) (pst: list nat) (jlst: list nat) (frame_size: nat) : G inst :=
   _gen_inst_wt gen_asgn_wt gen_branch_wt gen_jump_wt gen_load_wt gen_store_wt gen_call_wt
-               c tm sz pl pst.
+               c tm sz pst jlst frame_size.
 
-Definition gen_blk_wt (c: rctx) (tm: tmem) (bsz pl: nat) (pst: list nat) : G (list inst) :=
-  vectorOf bsz (gen_inst_wt c tm bsz pl pst).
+Definition gen_blk_wt (c: rctx) (tm: tmem) (bsz: nat) (pst: list nat) (jlst: list nat) (frame_size: nat) : G (list inst) :=
+  vectorOf bsz (gen_inst_wt c tm bsz pst jlst frame_size).
 
-Definition _gen_blk_body_wt (c: rctx) (tm: tmem) (bsz pl: nat) (pst: list nat) : G (list inst) :=
-  vectorOf (bsz - 1) (gen_inst_wt c tm bsz pl pst).
+Definition _gen_blk_body_wt (c: rctx) (tm: tmem) (bsz: nat) (pst: list nat) (jlst: list nat) (frame_size: nat) : G (list inst) :=
+  vectorOf (bsz - 1) (gen_inst_wt c tm bsz pst jlst frame_size).
 
-Definition gen_blk_with_term_wt (c: rctx) (tm: tmem) (bsz pl: nat) (pst: list nat) : G (list inst) :=
-  blk <- _gen_blk_body_wt c tm bsz pl pst;;
-  term <- gen_term_wt c tm pl pst;;
+Definition gen_blk_with_term_wt (c: rctx) (tm: tmem) (bsz: nat) (pst: list nat) (jlst: list nat) (frame_size: nat) : G (list inst) :=
+  blk <- _gen_blk_body_wt c tm bsz pst jlst frame_size;;
+  term <- gen_term_wt c tm pst jlst frame_size;;
   ret (blk ++ [term]).
 
 Definition basic_block_checker (blk: list inst) : bool :=
@@ -600,93 +795,72 @@ Definition basic_block_checker (blk: list inst) : bool :=
 Definition basic_block_gen_example : G (list inst) :=
   c <- arbitrary;;
   tm <- arbitrary;;
-  gen_blk_with_term_wt c tm 8 8 [3; 3; 1; 1].
+  gen_blk_with_term_wt c tm 8 [3; 3; 1; 1] [1; 2; 4; 5; 6; 7] 10.
 
-Fixpoint _gen_proc_with_term_wt (c: rctx) (tm: tmem) (fsz bsz pl: nat) (pst: list nat) : G (list (list inst * bool)) :=
+Fixpoint _gen_proc_with_term_wt (c: rctx) (tm: tmem) (fsz bsz: nat) (pst: list nat)
+  (jlst: list nat) (frame_size: nat) : G (list (list inst * bool)) :=
   match fsz with
   | O => ret []
   | S fsz' => n <- choose (1, max 1 bsz);;
-             blk <- gen_blk_with_term_wt c tm n pl pst;;
-             rest <- _gen_proc_with_term_wt c tm fsz' bsz pl pst;;
-             ret ((blk, false) :: rest)
+              blk <- gen_blk_with_term_wt c tm n pst jlst frame_size;;
+              rest <- _gen_proc_with_term_wt c tm fsz' bsz pst jlst frame_size;;
+              ret ((blk, false) :: rest)
   end.
 
-Definition gen_proc_with_term_wt (c: rctx) (tm: tmem) (fsz bsz pl: nat) (pst: list nat) : G (list (list inst * bool)) :=
+Definition gen_proc_with_term_wt (c: rctx) (tm: tmem) (fsz bsz: nat) (pst: list nat)
+  (jlst: list nat) : G (list (list inst * bool)) :=
   match fsz with
   | O => ret []
   | S fsz' => n <- choose (1, max 1 bsz);;
-             blk <- gen_blk_with_term_wt c tm n pl pst;;
-             rest <- _gen_proc_with_term_wt c tm fsz' bsz pl pst;;
-             ret ((blk, true) :: rest)
+              (* Below MIN_STACK_FRAME_SIZE the outgoing-argument area would run
+                 into the slot holding the spilled caller fp. *)
+              frame_size <- choose (MIN_STACK_FRAME_SIZE, MAX_STACK_FRAME_SIZE) ;;
+              blk <- gen_blk_with_term_wt c tm n pst jlst frame_size ;;
+              rest <- _gen_proc_with_term_wt c tm fsz' bsz pst jlst frame_size ;;
+              let blk := proc_prologue frame_size ++ blk in
+              ret ((blk, true) :: rest)
   end.
 
-Fixpoint _gen_prog_with_term_wt (c: rctx) (tm: tmem) (bsz pl: nat) (pst pst': list nat) : G (list (list inst * bool)) :=
+Definition gen_proc_with_term_wt_stack (c: rctx) (tm: tmem) (fsz bsz: nat)
+  (pst: list nat) (base: nat) : G (list (list inst * bool)) :=
+  p <- gen_proc_with_term_wt c tm fsz bsz pst (proc_jump_targets base fsz);;
+  ret (transform_proc_with_term_for_epilogue base p).
+
+(* [pst'] carries the number of blocks to *generate* per procedure, while [pst]
+   describes the program as it will *end up*, one block larger per procedure --
+   see [gen_prog_ty_ctx_wt].  [pst] is what [proc_hd] is taken of, so that the
+   FPtr call targets name the real entry blocks; [base] advances by [S fsz]
+   because each procedure also gets an epilogue block. *)
+Fixpoint _gen_prog_with_term_wt_from (c: rctx) (tm: tmem) (bsz: nat)
+  (pst pst': list nat) (base: nat) : G (list (list inst * bool)) :=
   match pst' with
   | [] => ret []
-  | hd :: tl => hd_proc <- gen_proc_with_term_wt c tm hd bsz pl pst;;
-               tl_proc <- _gen_prog_with_term_wt c tm bsz pl pst tl;;
-               ret (hd_proc ++ tl_proc)
+  | fsz :: tl => hd_proc <- gen_proc_with_term_wt_stack c tm fsz bsz pst base ;;
+                tl_proc <- _gen_prog_with_term_wt_from c tm bsz pst tl (base + S fsz) ;;
+                ret (hd_proc ++ tl_proc)
   end.
+
+Definition _gen_prog_with_term_wt (c: rctx) (tm: tmem) (bsz: nat) (pst pst': list nat)
+  : G (list (list inst * bool)) :=
+  _gen_prog_with_term_wt_from c tm bsz pst pst' 0.
 
 Definition gen_prog_with_term_wt_example (pl: nat) :=
   c <- arbitrary;;
   tm <- arbitrary;;
   pst <- gen_partition pl;;
   let bsz := 5%nat in
-  _gen_prog_with_term_wt c tm bsz pl pst pst.
+  _gen_prog_with_term_wt c tm bsz (map S pst) pst.
 
 Definition prog_basic_block_checker (p: prog) : bool :=
   forallb (fun bp => (basic_block_checker (fst bp))) p.
 
+Definition gen_pc_from_prog (p: prog) : G cptr :=
+  iblk <- choose (0, max 0 (Datatypes.length(p) - 1)) ;;
+  let blk := nth_default ([],false) p iblk in
+  off <- choose (0, max 0 (Datatypes.length(fst blk) - 1));;
+  ret (iblk, off).
 
-Fixpoint _gen_proc_wt (c: rctx) (tm: tmem) (psz bsz pl: nat) (pst: list nat) : G (list (list inst * bool)) :=
-  match psz with
-  | O => ret []
-  | S psz' => n <- choose (1, max 1 bsz);;
-             blk <- gen_blk_wt c tm n pl pst;;
-             rest <- _gen_proc_wt c tm psz' bsz pl pst;;
-             ret ((blk, false) :: rest)
-  end.
-
-Definition gen_proc_wt (c: rctx) (tm: tmem) (psz bsz pl: nat) (pst: list nat) : G (list (list inst * bool)) :=
-  match psz with
-  | O => ret []
-  | S psz' => n <- choose (1, max 1 bsz);;
-             blk <- gen_blk_wt c tm n pl pst;;
-             rest <- _gen_proc_wt c tm psz' bsz pl pst;;
-             ret ((blk, true) :: rest)
-  end.
-
-Fixpoint _gen_prog_wt (c: rctx) (tm: tmem) (bsz pl: nat) (pst pst': list nat) : G (list (list inst * bool)) :=
-  match pst' with
-  | [] => ret []
-  | hd :: tl => hd_proc <- gen_proc_wt c tm hd bsz pl pst;;
-               tl_proc <- _gen_prog_wt c tm bsz pl pst tl;;
-               ret (hd_proc ++ tl_proc)
-  end.
-
-Definition gen_prog_wt_example (pl: nat) :=
-  c <- arbitrary;;
-  tm <- arbitrary;;
-  pst <- gen_partition pl;;
-  let bsz := 5%nat in
-  _gen_prog_wt c tm bsz pl pst pst.
-
-Definition test_wt_example : G bool :=
-  prog <- gen_prog_wt_example 8;;
-  ret (wf prog).
-
-Definition gen_prog_wt (bsz pl: nat) :=
-  c <- arbitrary;;
-  tm <- arbitrary;;
-  pst <- gen_partition pl;;
-  _gen_prog_wt c tm bsz pl pst pst.
-
-Definition gen_prog_wt' (c : rctx) (pst : list nat) (bsz pl : nat) :=
-  tm <- arbitrary;;
-  _gen_prog_wt c tm bsz pl pst pst.
-
-
+(* ********** Typed expressions ********** *)
 
 Fixpoint ty_exp (c: rctx) (e: exp) : option ty :=
   match e with
@@ -713,7 +887,7 @@ Fixpoint ty_exp (c: rctx) (e: exp) : option ty :=
                      end
   end.
 
-Fixpoint ty_inst (c: rctx) (tm: tmem) (p: prog) (i: inst) : bool :=
+Definition ty_inst (c: rctx) (tm: tmem) (p: prog) (i: inst) : bool :=
   match i with
   | ISkip | ICTarget | IRet => true
   | IAsgn x e => match ty_exp c e with
@@ -764,17 +938,6 @@ Definition ty_blk (c: rctx) (tm: tmem) (p: prog) (blk: list inst * bool) : bool 
 Definition ty_prog (c: rctx) (tm: tmem) (p: prog) : bool :=
   forallb (ty_blk c tm p) p.
 
-Definition gen_prog_ty_ctx_wt (bsz pl: nat) : G (rctx * tmem * prog) :=
-  c <- arbitrary;;
-  tm <- arbitrary;;
-  pst <- gen_partition pl;;
-  p <- _gen_prog_wt c tm bsz pl pst pst;;
-  ret (c, tm, p).
-
-
-
-
-
 Definition join (l1 l2 : label) : label := l1 && l2.
 
 Fixpoint vars_exp (e:exp) : list string :=
@@ -813,37 +976,32 @@ Definition vars_prog (p: prog) : list string :=
 Definition label_of_exp (P:pub_vars) (e:exp) : label :=
   List.fold_left (fun l a => join l (P ! a)) (vars_exp e) public.
 
-
-
-
-
-Definition gen_prog_ty_ctx_wt' (bsz pl: nat) : G (rctx * tmem * list nat * prog) :=
+(* [pst] partitions [pl] blocks between procedures, but each procedure also gets
+   an epilogue block, so the program that comes out has [map S pst] blocks per
+   procedure and [pl + length pst] in total.  Generation is done against that
+   final shape -- it is what [proc_hd] must be taken of for the FPtr call
+   targets to name real entry blocks -- and it is the final partition that is
+   returned, since callers use it the same way (e.g. [gen_dcall]). *)
+Definition gen_prog_ty_ctx_wt (bsz pl: nat) : G (rctx * tmem * list nat * prog) :=
   c <- arbitrary;;
   tm <- arbitrary;;
   pst <- gen_partition pl;;
-  p <- _gen_prog_wt c tm bsz pl pst pst;;
-  ret (c, tm, pst, p).
-
-Definition gen_prog_wt_with_basic_blk (bsz pl: nat) : G (rctx * tmem * list nat * prog) :=
-  c <- arbitrary;;
-  tm <- arbitrary;;
-  pst <- gen_partition pl;;
-  p <- _gen_prog_with_term_wt c tm bsz pl pst pst;;
-  ret (c, tm, pst, p).
+  let pstf := map S pst in
+  p <- _gen_prog_with_term_wt c tm bsz pstf pst;;
+  ret (c, tm, pstf, p).
 
 Fixpoint mkStk (sz: nat) := match sz with
                             | O => []
                             | S n => UV :: mkStk n
                             end.
 
+(* NOTE: the order, in which we add stack to memory here, decides how stack grows in our (testing) model *)
 Definition gen_wt_mem (tm: tmem) (pst: list nat) (stsize: nat): G mem :=
   let indices := seq 0 (Datatypes.length tm) in
   let idx_tm := combine indices tm in
   let gen_binds := mapGen (fun '(idx, t) => (v <- gen_val_wt t pst;; ret (idx, v))) idx_tm in
   r <- gen_binds;;
   ret (snd (split r) ++ mkStk stsize).
-
-
 
 Definition all_possible_vars : list string := (["X0"%string; "X1"%string; "X2"%string; "X3"%string; "X4"%string; "X5"%string]).
 

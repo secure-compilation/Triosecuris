@@ -218,51 +218,6 @@ Definition steps_to_sync_point (tp: prog) (tsc: spec_cfg) (ds: dirs) : option na
     | _ => Some 1
     end.
 
-Definition gen_pc_from_prog (p: prog) : G cptr :=
-  iblk <- choose (0, max 0 (Datatypes.length(p) - 1)) ;;
-  let blk := nth_default ([],false) p iblk in
-  off <- choose (0, max 0 (Datatypes.length(fst blk) - 1));;
-  ret (iblk, off).
-
-Definition gen_wf_ret_addr (p: prog) : G cptr :=
-  let addrs := wf_ret_addrs p in
-  match addrs with
-  | [] => ret (0, 0)
-  | d :: _ => elems_ d addrs
-  end.
-
-Fixpoint gen_call_stack_from_prog_sized n (p: prog) : G (list cptr) :=
-  match n with
-  | 0 => ret []
-  | S n' => liftM2 cons (gen_wf_ret_addr p) (gen_call_stack_from_prog_sized n' p)
-  end.
-
-(* [gen_wf_ret_addr] falls back to (0,0) when [p] has no call at all, and (0,0)
-   is not a well-formed return address, so generate an empty stack instead. *)
-Definition gen_call_stack (n: nat) (p: prog) : G (list cptr) :=
-  if seq.nilp (wf_ret_addrs p) then ret [] else gen_call_stack_from_prog_sized n p.
-
-(* Layout of the in-memory call stack, as implemented by [step]/[ideal_step]: a
-   call sets sp to (S sp) and stores its return address at that slot, so with
-   [base] the value of sp on an empty stack, a stack of depth n occupies the
-   slots base+1 .. base+n and sp = base+n. *)
-Definition stk_slots (base: nat) (n: nat) : list nat := rev (seq (S base) n).
-
-(* [stk] is given top of stack first: its head goes to the highest slot. *)
-Definition inject_stack_to_mem (stk: list cptr) (m: mem) (base: nat): mem :=
-  List.fold_left (fun acc '(i, ptr) => upd i acc (FP ptr))
-    (combine (stk_slots base (Datatypes.length stk)) stk) m.
-
-(* Build a configuration whose call stack lives in the top [stk_alloc] cells of
-   [m] (the region [gen_wt_mem] appends), keeping sp and memory consistent. The
-   slot [base] itself is left untouched, so it holds no return address and a
-   [ret] with an empty stack terminates. *)
-Definition cfg_with_stack (pc: cptr) (r: reg) (m: mem) (stk: list cptr)
-  (stk_alloc: nat) : cfg :=
-  let base := Datatypes.length m - stk_alloc in
-  let n := Datatypes.length stk in
-  (pc, "sp"%string !-> N (base + n); r, inject_stack_to_mem stk m base).
-
 Definition gen_directive_from_ideal_cfg (p: prog) (pst: list nat) (ic: ideal_cfg) : G dirs :=
   let '(c, ms) := ic in
   let '(pc, r, m) := c in
