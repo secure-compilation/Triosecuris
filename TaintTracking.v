@@ -156,42 +156,44 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
       | CMem n =>
           let te := (_calc_taint_exp e trs) in (* *)
           let te' := (_calc_taint_exp e' trs) in
+          (* YF: why don't we join the taint of "pc" and "te'" to tm[n], but just overwrite it? *)
           let tm_val := join_taints (* (join_taints te te') *) te' tpc in (* YH: te is actually need for tm_val? let's remove te and run the tests to see. *)
+          (* YF: Here -------------------|||||| *)
           let tc' := (tpc, trs, upd n tm tm_val, ts) in
           let tobs' := join_taints (join_taints te tpc) tobs in
           Some (tc', tobs')
       | _ => None
       end
   | <{ call e }> =>
+      (* sequentially does <{{ store[sp + 1] <- pc + 1; sp := 1 + sp }}> with call *)
       match tctx with
-      | CDefault =>
+      | CMem _sp =>
           let te := (_calc_taint_exp e trs) in
+          let tx := join_taints (t_apply trs "sp"%string) tpc in (* "sp" is also leaked *)
           let ts' := tpc :: ts in
           let tpc' := join_taints te tpc in
-          let tc' := (tpc', trs, tm, ts') in
-          let tobs' := join_taints tobs tpc' in
+          let tc' := (tpc', ("sp"%string !-> tx ; trs), upd _sp tm tpc, ts') in
+          let tobs' := join_taints (t_apply trs "sp") (join_taints tobs tpc') in
           Some (tc', tobs')
       | _ => None
       end
-  (* YF: TBD with Yonghyun *)
-  (*| <{ x <- peek }> =>*)
-      (*match tctx with*)
-      (*| CDefault =>*)
-          (*let tx' := hd [] ts in*)
-          (*let tc' := (tpc, (x !-> tx'; trs), tm, ts) in*)
-          (*Some (tc', tobs)*)
-      (*| _ => None*)
-      (*end*)
   | <{ ret }> =>
+      (* sequentially does <{{ pc <- load[sp]; sp := sp - 1 }}> with call *)
       match tctx with
-      | CDefault =>
-          let tpc' := hd [] ts in
+      | CMem _sp =>
+          let tv := nth _sp tm [] in
+          let tsp := t_apply trs "sp"%string in
+          let tpc' := join_taints tv (hd [] ts) in
+          let tx := join_taints tsp tpc in
           let ts' := tl ts in
-          let tc' := (tpc', trs, tm, ts') in
-          Some (tc', tobs)
+          let tc' := (tpc', ("sp"%string !-> tx ; trs), tm, ts') in
+          (* [ORet pc' sp] leaks both the return address and the stack pointer *)
+          let tobs' := join_taints (join_taints tv tsp) (join_taints tobs tpc) in
+          Some (tc', tobs')
       | _ => None
       end
   end.
+
 
 Definition get_ctx (rs: ST.reg) (i: inst) : option taint_ctx  :=
   match i with
@@ -199,9 +201,14 @@ Definition get_ctx (rs: ST.reg) (i: inst) : option taint_ctx  :=
                         Some (CMem n)
   | <{ store[e] <- e' }> => n <- to_nat (ST.eval rs e);;
                           Some (CMem n)
+  (* We read at sp when calling *)
+  | <{ ret }> => n <- to_nat (t_apply rs "sp"%string);;
+                          Some (CMem n)
+  (* We write at sp + 1 when calling *)
+  | <{ call e }> => n <- to_nat (t_apply rs "sp"%string);;
+                          Some (CMem (S n))
   | _ => Some CDefault
   end.
-
 
 (* The call stack is in memory: a [ret] is final when the slot "sp" points at
    holds no return address (see [MiniCET.ret_addr]). *)
