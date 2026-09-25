@@ -187,7 +187,7 @@ Definition spec_steps_acc (f : nat) (p:prog) (sc:spec_cfg) (ds: dirs) : spec_exe
   _spec_steps_acc f p sc [] ds.
 
 Definition load_store_trans_basic_blk := (
-    forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+    forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
       List.forallb basic_block_checker (map fst (transform_load_store_prog c tm p)))
 ).
 
@@ -202,7 +202,7 @@ Definition stuck_free (f : nat) (p : prog) (c: cfg) : exec_result :=
   steps_taint_track f p ist [].
 
 Definition load_store_trans_stuck_free := (
-  forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 1000) (fun m =>
   let p' := transform_load_store_prog c tm p in
@@ -227,7 +227,7 @@ Definition no_obs_prog_no_obs := (
   )).
 
 Definition gen_prog_and_unused_var : G (rctx * tmem * list nat * prog * string) :=
-  '(c, tm, pst, p) <- (gen_prog_wt_with_basic_blk 3 5);;
+  '(c, tm, pst, p) <- (gen_prog_ty_ctx_wt 3 5);;
   let used_vars := remove_dupes String.eqb (vars_prog p) in
   let unused_vars := filter (fun v => negb (existsb (String.eqb v) used_vars)) all_possible_vars in
   if seq.nilp unused_vars then
@@ -273,7 +273,7 @@ Definition gen_pub_equiv_is_pub_equiv := (forAll gen_pub_vars (fun P =>
   )))).
 
 Definition gen_reg_wt_is_wt := (
-  forAll (gen_prog_ty_ctx_wt' max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs => rs_wtb rs c))).
 
 Definition gen_pub_mem_equiv_is_pub_equiv := (forAll gen_pub_mem (fun P =>
@@ -283,11 +283,11 @@ Definition gen_pub_mem_equiv_is_pub_equiv := (forAll gen_pub_mem (fun P =>
     )))).
 
 Definition gen_mem_wt_is_wt := (
-  forAll (gen_prog_ty_ctx_wt' max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_wt_mem tm pst 100) (fun m => m_wtb m tm))).
 
 Definition test_ni (transform : rctx -> tmem -> prog -> prog) := (
-  forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 100) (fun m =>
   let icfg := (ipc, "sp" !-> N (Datatypes.length m - 100); rs, m) in
@@ -311,7 +311,7 @@ Definition test_ni (transform : rctx -> tmem -> prog -> prog) := (
 Definition test_safety_preservation `{Show dir}
   (harden : prog -> prog)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
-  forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 200) (fun m =>
   let rs := "sp" !-> N (Datatypes.length m - 200); rs in
@@ -333,7 +333,7 @@ Definition test_safety_preservation `{Show dir}
 Definition test_relative_security `{Show dir}
   (harden : prog -> prog)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
-  forAll (gen_prog_wt_with_basic_blk max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst 1000) (fun m1 =>
   let rs1 := "sp" !-> N (Datatypes.length m1 - 1000); rs1 in

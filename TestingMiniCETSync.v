@@ -48,7 +48,7 @@ Instance ShowDirection : Show dir := {
 }.
 
 (* Size of the stack region [gen_wt_mem] appends after the typed memory. *)
-Definition stk_alloc := 10.
+Definition stk_alloc := 1000.
 
 (* The return address of the current frame, or None at the bottom of the stack.
    Same test the semantics uses to decide that a [ret] terminates. *)
@@ -375,7 +375,7 @@ Instance showCfg : Show cfg := {
 
 Definition single_step_cc := (
   let stk_size := 3 in
-  forAll (gen_prog_wt_with_basic_blk 3 8) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
   let p := transform_load_store_prog c tm p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
@@ -435,7 +435,7 @@ Definition single_step_cc := (
 QuickChick single_step_cc.
 
 Definition single_step_sf := (
-  forAll (gen_prog_wt_with_basic_blk 3 8) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
   let p' := transform_load_store_prog c tm p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
@@ -448,7 +448,7 @@ Definition single_step_sf := (
   end)))))).
 
 Definition single_step_ideal_sf := (
-  forAll (gen_prog_wt_with_basic_blk 3 8) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
   let p' := transform_load_store_prog c tm p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
@@ -466,7 +466,7 @@ Definition single_step_ideal_sf := (
 
 
 Definition single_step := (
-  forAll (gen_prog_wt_with_basic_blk 3 8) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
   let p := transform_load_store_prog c tm p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_reg_wt c pst) (fun rs2 =>
@@ -506,7 +506,7 @@ QuickChick single_step.
 
 
 Definition single_step_seq_ideal := (
-  forAll (gen_prog_wt_with_basic_blk 3 8) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
   forAll (gen_pc_from_prog p) (fun pc =>
@@ -543,7 +543,7 @@ QuickChick single_step_seq_ideal.
 
 
 Definition single_step_trigger := (
-  forAll (gen_prog_wt_with_basic_blk 3 8) (fun '(c, tm, pst, p) =>
+  forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
   forAll (gen_pc_from_prog p) (fun pc =>

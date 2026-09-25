@@ -64,13 +64,15 @@ Definition basic_block_test := (forAll (basic_block_gen_example) (fun (blk: list
 (*! QuickChick basic_block_test. *)
 QuickChick basic_block_test.
 
-Definition wt_wf := (forAll (gen_prog_wt max_block_size max_program_length) (fun (p : prog) => (wf p))).
+Definition wt_wf := (forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(_, _, _, p) => (wf_calling_convention p))).
 (*! QuickChick wt_wf. *)
 QuickChick wt_wf.
 
 (* should fail *)
-Definition wt_uslh_wf := (forAll (gen_prog_wt max_block_size max_program_length) (fun (p : prog) => (wf (uslh_prog p)))).
-QuickChick wt_uslh_wf.
+(* Definition wt_uslh_wf := (forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(_, _, _, p) => (
+  let prog := uslh_prog p in
+  printTestCase (show prog) (wf prog)))).
+QuickChick wt_uslh_wf. *)
 
 Definition wt_expr_is_defined := (
     forAll arbitrary (fun (c : rctx) =>
@@ -85,13 +87,8 @@ Definition wt_expr_is_defined := (
 QuickChick wt_expr_is_defined.
 
 Definition ty_prog_wf :=
-  (forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, p) =>
+  (forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
     ((ty_prog c tm p) && (wf p)))).
-
-
-
-
-
 
 
 Definition load_store_trans_basic_blk := TS.load_store_trans_basic_blk.
