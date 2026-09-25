@@ -673,6 +673,7 @@ Eval compute in (compose_load_store_guard TNum <{ AId "X0"%string }> [TNum ; TPt
 
 Definition transform_load_store_inst (c : rctx) (mem : tmem) (acc : list inst) (i : inst) : M (bool * list inst) :=
   match i with
+  | <{{ store[($sp + 1)] <- $fp }}> | <{{ fp <- load[($sp + 1)] }}> => ret (false, [i])
   | <{{ x <- load[e] }}> =>
       let t := t_apply c x in
       merge <- add_block_M acc;;
