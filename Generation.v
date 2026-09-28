@@ -468,7 +468,7 @@ Definition gen_frame_slot (frame_sz: nat) : G exp :=
                     (seq 2 (frame_locals frame_sz)) in
   (* The default is unreachable while ARG_SLOTS > 0, and is a typed-memory
      address rather than a frame slot so that it cannot name fp+0 or fp+1. *)
-  elems_ (ANum 0) (incoming ++ locals).
+  elems_ (ANum 0) ((* incoming ++ *) locals).
 
 (* Caller-side view shift.  [call] moves sp to [S sp] and the callee's prologue
    points fp there, so the callee's fp is this procedure's sp plus one: the slot
