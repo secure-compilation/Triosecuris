@@ -245,9 +245,11 @@ Fixpoint eval (st : reg) (e: exp) : val :=
                       is_true (wf_retb p pc'');;
                       let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
                       (*! *)
-                      ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), false, ms'), tl ds), [ORet pc'' n])
+                      ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), false, ms'), tl ds), [ORet pc' n])
                       (*!! spec-ret-no-sp-restore *)
                       (*! ret ((S_Running ((pc'', r, m), false, ms'), tl ds), []) *)
+                      (*!! spec-ret-observes-directive *)
+                      (*! ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), false, ms'), tl ds), [ORet pc'' n]) *)
                   with
                   | None => untrace "ret fail" (S_Undef, ds, [])
                   | Some (c, ds, os) => (c, ds, os)
@@ -412,10 +414,13 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                       pc'' <- is_dret d;;
                       MiniCET.is_true (wf_retb p pc'');;
                       let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
+                      (* the architectural target, as in [spec_step] *)
                       (*! *)
-                      ret ((S_Running ((pc'', "sp" !-> N (n - 1); r, m), ms'), tl ds), [ORet pc'' n])
+                      ret ((S_Running ((pc'', "sp" !-> N (n - 1); r, m), ms'), tl ds), [ORet pc' n])
                       (*!! ideal-ret-no-sp-restore *)
                       (*! ret ((S_Running ((pc'', r, m), ms'), tl ds), []) *)
+                      (*!! ideal-ret-observes-directive *)
+                      (*! ret ((S_Running ((pc'', "sp" !-> N (n - 1); r, m), ms'), tl ds), [ORet pc'' n]) *)
                   with
                   | None => untrace ("ideal ret failed. PC: " ++ show pc ++ "; PROGRAM: " ++ show p ++ nl) (S_Undef, ds, [])
                   | Some (c, ds, os) => (c, ds, os)
