@@ -28,8 +28,8 @@ From SECF Require Import
 From SECF Require Export Generation Printing Shrinking.
 
 
-Definition max_block_size := 3.
-Definition max_program_length := 8.
+Definition max_block_size := 8.
+Definition max_program_length := 5.
 
 Module MCC := MiniCETCommon ListTotalMap.
 
@@ -136,8 +136,10 @@ Variant spec_exec_result : Type :=
   {show :=fun ser =>
       match ser with
       | SETerm sc os ds => show ds
-      | SEError _ _ ds => ("Error!"%string ++ nl ++ show ds ++ nl)%string
-      | SEOutOfFuel _ _ ds => ("Out-of-fuel!"%string ++ nl ++ show ds ++ nl)%string
+      | SEError cfg _ ds =>
+          let '((pc, rs, mem), _, _) := cfg in
+          ("Speculative execution error! "%string ++ nl ++ "Directions: " ++ show ds ++ nl ++ "sp value: " ++ show (t_apply rs "sp"%string) ++ nl ++ "memory length: " ++ show (Datatypes.length mem) ++ nl ++ "memory: " ++ show mem ++ nl)%string
+      | SEOutOfFuel _ _ ds => ("Out-of-fuel! "%string ++ nl ++ show ds ++ nl)%string
       end
   }.
 
@@ -211,7 +213,9 @@ Definition load_store_trans_stuck_free := (
   match r1 with
   | ETerm st os => checker true
   | EOutOfFuel st os => checker tt
-  | EError st os => printTestCase (show p' ++ nl) (checker false)
+  | EError st os => 
+      let '((pc, rs, mem), _, _) := st in
+      printTestCase ("Sequential execution error! sp value: " ++ show (t_apply rs "sp"%string) ++ "; memory length: " ++ show (Datatypes.length mem) ++ nl)%string (checker false)
   end)))).
 
 Definition no_obs_prog_no_obs := (
@@ -249,7 +253,7 @@ Definition unused_var_no_leak `{Show input_st}
       let leaked_vars := remove_dupes String.eqb ids in
       checker (negb (existsb (String.eqb unused_var) leaked_vars))
   | EOutOfFuel st os => checker tt
-  | EError st os => printTestCase (show st) (checker false)
+  | EError st os => printTestCase "Sequential execution error!" (checker false)
   end)))).
 
 Definition gen_pub_equiv_same_ty (P : total_map label) (s: total_map val) : G (total_map val) :=
@@ -325,7 +329,7 @@ Definition test_safety_preservation `{Show dir}
   forAll (gen_spec_steps_sized 200 harden h_pst iscfg gen_dbr gen_dcall gen_dret) (fun ods =>
   (match ods with
    | SETerm sc os ds => checker true
-   | SEError (c', _, _) _ ds => checker false
+   | SEError c' _ ds => checker false
    | SEOutOfFuel _ _ ds => checker tt
    end))
   )))).

@@ -583,7 +583,7 @@ Definition cfg_with_stack (pc: cptr) (r: reg) (m: mem) (stk: list cptr)
 
 Definition gen_exp_ty_wt (t: ty) (sz: nat) (c: rctx) (pst: list nat) (frame_size: nat) : G exp :=
   match t with
-  | TNum => freq [ (1, gen_exp_no_ptr_wt sz c pst); (1, gen_frame_slot frame_size) ]
+  | TNum => gen_exp_no_ptr_wt sz c pst
   | TPtr => gen_exp_ptr_wt sz c pst
   end.
 
@@ -638,8 +638,8 @@ Notation " 'elems' ( h ;;; tl )" := (elems_ h (cons h tl))
 Definition gen_load_wt (t: ty) (c: rctx) (tm: tmem) (pst: list nat) (frame_size: nat) : G inst :=
   let vars := filter_typed t (snd c) in
   sz <- choose(1, 3);;
-  (* exp <- oneOf ( gen_exp_ty_wt TNum sz c pst frame_size ;;; [gen_frame_slot frame_size] ) ;; *)
-  exp <- gen_exp_ty_wt TNum sz c pst frame_size ;;
+  exp <- oneOf ( gen_exp_ty_wt TNum sz c pst frame_size ;;; [gen_frame_slot frame_size] ) ;;
+  (* exp <- gen_exp_ty_wt TNum sz c pst frame_size ;; *)
   match vars with
   | h :: tl =>
     x <- elems ( h ;;; tl);;
@@ -651,8 +651,8 @@ Definition gen_store_wt (c: rctx) (tm: tmem) (pst: list nat) (frame_size: nat) :
   match tm with
   | h :: tl =>
     t <- elems (h ;;; tl);;
-    (* e1 <- oneOf ( gen_exp_ty_wt TNum 1 c pst frame_size ;;; [gen_frame_slot frame_size] );; *)
-    e1 <- gen_exp_ty_wt TNum 1 c pst frame_size ;;
+    e1 <- oneOf ( gen_exp_ty_wt TNum 1 c pst frame_size ;;; [gen_frame_slot frame_size] );;
+    (* e1 <- gen_exp_ty_wt TNum 1 c pst frame_size ;; *)
     e2 <- gen_exp_ty_wt t 1 c pst frame_size ;;
     ret <{ store[e1] <- e2 }>
   | _ => ret <{ skip }>

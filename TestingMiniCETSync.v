@@ -134,6 +134,27 @@ Definition r_sync (p: prog) (r: reg) (ms: bool) : option reg :=
   l' <- map_opt (fun '(x, v) => v' <- val_sync p v;; Some (x, v')) l;;
   ret (msf !-> N (if ms then 1 else 0); (d', l')).
 
+(* What the hardened program emits for one ideal observation.  All of them
+   correspond one-for-one, except [ret]: uSLH expands it into
+   [callee <- load[sp]; ret], and that load is left unmasked, so it reads
+   exactly the slot the ideal [ret] read and shows up as [OLoad sp] before the
+   transfer.  The target is the hardened return address, i.e. the msf check of
+   the call's expansion. *)
+Definition ob_sync (p: prog) (o: observation) : option obs :=
+  match o with
+  | ORet l n => l' <- ret_sync p l;; Some [OLoad n; ORet l' n]
+  | o => Some [o]
+  end.
+
+Definition obs_sync (p: prog) (os: obs) : option obs :=
+  oss <- map_opt (ob_sync p) os;; Some (List.concat oss).
+
+Definition obs_eqb_sync (p: prog) (oideal ospec: obs) : bool :=
+  match obs_sync p oideal with
+  | Some o => obs_eqb o ospec
+  | None => false
+  end.
+
 Definition spec_cfg_sync (p: prog) (ic: ideal_cfg): option spec_cfg :=
   let '(c, ms) := ic in
   let '(pc, r, m) := c in
@@ -397,7 +418,7 @@ Definition single_step_cc := (
       | (S_Fault, _, oideal) =>
           match (steps_to_sync_point (uslh_prog p) tcfg tds) with
           | None => match spec_steps 4 (uslh_prog p) (S_Running tcfg) tds with
-                    | (S_Fault, _, ospec) =>   (checker (obs_eqb oideal ospec))
+                    | (S_Fault, _, ospec) =>   (checker (obs_eqb_sync p oideal ospec))
                     | _ => trace "spec exec didn't fail"%string (checker false)
                     end
           | Some n => collect ("ideal step failed for "%string ++ show (p[[pc]]) ++ " but steps_to_sync_point was Some"%string)%string (checker tt)
@@ -406,7 +427,7 @@ Definition single_step_cc := (
           match (steps_to_sync_point (uslh_prog p) tcfg tds) with
           (* [callee <- load[sp]] and then the [ret] that terminates *)
           | None => match spec_steps 2 (uslh_prog p) (S_Running tcfg) tds with
-                    | (S_Term, _, ospec) =>   (checker (obs_eqb oideal ospec))
+                    | (S_Term, _, ospec) =>   (checker (obs_eqb_sync p oideal ospec))
                     | _ => trace "spec exec didn't terminate"%string (checker false)
                     end
           | Some n => collect ("ideal step failed for "%string ++ show (p[[pc]]) ++ " but steps_to_sync_point was Some"%string)%string (checker tt)
@@ -418,7 +439,7 @@ Definition single_step_cc := (
                       | (S_Running tcfg', _, ospec) => match (spec_cfg_sync p icfg') with
                                               | None => collect "sync fails "%string (checker tt)
                                               | Some tcfgref => match (spec_cfg_eqb_up_to_callee tcfg' tcfgref) with
-                                                                | true =>   (checker (obs_eqb oideal ospec))
+                                                                | true =>   (checker (obs_eqb_sync p oideal ospec))
                                                                 | false =>   (checker false)
                                                                 end
                                               end
