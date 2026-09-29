@@ -367,9 +367,12 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
             | <{{x<-load[e]}}> =>
               match
                 (*! *)
-                let i := if ms then (ANum 0) else e in
+                (* Don't mask loads from unmasked addresses (in particular, from stack) *)
+                let i := if ms && negb (unmasked_addr e) then (ANum 0) else e in
                 (*!! ideal-load-no-mask *)
                 (*! let i := e in *)
+                (*!! ideal-load-masks-spill-slot *)
+                (*! let i := if ms then (ANum 0) else e in *)
                 n <- to_nat (eval r i);;
                 v' <- nth_error m n;;
                 let c := (pc+1, (x !-> v'; r), m) in
@@ -380,10 +383,13 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
               end
             | <{{store[e]<-e'}}> =>
               match
+                (* same exception as the load above *)
                 (*! *)
-                let i := if ms then (ANum 0) else e in
+                let i := if ms && negb (unmasked_addr e) then (ANum 0) else e in
                 (*!! ideal-store-no-mask *)
                 (*! let i := e in *)
+                (*!! ideal-store-masks-spill-slot *)
+                (*! let i := if ms then (ANum 0) else e in *)
                 n <- to_nat (eval r i);;
                 let c:= (pc+1, r, upd n m (eval r e')) in
                 ret (S_Running (c, ms), ds, [OStore n])
