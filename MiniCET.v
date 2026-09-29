@@ -504,6 +504,15 @@ Proof.
     eapply IHl in X'. rewrite X'. clarify.
 Qed.
 
+(* Addresses [uslh_inst] leaves unmasked: the slot the calling convention
+   spills the caller's fp into.  The ideal semantics has to make the same
+   exception, or the two disagree about what a speculative access reads. *)
+Definition unmasked_addr (e: exp) : bool :=
+  match e with
+  | <{ $sp + 1 }> => true
+  | _ => false
+  end.
+
 Definition uslh_inst (i: inst) (l: nat) (o: nat) : M (list inst) :=
   match i with
   | <{{ctarget}}> => ret [<{{skip}}>]
@@ -511,14 +520,14 @@ Definition uslh_inst (i: inst) (l: nat) (o: nat) : M (list inst) :=
       let e1' := <{ (msf=1) ? 0 : e1 }> in
       let e2' := <{ (msf=1) ? 0 : e2}> in (*JB: Is masking to 0 fine here? *)
       ret [<{{x<-div e1', e2'}}>]
-  (* Don't mask reads from sp *)
-  | <{{x <- load[$sp + 1]}}> => ret [<{{x <- load[$sp + 1]}}>]
   | <{{x<-load[e]}}> =>
+      (* Don't mask reads from sp *)
+      if unmasked_addr e then ret [<{{x<-load[e]}}>] else
       let e' := <{ (msf=1) ? 0 : e }> in
       ret [<{{x<-load[e']}}>]
-  (* Don't mask writes to sp *)
-  | <{{store[$sp + 1] <- x}}> => ret [<{{store[$sp + 1] <- x}}>]
   | <{{store[e] <- e1}}> =>
+      (* Don't mask writes to sp *)
+      if unmasked_addr e then ret [<{{store[e] <- e1}}>] else
       let e' := <{ (msf=1) ? 0 : e }> in
       ret [<{{store[e'] <- e1}}>]
   | <{{branch e to l}}> =>
