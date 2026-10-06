@@ -397,7 +397,7 @@ Instance showCfg : Show cfg := {
 Definition single_step_cc := (
   let stk_size := 3 in
   forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
-  let p := transform_load_store_prog c tm p in
+  let p := transform_load_store_prog c tm stk_alloc p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
   forAll (gen_pc_from_prog p) (fun pc =>
@@ -457,7 +457,7 @@ QuickChick single_step_cc.
 
 Definition single_step_sf := (
   forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
-  let p' := transform_load_store_prog c tm p in
+  let p' := transform_load_store_prog c tm stk_alloc p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
   forAll (gen_pc_from_prog p') (fun pc =>
@@ -470,7 +470,7 @@ Definition single_step_sf := (
 
 Definition single_step_ideal_sf := (
   forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
-  let p' := transform_load_store_prog c tm p in
+  let p' := transform_load_store_prog c tm stk_alloc p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
   forAll (gen_pc_from_prog p') (fun pc =>
@@ -488,7 +488,7 @@ Definition single_step_ideal_sf := (
 
 Definition single_step := (
   forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
-  let p := transform_load_store_prog c tm p in
+  let p := transform_load_store_prog c tm stk_alloc p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_reg_wt c pst) (fun rs2 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>

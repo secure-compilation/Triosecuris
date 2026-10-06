@@ -190,7 +190,7 @@ Definition spec_steps_acc (f : nat) (p:prog) (sc:spec_cfg) (ds: dirs) : spec_exe
 
 Definition load_store_trans_basic_blk := (
     forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
-      List.forallb basic_block_checker (map fst (transform_load_store_prog c tm p)))
+      List.forallb basic_block_checker (map fst (transform_load_store_prog c tm 1000 p)))
 ).
 
 Definition stuck_free (f : nat) (p : prog) (c: cfg) : exec_result :=
@@ -203,19 +203,37 @@ Definition stuck_free (f : nat) (p : prog) (c: cfg) : exec_result :=
   let ist := (c, tc, []) in
   steps_taint_track f p ist [].
 
+Definition is_stack_overflow (rs: reg) (m: mem) := match t_apply rs "sp"%string with
+  | N n => (S n >= Datatypes.length m)?
+  | _ => false
+  end.
+
+Definition is_sp_fp_uv (rs: reg) := match t_apply rs "sp"%string, t_apply rs "fp"%string with
+  | UV, _ => true
+  | _, UV => true
+  | _, _  => false
+  end.
+
 Definition load_store_trans_stuck_free := (
   forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
-  forAll (gen_wt_mem tm pst 1000) (fun m =>
-  let p' := transform_load_store_prog c tm p in
-  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 1000); rs, m) in
+  let stk_alloc := 100 in
+  forAll (gen_wt_mem tm pst stk_alloc) (fun m =>
+  let p' := transform_load_store_prog c tm stk_alloc p in
+  let icfg := (ipc, "sp" !-> N (Datatypes.length m - stk_alloc); rs, m) in
   let r1 := stuck_free 1000 p' icfg in
   match r1 with
   | ETerm st os => checker true
-  | EOutOfFuel st os => checker tt
+  | EOutOfFuel st os => collect "Out-of-fuel"%string (checker tt)
   | EError st os => 
       let '((pc, rs, mem), _, _) := st in
-      printTestCase ("Sequential execution error! sp value: " ++ show (t_apply rs "sp"%string) ++ "; memory length: " ++ show (Datatypes.length mem) ++ nl)%string (checker false)
+      if is_stack_overflow rs mem then collect "Stack overflow"%string (checker tt) else (
+        if is_sp_fp_uv rs then collect "Stack pointer undefined"%string (checker tt) else 
+          match fetch p pc with
+          | Some <{ call _ }> => collect "Undef call"%string (checker tt)
+          | Some <{ ret }>    => collect "Undef ret"%string (checker tt)
+          | _ => printTestCase (show rs ++ nl ++ show mem ++ nl) (checker false)
+          end)
   end)))).
 
 Definition no_obs_prog_no_obs := (
@@ -241,19 +259,22 @@ Definition gen_prog_and_unused_var : G (rctx * tmem * list nat * prog * string) 
     ret (c, tm, pst, p, x).
 
 Definition unused_var_no_leak `{Show input_st}
-  (transform_prog : rctx -> tmem -> prog -> prog) := (
+  (transform_prog : rctx -> tmem -> nat -> prog -> prog) := (
+  let stk_alloc := 105 in
   forAll gen_prog_and_unused_var (fun '(c, tm, pst, p, unused_var) =>
   forAll (gen_reg_wt c pst) (fun rs =>
-  forAll (gen_wt_mem tm pst 105) (fun m =>
-  let icfg := (ipc, "sp" !-> N (Datatypes.length m - 100); rs, m) in
-  let p' := transform_prog c tm p in
+  forAll (gen_wt_mem tm pst stk_alloc) (fun m =>
+  let icfg := (ipc, "sp" !-> N (Datatypes.length m - stk_alloc); rs, m) in
+  let p' := transform_prog c tm stk_alloc p in
   match stuck_free 100 p' icfg with
   | ETerm (_, _, tobs) os =>
       let (ids, mems) := split_sum_list tobs in
       let leaked_vars := remove_dupes String.eqb ids in
-      checker (negb (existsb (String.eqb unused_var) leaked_vars))
+      printTestCase "Actually wrong" (checker (negb (existsb (String.eqb unused_var) leaked_vars)))
   | EOutOfFuel st os => checker tt
-  | EError st os => printTestCase "Sequential execution error!" (checker false)
+  | EError st os => 
+      let '((_, rs, mem), _, _) := st in
+      if is_stack_overflow rs mem then collect "Stack overflow"%string (checker tt) else checker false
   end)))).
 
 Definition gen_pub_equiv_same_ty (P : total_map label) (s: total_map val) : G (total_map val) :=
@@ -290,12 +311,12 @@ Definition gen_mem_wt_is_wt := (
   forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_wt_mem tm pst 100) (fun m => m_wtb m tm))).
 
-Definition test_ni (transform : rctx -> tmem -> prog -> prog) := (
+Definition test_ni (transform : rctx -> tmem -> nat -> prog -> prog) := (
   forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 100) (fun m =>
   let icfg := (ipc, "sp" !-> N (Datatypes.length m - 100); rs, m) in
-  let p' := transform c tm p in
+  let p' := transform c tm 100 p in
   let r1 := taint_tracking 100 p' icfg in
   match r1 with
   | Some (os1', tvars, tms) =>
@@ -320,7 +341,7 @@ Definition test_safety_preservation `{Show dir}
   forAll (gen_wt_mem tm pst 200) (fun m =>
   let rs := "sp" !-> N (Datatypes.length m - 200); rs in
   let icfg := (ipc, rs, m) in
-  let p' := transform_load_store_prog c tm p in
+  let p' := transform_load_store_prog c tm 200 p in
   let harden := harden p' in
   let rs' := spec_rs rs in
   let icfg' := (ipc, rs', m) in
@@ -329,7 +350,9 @@ Definition test_safety_preservation `{Show dir}
   forAll (gen_spec_steps_sized 200 harden h_pst iscfg gen_dbr gen_dcall gen_dret) (fun ods =>
   (match ods with
    | SETerm sc os ds => checker true
-   | SEError c' _ ds => checker false
+   | SEError c' _ ds => 
+      let '((_, rs, mem), _, _) := c' in
+      if is_stack_overflow rs mem then collect "Stack overflow"%string  (checker tt) else printTestCase ("Memory:" ++ nl ++ show mem ++ nl ++ "Prog:" ++ nl ++ show p' ++ nl) (checker false)
    | SEOutOfFuel _ _ ds => checker tt
    end))
   )))).
@@ -342,7 +365,7 @@ Definition test_relative_security `{Show dir}
   forAll (gen_wt_mem tm pst 1000) (fun m1 =>
   let rs1 := "sp" !-> N (Datatypes.length m1 - 1000); rs1 in
   let icfg1 := (ipc, rs1, m1) in
-  let p' := transform_load_store_prog c tm p in
+  let p' := transform_load_store_prog c tm 1000 p in
   let r1 := taint_tracking 1000 p' icfg1 in
   match r1 with
   | Some (os1', tvars, tms) =>

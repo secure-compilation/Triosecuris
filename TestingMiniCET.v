@@ -132,7 +132,7 @@ Qed.
 
 
 Definition unused_var_no_leak_transform_load_store :=
-  unused_var_no_leak (fun c tm p => transform_load_store_prog c tm p).
+  unused_var_no_leak (fun c tm stk_alloc p => transform_load_store_prog c tm stk_alloc p).
 
 (*! QuickChick unused_var_no_leak_transform_load_store. *)
 QuickChick unused_var_no_leak_transform_load_store.
@@ -171,7 +171,7 @@ QuickChick gen_mem_wt_is_wt.
 
 
 Definition test_ni_transform_load_store :=
-  test_ni (fun c tm p => transform_load_store_prog c tm p).
+  test_ni (fun c tm stk_alloc p => transform_load_store_prog c tm stk_alloc p).
 (*! QuickChick test_ni_transform_load_store. *)
 QuickChick test_ni_transform_load_store.
 

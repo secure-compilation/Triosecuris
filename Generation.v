@@ -447,6 +447,7 @@ Definition ARG_SLOTS := 3.
    literal [+ 1] and would read this as [inc ARG_SLOTS]. *)
 Definition MIN_STACK_FRAME_SIZE := S ARG_SLOTS.
 Definition MAX_STACK_FRAME_SIZE := ARG_SLOTS + 8.
+Definition STATIC_FRAME_SIZE := 16.
 
 (* Number of local/temporary slots in a frame of size [frame_sz], i.e. the slots
    fp+2 .. fp+frame_sz-ARG_SLOTS. *)
@@ -658,35 +659,55 @@ Definition gen_store_wt (c: rctx) (tm: tmem) (pst: list nat) (frame_size: nat) :
   | _ => ret <{ skip }>
   end.
 
-Definition compose_load_store_guard (t : ty) (id_exp : exp) (mem : tmem) : exp :=
+Fixpoint seq_step (start count step: nat) : list nat :=
+  match count with
+  | O => []
+  | S c' => start :: seq_step (start + step) c' step
+  end.
+
+Definition seq_step_from_until (from until step: nat) : list nat :=
+  seq_step from (S ((until - from) / step)) step.
+
+(* Eval compute in (seq_step 0 (S (100 / (S STATIC_FRAME_SIZE))) (S STATIC_FRAME_SIZE)). *)
+
+Definition compose_load_store_guard (t : ty) (id_exp : exp) (mem : tmem) (stk_size: nat) : exp :=
   let indices := seq 0 (Datatypes.length mem) in
   let idx := filter_typed t (combine indices mem) in
   let tc := fold_left
             (fun acc x => BOr x acc)
             (map (fun id => <{{ id_exp = ANum id }}>) idx)
             <{{ false }}> in
-  let mem_sz := ANum (Datatypes.length mem) in
+  let return_address_stack_indices := seq_step_from_until (Datatypes.length mem + S STATIC_FRAME_SIZE) (Datatypes.length mem + stk_size) (S STATIC_FRAME_SIZE) in
+  let tstack := fold_left
+            (fun acc x => BOr x acc)
+            (map (fun id => <{{ id_exp = ANum id }}>) return_address_stack_indices) 
+            <{{ false }}> in
+  let mem_sz := ANum (stk_size + Datatypes.length mem) in
   let guardc := BLt id_exp mem_sz in
-  BAnd tc guardc.
-Eval compute in (compose_load_store_guard TNum <{ AId "X0"%string }> [TNum ; TPtr; TNum ]).
+  (* If the register is typed as a pointer, we can also load and store to the stack return addresses *)
+  match t with
+  | TPtr => BAnd (BOr tc tstack) guardc
+  | TNum => BAnd tc guardc
+  end.
+(* Eval compute in (compose_load_store_guard TNum <{ AId "X0"%string }> [TNum ; TPtr; TNum] 10). *)
 
-Definition transform_load_store_inst (c : rctx) (mem : tmem) (acc : list inst) (i : inst) : M (bool * list inst) :=
+Definition transform_load_store_inst (c : rctx) (mem : tmem) (acc : list inst) (i : inst) (stk_size: nat) : M (bool * list inst) :=
   match i with
   | <{{ store[($sp + 1)] <- $fp }}> | <{{ fp <- load[($sp + 1)] }}> => ret (false, [i])
   | <{{ x <- load[e] }}> =>
       let t := t_apply c x in
       merge <- add_block_M acc;;
       new <- add_block_M <{{ i[ x <- load[e]; jump merge] }}>;;
-      ret (true, <{{ i[branch (compose_load_store_guard t e mem) to new; jump merge] }}>)
+      ret (true, <{{ i[branch (compose_load_store_guard t e mem stk_size) to new; jump merge] }}>)
   | <{{ store[e] <- e1 }}> =>
       merge <- add_block_M acc;;
       new <- add_block_M <{{ i[store[e] <- e1; jump merge] }}>;;
-      ret (true, <{{ i[branch (compose_load_store_guard (ty_of_exp c e1) e mem) to new; jump merge] }}>)
+      ret (true, <{{ i[branch (compose_load_store_guard (ty_of_exp c e1) e mem stk_size) to new; jump merge] }}>)
   | _ => ret (false, [i])
   end.
 
-Definition split_and_merge (c : rctx) (mem : tmem) (i : inst) (acc : list inst) : M (list inst) :=
-  tr <- transform_load_store_inst c mem acc i;;
+Definition split_and_merge (c : rctx) (mem : tmem) (stk_size: nat) (i : inst) (acc : list inst)  : M (list inst) :=
+  tr <- transform_load_store_inst c mem acc i stk_size;;
   let '(is_split, new_insts) := tr in
 
 
@@ -697,13 +718,13 @@ Definition split_and_merge (c : rctx) (mem : tmem) (i : inst) (acc : list inst) 
 
     ret (new_insts ++ acc).
 
-Definition transform_load_store_blk (c : rctx) (mem : tmem) (nblk : list inst * bool): M (list inst * bool) :=
+Definition transform_load_store_blk (c : rctx) (mem : tmem) (stk_size: nat) (nblk : list inst * bool) : M (list inst * bool) :=
   let (bl, is_proc) := nblk in
-  folded <- fold_rightM (split_and_merge c mem) bl <{{ i[ ret ] }}>;;
+  folded <- fold_rightM (split_and_merge c mem stk_size) bl <{{ i[ ret ] }}>;;
   ret (folded, is_proc).
 
-Definition transform_load_store_prog (c : rctx) (mem : tmem) (p : prog) :=
-  let '(p', newp) := mapM (transform_load_store_blk c mem) p (Datatypes.length p) in
+Definition transform_load_store_prog (c : rctx) (mem : tmem) (stk_size: nat) (p : prog) :=
+  let '(p', newp) := mapM (transform_load_store_blk c mem stk_size) p (Datatypes.length p) in
   (p' ++ newp).
 
 Definition gen_call_wt (c: rctx) (pst: list nat) : G inst :=
@@ -798,7 +819,8 @@ Definition gen_proc_with_term_wt (c: rctx) (tm: tmem) (fsz bsz: nat) (pst: list 
   | S fsz' => n <- choose (1, max 1 bsz);;
               (* Below MIN_STACK_FRAME_SIZE the outgoing-argument area would run
                  into the slot holding the spilled caller fp. *)
-              frame_size <- choose (MIN_STACK_FRAME_SIZE, MAX_STACK_FRAME_SIZE) ;;
+              (* frame_size <- choose (MIN_STACK_FRAME_SIZE, MAX_STACK_FRAME_SIZE) ;; *)
+              frame_size <- ret STATIC_FRAME_SIZE ;;
               blk <- gen_blk_with_term_wt c tm n pst jlst frame_size ;;
               rest <- _gen_proc_with_term_wt c tm fsz' bsz pst jlst frame_size ;;
               let blk := proc_prologue frame_size ++ blk in
@@ -960,6 +982,13 @@ Definition vars_prog (p: prog) : list string :=
 Definition label_of_exp (P:pub_vars) (e:exp) : label :=
   List.fold_left (fun l a => join l (P ! a)) (vars_exp e) public.
 
+Definition genMinListSized {A : Type} (min_len : nat) (g : G A) : G (list A) :=
+  sized (fun sz =>
+    (* Ensure the upper bound is at least as large as min_len *)
+    len <- choose (min_len, Nat.max min_len sz) ;;
+    vectorOf len g
+  ).
+
 (* [pst] partitions [pl] blocks between procedures, but each procedure also gets
    an epilogue block, so the program that comes out has [map S pst] blocks per
    procedure and [pl + length pst] in total.  Generation is done against that
@@ -968,7 +997,7 @@ Definition label_of_exp (P:pub_vars) (e:exp) : label :=
    returned, since callers use it the same way (e.g. [gen_dcall]). *)
 Definition gen_prog_ty_ctx_wt (bsz pl: nat) : G (rctx * tmem * list nat * prog) :=
   c <- arbitrary;;
-  tm <- arbitrary;;
+  tm <- genMinListSized 5 arbitrary;;
   pst <- gen_partition pl;;
   let pstf := map S pst in
   p <- _gen_prog_with_term_wt c tm bsz pstf pst;;
