@@ -259,7 +259,40 @@ Check <{{X<-load[8]}}>.
 Check <{{store[X + Y]<- (Y + 42)}}>.
 
 
-Definition mem := list val.
+Record mem := mkMem {
+    heap_length   : nat
+  ; stack_length  : nat
+  ; memory        : list val
+}.
+
+(* The layout the record describes: the heap occupies [0, heap_length), the
+   stack [heap_length, heap_length + stack_length) and grows upwards.  sp starts
+   at [stack_base] -- the slot below the first frame, which holds no return
+   address.  Every size the generators and the load/store transformation used to
+   take as a separate parameter is one of these. *)
+Definition stack_base (m : mem) : nat := m.(heap_length).
+Definition stack_top (m : mem) : nat := m.(heap_length) + m.(stack_length).
+Definition mem_length (m : mem) : nat := Datatypes.length m.(memory).
+
+Definition get_mem (i : nat) (m : mem) : option val := nth_error m.(memory) i.
+
+(* Nothing was ever pushed at or below the base, so a [ret] with sp there ends
+   the execution rather than returning. *)
+Definition stack_empty (sp_val : nat) (m : mem) : bool := sp_val <=? stack_base m.
+
+Definition upd_mem (i : nat) (m : mem) (v : val) : mem :=
+  {| heap_length := m.(heap_length)
+   ; stack_length := m.(stack_length)
+   ; memory := upd i m.(memory) v |}.
+
+(* Replace the contents, keep the layout: for the places that rebuild the whole
+   cell list (a pub-equivalent memory, a synced one) and must not lose where the
+   heap ends and the stack begins. *)
+Definition with_memory (m : mem) (vals : list val) : mem :=
+  {| heap_length := m.(heap_length)
+   ; stack_length := m.(stack_length)
+   ; memory := vals |}.
+
 
 Inductive observation : Type :=
   | ODiv (n1 : nat) (n2 : nat)
@@ -509,7 +542,8 @@ Qed.
    exception, or the two disagree about what a speculative access reads. *)
 Definition unmasked_addr (e: exp) : bool :=
   match e with
-  | <{ $sp + 1 }> => true
+  (* #_ is some constant *)
+  | <{ $sp + #_ }> | <{ $sp - #_ }> | <{ $sp }> => true
   | _ => false
   end.
 
@@ -539,7 +573,7 @@ Definition uslh_inst (i: inst) (l: nat) (o: nat) : M (list inst) :=
       let e'' := <{ callee = &((l, o + 2)) }> in
       ret <{{ i[callee:=e'; call e'; (msf := (e'' ? msf : 1))] }}>
   | <{{ret}}> =>
-      ret <{{ i[callee <- load[AId "sp"%string]; ret] }}>
+      ret <{{ i[callee <- load[sp]; store[sp] <- (msf=1) ? &(0,0) : callee; callee <- load[sp]; ret] }}>
   | _ => ret [i]
   end.
 
@@ -547,7 +581,8 @@ Definition uslh_inst_sz (i: inst) : nat :=
   match i with
   | <{{branch _ to _}}> => 2
   | <{{call _}}> => 3
-  | <{{ret}}> => 2
+  (* [callee <- load[sp]; store[sp] <- ...; callee <- load[sp]; ret] *)
+  | <{{ret}}> => 4
   | _ => 1
   end.
 
@@ -612,16 +647,13 @@ Definition pst_calc (p: prog) : list nat := (map proc_map (group_by_proc p)).
 Compute (pst_calc sample_prog_for_grouping).
 
 Definition proc_prologue (frame_sz: nat) : list inst :=
-  <{{ i[ store[(sp + 1)] <- fp; (* spill the caller's fp just above the frame base *)
-         fp := sp; (* sp is currently at a return address: that is the frame base *)
-         sp := sp + frame_sz ] (* allocating a new frame *) }}>.
+  <{{ i[ sp := sp + frame_sz ] (* allocating a new frame *) }}>.
 
 (* Mentions no frame size: sp is recovered from fp, and the caller's fp from the
    slot the prologue spilled it into, so frames may differ in size.  sp has to be
    restored first, while fp still points at this frame. *)
-Definition proc_epilogue : list inst :=
-  <{{ i[ sp := fp; (* return address *)
-         fp <- load[sp + 1]; (* spilled old fp *)
+Definition proc_epilogue (frame_sz: nat) : list inst :=
+  <{{ i[ sp := sp - frame_sz;
          ret ] (* return *) }}>.
 
 Definition wf_label (p:prog) (is_proc:bool) (l:nat) : bool :=
@@ -651,31 +683,32 @@ Definition wf_inst (p:prog) (i : inst) : bool :=
 Definition wf_blk (p:prog) (blb : list inst * bool) : bool :=
   forallb (wf_inst p) (fst blb).
 
-Definition wf_blk_calling_convention (p: prog) (blb: list inst * bool) : bool :=
-  let '(blk, flag) := blb in
-  match flag with
+Definition wf_proc_calling_convention (p: prog) (proc: prog) : bool :=
+  match proc, rev proc with
   (* a procedure's entry block starts with [proc_prologue] *)
-  | true => match blk with
-    | <{{ store[($sp + #1)] <- $fp }}> :: <{{ fp := $sp }}> :: <{{ sp := $sp + _ }}> :: _ => true
-    | _ => false
+  (* a procedure ends with the [proc_epilogue] *)
+  | prologue :: _, epilogue :: _ => 
+    let '(pblk, pflag) := prologue in
+    let '(eblk, eflag) := epilogue in
+    match pblk, rev eblk with
+    | <{{ sp := $sp + #poff }}> :: _, 
+      <{{ ret }}> :: <{{ sp := $sp - #eoff }}> :: _ => 
+        Bool.eqb pflag true && Bool.eqb eflag false && (eoff =? poff)
+    | _, _ => false
     end
-  (* a block ending in [ret] ends with [proc_epilogue] *)
-  | false => match rev blk with
-    | <{{ ret }}> :: <{{ fp <- load[$sp + 1] }}> :: <{{ sp := $fp }}> :: _ => true
-    | <{{ ret }}> :: _ => false
-    | _ => true
-    end
-  end && wf_blk p blb.
+  | _, _ => false
+  end.
 
 Definition wf (p:prog) : bool :=
   forallb (wf_blk p) p.
 
 Definition wf_calling_convention (p : prog) : bool :=
-  forallb (wf_blk_calling_convention p) p.
+  forallb (wf_blk p) p && forallb (wf_proc_calling_convention p) (group_by_proc p).
 
 Definition wf_retb (p: prog) (pc: cptr) : bool :=
   let '(l, o) := pc in
-  match MiniCET.fetch p (l, o) with
+  (* YF: We allow to return to &(0, 0) for ret masking. TBD: if we should allow any other call targets. *)
+  ((l =? 0) && (o =? 0)) || match MiniCET.fetch p (l, o) with
   | Some _ => match o with
              | 0 => false
              | S o' => match MiniCET.fetch p (l, o') with
@@ -728,7 +761,7 @@ Definition wf_direction (pc: cptr) (p: prog) (d: direction) : bool :=
 Definition wf_dirs (pc: cptr) (p: prog) (ds: dirs) : bool :=
   forallb (wf_direction pc p) ds.
 
-Definition nonempty_mem (m : mem) :Prop := (0 < Datatypes.length m)%nat.
+Definition nonempty_mem (m : mem) : Prop := (0 < Datatypes.length m.(memory))%nat.
 
 Fixpoint e_unused (x:string) (e:exp) : Prop :=
   match e with
@@ -838,7 +871,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
    pushed there -- which is how a [ret] detects that it ends the execution. *)
 Definition ret_addr (r: reg) (m: mem) : option cptr :=
   sp <- to_nat (r ! "sp"%string);;
-  v <- nth_error m sp;;
+  v <- nth_error m.(memory) sp;;
   to_fp v.
 
 Definition final_spec_cfg (p: prog) (sc: spec_cfg) : bool :=
@@ -846,13 +879,11 @@ Definition final_spec_cfg (p: prog) (sc: spec_cfg) : bool :=
   let '(pc, rs, m) := c in
   match fetch p pc with
   | Some i => match i with
-             | IRet => match ret_addr rs m with
-                      | Some _ => false
-                      | None => true
+             | IRet => match rs ! sp with
+                      | N x => x <=? m.(heap_length)
+                      | _ => false
                       end
-             | ICTarget => if ct
-                          then false
-                          else true
+             | ICTarget => if ct then false else true
              | _ => false
              end
   | None => false

@@ -111,7 +111,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
             | <{{x<-load[e]}}> =>
               match
                 n <- to_nat (eval r e);;
-                v' <- nth_error m n;;
+                v' <- get_mem n m;;
                 ret ((pc+1, (x !-> v'; r), m), [OLoad n])
               with
               | Some (c, o) => (S_Running c, o)
@@ -120,7 +120,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
             | <{{store[e]<-e'}}> =>
               match
                 n <- to_nat (eval r e);;
-                ret ((pc+1, r, upd n m (eval r e')), [OStore n])
+                ret ((pc+1, r, upd_mem n m (eval r e')), [OStore n])
               with
               | Some (c, o) => (S_Running c, o)
               | None => (S_Undef, [])
@@ -129,7 +129,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
               match
                 l <- to_fp (eval r e);;
                 sp <- to_nat (M.t_apply r "sp");;
-                ret ((l, "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), [OCall l sp])
+                ret ((l, "sp" !-> N (S sp); r, upd_mem (S sp) m (FP (pc+1))), [OCall l sp])
               with
               | Some (c, o) => (S_Running c, o)
               | None => (S_Undef, [])
@@ -145,15 +145,14 @@ Fixpoint eval (st : reg) (e: exp) : val :=
             | <{{ret}}> =>
               match
                 sp <- to_nat (M.t_apply r "sp");;
-                _pc' <- nth_error m sp;;
+                _pc' <- get_mem sp m;;
                 ret (sp, _pc')
               with
               | None => (S_Undef, [])
               | Some (n, _pc') =>
                 match to_fp _pc' with
-                (* bottom of the stack: nothing was pushed there, so this
-                   returns out of the program *)
-                | None => (S_Term, [])
+                (* bottom of the stack: this returns out of the program *)
+                | None => if stack_empty n m then (S_Term, []) else (S_Undef, [])
                 | Some pc' => (S_Running (pc', "sp" !-> N(n - 1); r, m), [ORet pc' n])
                 end
               end
@@ -201,13 +200,13 @@ Fixpoint eval (st : reg) (e: exp) : val :=
                   sp <- to_nat (M.t_apply r "sp");;
                   let ms' := ms || negb ((fst pc' =? fst l) && (snd l =? (snd pc')%nat)) in
                   (*! *)
-                  ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), true, ms'), tl ds), [OCall l sp])
+                  ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (FP (pc+1))), true, ms'), tl ds), [OCall l sp])
                   (*!! spec-call-no-set-ct *)
-                  (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), ct, ms'), tl ds), [OCall l]) *)
+                  (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (FP (pc+1))), ct, ms'), tl ds), [OCall l sp]) *)
                   (*!! spec-call-push-pc *)
-                  (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd (S sp) m (FP pc)), true, ms'), tl ds), [OCall l]) *)
+                  (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (FP pc)), true, ms'), tl ds), [OCall l sp]) *)
                   (*!! spec-call-no-sp-bump *)
-                  (*! ret ((S_Running ((pc', r, upd (S sp) m (FP (pc+1))), true, ms'), tl ds), [OCall l]) *)
+                  (*! ret ((S_Running ((pc', r, upd_mem (S sp) m (FP (pc+1))), true, ms'), tl ds), [OCall l sp]) *)
               with
               | None => untrace "call fail" (S_Undef, ds, [])
               | Some (c, ds, os) => (c, ds, os)
@@ -227,14 +226,14 @@ Fixpoint eval (st : reg) (e: exp) : val :=
               if ct then (S_Fault, ds, []) else
               match
                 sp <- to_nat (M.t_apply r "sp");;
-                _pc' <- nth_error m sp;;
+                _pc' <- get_mem sp m;;
                 ret (sp, _pc')
               with
               | None => untrace "ret: no return slot" (S_Undef, ds, [])
               | Some (n, _pc') =>
                 match to_fp _pc' with
                 (* bottom of the stack: nothing was pushed there *)
-                | None => (S_Term, ds, [])
+                | None => if stack_empty n m then (S_Term, ds, []) else (S_Undef, ds, [])
                 | Some pc' =>
                   match
                     if seq.nilp ds then
@@ -354,11 +353,11 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                   (*! if true then *)
                     let ms' := ms || negb ((fst pc' =? fst l) && (snd pc' =? snd l)) in
                     (*! *)
-                    ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd (S sp) m (FP (pc+1))), ms'), tl ds), [OCall l sp])
+                    ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (FP (pc+1))), ms'), tl ds), [OCall l sp])
                     (*!! ideal-call-push-at-sp *)
-                    (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd sp m (FP (pc+1))), ms'), tl ds), [OCall l]) *)
+                    (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem sp m (FP (pc+1))), ms'), tl ds), [OCall l sp]) *)
                     (*!! ideal-call-no-sp-bump *)
-                    (*! ret ((S_Running ((pc', r, upd (S sp) m (FP (pc+1))), ms'), tl ds), [OCall l]) *)
+                    (*! ret ((S_Running ((pc', r, upd_mem (S sp) m (FP (pc+1))), ms'), tl ds), [OCall l sp]) *)
                   else Some (S_Fault, ds, [OCall l sp])
                 with
                 | None => (S_Undef, ds, [])
@@ -374,7 +373,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                 (*!! ideal-load-masks-spill-slot *)
                 (*! let i := if ms then (ANum 0) else e in *)
                 n <- to_nat (eval r i);;
-                v' <- nth_error m n;;
+                v' <- get_mem n m;;
                 let c := (pc+1, (x !-> v'; r), m) in
                 ret (S_Running (c, ms), ds, [OLoad n])
               with
@@ -391,7 +390,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                 (*!! ideal-store-masks-spill-slot *)
                 (*! let i := if ms then (ANum 0) else e in *)
                 n <- to_nat (eval r i);;
-                let c:= (pc+1, r, upd n m (eval r e')) in
+                let c:= (pc+1, r, upd_mem n m (eval r e')) in
                 ret (S_Running (c, ms), ds, [OStore n])
               with
               | None => (S_Undef, ds, [])
@@ -401,16 +400,21 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
               match
                 sp <- to_nat (ListTotalMap.t_apply r "sp");;
                 (*! *)
-                _pc' <- nth_error m sp;;
+                _pc' <- get_mem sp m;;
                 (*!! ideal-ret-read-above-sp *)
-                (*! _pc' <- nth_error m (S sp);; *)
+                (*! _pc' <- get_mem (S sp) m;; *)
                 ret (sp, _pc')
               with
               | None => untrace ("ideal ret: no return slot. PC: " ++ show pc ++ nl) (S_Undef, ds, [])
               | Some (n, _pc') =>
-                match to_fp _pc' with
-                (* bottom of the stack: nothing was pushed there *)
-                | None => (S_Term, ds, [])
+                let v := if ms then FP (0, 0) else _pc' in
+                (*!! ideal-ret-no-mask *)
+                (*! let v := _pc' in *)
+                let m' := upd_mem n m v in
+                match to_fp v with
+                (* bottom of the stack: nothing was pushed there -- same rule as
+                   [step] and [spec_step] *)
+                | None => if stack_empty n m then (S_Term, ds, []) else (S_Undef, ds, [])
                 | Some pc' =>
                   match
                     if seq.nilp ds then
@@ -422,11 +426,13 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                       let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
                       (* the architectural target, as in [spec_step] *)
                       (*! *)
-                      ret ((S_Running ((pc'', "sp" !-> N (n - 1); r, m), ms'), tl ds), [ORet pc' n])
+                      ret ((S_Running ((pc'', "sp" !-> N (n - 1); r, m'), ms'), tl ds), [ORet pc' n])
                       (*!! ideal-ret-no-sp-restore *)
-                      (*! ret ((S_Running ((pc'', r, m), ms'), tl ds), []) *)
+                      (*! ret ((S_Running ((pc'', r, m'), ms'), tl ds), []) *)
                       (*!! ideal-ret-observes-directive *)
-                      (*! ret ((S_Running ((pc'', "sp" !-> N (n - 1); r, m), ms'), tl ds), [ORet pc'' n]) *)
+                      (*! ret ((S_Running ((pc'', "sp" !-> N (n - 1); r, m'), ms'), tl ds), [ORet pc'' n]) *)
+                      (*!! ideal-ret-no-slot-writeback *)
+                      (*! ret ((S_Running ((pc'', "sp" !-> N (n - 1); r, m), ms'), tl ds), [ORet pc' n]) *)
                   with
                   | None => untrace ("ideal ret failed. PC: " ++ show pc ++ "; PROGRAM: " ++ show p ++ nl) (S_Undef, ds, [])
                   | Some (c, ds, os) => (c, ds, os)

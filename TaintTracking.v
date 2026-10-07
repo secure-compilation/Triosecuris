@@ -118,7 +118,6 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
           Some (tc', tobs)
       | _ => None
       end
-  (* YF: TBD with Yonghyun *)
   | <{ x <- div e1, e2 }> =>
       match tctx with
       | CDefault =>
@@ -262,14 +261,15 @@ Fixpoint steps_taint_track (f: nat) (p: prog) (ist: input_st) (os: obs) : exec_r
       end
   end.
 
-Fixpoint _init_taint_mem (m: mem) (n: nat) : tamem :=
-  match m with
+Fixpoint _init_taint_mem (vals: list val) (n: nat) : tamem :=
+  match vals with
   | [] => []
-  | h :: m' => ([inr n]) :: _init_taint_mem m' (S n)
+  | h :: vals' => ([inr n]) :: _init_taint_mem vals' (S n)
   end.
 
+(* One taint per cell, heap and stack alike. *)
 Definition init_taint_mem (m: mem) : tamem :=
-  _init_taint_mem m 0.
+  _init_taint_mem m.(memory) 0.
 
 Definition taint_tracking (f : nat) (p : prog) (c: cfg)
   : option (obs * list string * list nat) :=
