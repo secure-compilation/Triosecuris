@@ -30,6 +30,8 @@ Module Import MCC := MiniCETCommon(ListTotalMap).
 Local Module Import MCSemantics := MiniCETSemantics(ListTotalMap).
 Local Module Import IS := IdealStepSemantics(MCSemantics).
 
+(* Extract Constant defNumTests => "100000". *)
+
 Definition gen_dbr : G dir :=
   b <- arbitrary;; ret (DBranch b).
 
@@ -53,6 +55,12 @@ Definition stk_alloc := 1000.
 (* The return address of the current frame, or None at the bottom of the stack.
    Same test the semantics uses to decide that a [ret] terminates. *)
 Definition lookup_sp (m : mem) (r : reg) : option cptr := ret_addr r m.
+
+(* The address a [ret] actually uses.  uSLH overwrites the slot with (0, 0)
+   while mis-speculating, so under [ms] a return always has a target -- even at
+   the bottom of the stack, where it would otherwise terminate. *)
+Definition ret_target (m : mem) (r : reg) (ms : bool) : option cptr :=
+  if ms then Some (0, 0) else lookup_sp m r.
 
 Definition is_br_or_call (i : inst) :=
   match i with
@@ -119,10 +127,15 @@ Definition sync_dirs (p: prog) (ds: dirs) : option dirs :=
    unchanged, since the hardened entry is the ctarget still at (l, 0); any other
    pointer is a return address, i.e. the pc just after a call, which in the
    hardened program is the msf check of that call's expansion ([ret_sync]). *)
+Definition cptr_sync (p: prog) (l: cptr) : option cptr :=
+  match l with
+  | (l, 0) => Some (l, 0)
+  | _ => ret_sync p l
+  end.
+
 Definition val_sync (p: prog) (v: val) : option val :=
   match v with
-  | FP (l, 0) => Some (FP (l, 0))
-  | FP pc => pc' <- ret_sync p pc;; Some (FP pc')
+  | FP l => l' <- cptr_sync p l;; Some (FP l')
   | v => Some v
   end.
 
@@ -134,15 +147,9 @@ Definition r_sync (p: prog) (r: reg) (ms: bool) : option reg :=
   l' <- map_opt (fun '(x, v) => v' <- val_sync p v;; Some (x, v')) l;;
   ret (msf !-> N (if ms then 1 else 0); (d', l')).
 
-(* What the hardened program emits for one ideal observation.  All of them
-   correspond one-for-one, except [ret]: uSLH expands it into
-   [callee <- load[sp]; ret], and that load is left unmasked, so it reads
-   exactly the slot the ideal [ret] read and shows up as [OLoad sp] before the
-   transfer.  The target is the hardened return address, i.e. the msf check of
-   the call's expansion. *)
 Definition ob_sync (p: prog) (o: observation) : option obs :=
   match o with
-  | ORet l n => l' <- ret_sync p l;; Some [OLoad n; ORet l' n]
+  | ORet l n => l' <- cptr_sync p l;; Some [OLoad n; OStore n; OLoad n; ORet l' n]
   | o => Some [o]
   end.
 
@@ -164,8 +171,10 @@ Definition spec_cfg_sync (p: prog) (ic: ideal_cfg): option spec_cfg :=
      part of the memory: every cell, not just the live stack slots -- a popped
      slot still holds the return address the caller left there, translated on
      the hardened side. *)
+  (* only the contents are translated: the hardened program has the same heap
+     and the same stack region *)
   (*! *)
-  m' <- map_opt (val_sync p) m;;
+  m' <- (vals <- map_opt (val_sync p) m.(memory);; Some (with_memory m vals));;
   (*!! spec_cfg_sync-no-stack *)
   (*! let m' := m in *)
   ret (pc', r', m', false, ms).
@@ -218,18 +227,20 @@ Definition steps_to_sync_point (tp: prog) (tsc: spec_cfg) (ds: dirs) : option na
                                (*! | DBranch b :: _ => Some (if b then 2 else 3) *)
                                | _ => None
                                end
-    (* [ret] is compiled to [callee <- load[sp]; ret]: the load, the ret itself,
-       and then the msf check sitting at the return address in the caller. *)
+    (* [ret] is compiled to
+       [callee <- load[sp]; store[sp] <- (msf=1) ? &(0,0) : callee; callee <- load[sp]; ret]:
+       those four, and then the msf check sitting at the return address in the
+       caller. *)
     | <{{x <- load[_]}}> =>
       match (String.eqb x callee) with
-      | true => match tp[[pc+1]] with
+      | true => match tp[[((pc+1)+1)+1]] with
                 | Some <{{ret}}> => match ds with
                                    (*! *)
-                                   | [DRet _] => Some 3
-                                   (*!! steps_to_sync_point-ret-2 *)
-                                   (*! | [DRet _] => Some 2 *)
+                                   | [DRet _] => Some 5
                                    (*!! steps_to_sync_point-ret-4 *)
                                    (*! | [DRet _] => Some 4 *)
+                                   (*!! steps_to_sync_point-ret-6 *)
+                                   (*! | [DRet _] => Some 6 *)
                                    | _ => None
                                    end
                 | _ => Some 1
@@ -255,9 +266,9 @@ Definition gen_directive_from_ideal_cfg (p: prog) (pst: list nat) (ic: ideal_cfg
           [ pc <- gen_pc_from_prog p ;; ret [DCall pc] ]
         )
       | <{{ret}}> =>
-        (* no return address at "sp" means the bottom of the stack, where the
-           [ret] terminates and takes no directive *)
-        match lookup_sp m r with
+        (* no target means the bottom of the stack, where the [ret] terminates
+           and takes no directive *)
+        match ret_target m r ms with
         | None => ret []
         | Some _ => d <- gen_dret p;; ret [d]
         end
@@ -294,11 +305,11 @@ Definition get_directive_for_seq_behaviour (p: prog) (pst: list nat) (ic: ideal_
 
 (* Instructions [ideal_step] refuses to execute without a directive. *)
 Definition needs_dir (p: prog) (ic: ideal_cfg) : bool :=
-  let '(c, _) := ic in
+  let '(c, ms) := ic in
   let '(pc, r, m) := c in
   match p[[pc]] with
   | Some <{{branch _ to _}}> | Some <{{call _}}> => true
-  | Some <{{ret}}> => match lookup_sp m r with Some _ => true | None => false end
+  | Some <{{ret}}> => match ret_target m r ms with Some _ => true | None => false end
   | _ => false
   end.
 
@@ -329,7 +340,7 @@ Definition gen_directive_triggering_misspec (p: prog) (pst: list nat) (ic: ideal
             end
         end
       | <{{ret}}> =>
-            match lookup_sp m r with
+            match ret_target m r ms with
             | None => ret []
             | Some pc' =>
               let addrs := wf_ret_addrs p in
@@ -381,12 +392,18 @@ Defined.
 Compute ([] <>b [DBranch true]). *)
 
 
+(* Same layout and same contents. *)
+Definition mem_eqb (m1 m2 : mem) : bool :=
+  (m1.(heap_length) =? m2.(heap_length))
+  && (m1.(stack_length) =? m2.(stack_length))
+  && (m1.(memory) ==b m2.(memory)).
+
 Definition spec_cfg_eqb_up_to_callee (st1 st2 : spec_cfg) :=
   let '(pc1, r1, m1, c1, ms1) := st1 in
   let '(pc2, r2, m2, c2, ms2) := st2 in
   (pc1 ==b pc2)
   && (c1 ==b c2) && (ms1 ==b ms2)
-  && (m1 ==b m2)
+  && mem_eqb m1 m2
   && pub_equivb (t_empty public) r1 (callee !-> (r1 ! callee) ; r2).
 
 Instance showCfg : Show cfg := {
@@ -397,13 +414,14 @@ Instance showCfg : Show cfg := {
 Definition single_step_cc := (
   let stk_size := 3 in
   forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
-  let p := transform_load_store_prog c tm stk_alloc p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
+  (* the guard reads the layout off [m1], so the memory comes first *)
+  let p := transform_load_store_prog c tm m1 p in
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack stk_size p) (fun stk =>
   forAll ( @arbitrary bool _)  (fun ms =>
-  let icfg := (cfg_with_stack pc rs1 m1 stk stk_alloc, ms) in
+  let icfg := (cfg_with_stack pc rs1 m1 stk, ms) in
   let '((_, reg, mem), _) := icfg in
   printTestCase ("Reg: " ++ nl ++ show reg ++ nl ++ "Injected mem: " ++ nl ++ show mem ++ nl)%string (
   printTestCase ("Hardened program:" ++ nl ++ show (uslh_prog p))%string (
@@ -451,18 +469,19 @@ Definition single_step_cc := (
       end
       )
   end
-  ))))))))).
+  )))))))).
 
 QuickChick single_step_cc.
 
 Definition single_step_sf := (
   forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
-  let p' := transform_load_store_prog c tm stk_alloc p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
+  let p' := transform_load_store_prog c tm m1 p in
   forAll (gen_pc_from_prog p') (fun pc =>
   forAll (gen_call_stack 3 p') (fun stk =>
-  let sc := cfg_with_stack pc rs1 m1 stk stk_alloc in
+  let sc := cfg_with_stack pc rs1 m1 stk in
+  let '(_, r, m) := sc in
   match step p' (S_Running sc) with
   | (S_Undef, _) => trace ("seq exec fails sc: "%string ++ (show sc) ++ ", prog: "%string ++ show p' ++ " prog end!!!"%string) (checker false)
   | _ => checker true
@@ -470,13 +489,13 @@ Definition single_step_sf := (
 
 Definition single_step_ideal_sf := (
   forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
-  let p' := transform_load_store_prog c tm stk_alloc p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
+  let p' := transform_load_store_prog c tm m1 p in
   forAll (gen_pc_from_prog p') (fun pc =>
   forAll (gen_call_stack 3 p') (fun stk =>
   forAll (@arbitrary bool _) (fun ms =>
-  let icfg := (cfg_with_stack pc rs1 m1 stk stk_alloc, ms) in
+  let icfg := (cfg_with_stack pc rs1 m1 stk, ms) in
   forAll (gen_directive_from_ideal_cfg p' pst icfg) (fun ds =>
   match ideal_step p' (S_Running icfg) ds with
   | (S_Undef, _, _) => trace ("ideal exec fails sc: "%string ++ (show icfg) ++ ", prog: "%string ++ show p' ++ " prog end!!!"%string) (checker false)
@@ -488,15 +507,16 @@ Definition single_step_ideal_sf := (
 
 Definition single_step := (
   forAll (gen_prog_ty_ctx_wt 3 8) (fun '(c, tm, pst, p) =>
-  let p := transform_load_store_prog c tm stk_alloc p in
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_reg_wt c pst) (fun rs2 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
   forAll (gen_wt_mem tm pst stk_alloc) (fun m2 =>
+  (* both memories have the same layout, so either one guards the program *)
+  let p := transform_load_store_prog c tm m1 p in
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack 3 p) (fun stk =>
-  let icfg1 := (cfg_with_stack pc rs1 m1 stk stk_alloc, true) in
-  let icfg2 := (cfg_with_stack pc rs2 m2 stk stk_alloc, true) in
+  let icfg1 := (cfg_with_stack pc rs1 m1 stk, true) in
+  let icfg2 := (cfg_with_stack pc rs2 m2 stk, true) in
   forAll (gen_directive_from_ideal_cfg p pst icfg1) (fun ds =>
   match (ideal_step p (S_Running icfg1) ds) with
   | (S_Running _, _, o1) =>
@@ -532,7 +552,7 @@ Definition single_step_seq_ideal := (
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack 3 p) (fun stk =>
-  let cfg := cfg_with_stack pc rs1 m1 stk stk_alloc in
+  let cfg := cfg_with_stack pc rs1 m1 stk in
   let icfg := (cfg, false) in
   let ds := get_directive_for_seq_behaviour p pst icfg in
   match (step p (S_Running cfg)) with
@@ -569,7 +589,7 @@ Definition single_step_trigger := (
   forAll (gen_wt_mem tm pst stk_alloc) (fun m1 =>
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack 3 p) (fun stk =>
-  let cfg := cfg_with_stack pc rs1 m1 stk stk_alloc in
+  let cfg := cfg_with_stack pc rs1 m1 stk in
   let icfg := (cfg, false) in
   forAll (gen_directive_triggering_misspec p pst icfg) (fun ds =>
   (* An empty [ds] here means no mis-speculating directive exists at this pc --

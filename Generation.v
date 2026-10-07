@@ -411,7 +411,7 @@ Fixpoint gen_exp_wt (sz: nat) (c: rctx) (pst: list nat) : G exp :=
 
    A procedure entered by [call] starts with sp pointing at the slot holding its
    return address; write [R] for that slot.  The prologue sets fp to [R] and
-   allocates [frame_sz] further slots, giving, for a frame with [ARG_SLOTS = a]:
+   allocates [frame_size] further slots, giving, for a frame with [ARG_SLOTS = a]:
 
      index          contents                     Appel's name
      -------------------------------------------------------------------------
@@ -425,13 +425,13 @@ Fixpoint gen_exp_wt (sz: nat) (c: rctx) (pst: list nat) : G exp :=
      fp + 1         saved caller fp            saved registers
      fp + 2         local / temporary      \
      ...            ...                     |  local variables, temporaries
-     fp + frame_sz-a    local / temporary  /
-     fp + frame_sz-a+1  outgoing argument a-1 \
+     fp + frame_size-a    local / temporary  /
+     fp + frame_size-a+1  outgoing argument a-1 \
      ...            ...                        |  outgoing arguments
-     fp + frame_sz-1    outgoing argument 1    |
-     fp + frame_sz  <--sp outgoing static link/
+     fp + frame_size-1    outgoing argument 1    |
+     fp + frame_size  <--sp outgoing static link/
 
-   So sp = fp + frame_sz throughout the body.  fp sits on the return-address
+   So sp = fp + frame_size throughout the body.  fp sits on the return-address
    slot, as ebp does on x86 after [push ebp; mov ebp, esp]: the caller's sp was
    [R - 1], so the argument the caller wrote at [sp - j] is the one this
    procedure reads at [fp - (j+1)].  That correspondence is the view shift, and
@@ -449,9 +449,9 @@ Definition MIN_STACK_FRAME_SIZE := S ARG_SLOTS.
 Definition MAX_STACK_FRAME_SIZE := ARG_SLOTS + 8.
 Definition STATIC_FRAME_SIZE := 16.
 
-(* Number of local/temporary slots in a frame of size [frame_sz], i.e. the slots
-   fp+2 .. fp+frame_sz-ARG_SLOTS. *)
-Definition frame_locals (frame_sz: nat) : nat := frame_sz - ARG_SLOTS - 1.
+(* Number of local/temporary slots in a frame of size [frame_size], i.e. the slots
+   fp+2 .. fp+frame_size-ARG_SLOTS. *)
+Definition frame_locals (frame_size: nat) : nat := frame_size - ARG_SLOTS - 1.
 
 (* An address inside the current frame, reached through fp as in the layout
    comment at the top of this file: either an incoming argument the caller wrote
@@ -459,11 +459,11 @@ Definition frame_locals (frame_sz: nat) : nat := frame_sz - ARG_SLOTS - 1.
    return address (fp+0) and the saved caller fp (fp+1) are deliberately not
    generated, so no generated instruction can break the frame chain -- which is
    also why the incoming arguments start at [fp - 1] rather than [fp]. *)
-Definition gen_frame_slot (frame_sz: nat) : G exp :=
-  let incoming := map (fun (j:nat) => let n := ANum j in <{{ fp - n }}>)
+Definition gen_frame_slot (frame_size: nat) : G exp :=
+  let incoming := map (fun (j:nat) => let n := ANum j in <{{ sp - frame_size - n }}>)
                       (seq 1 ARG_SLOTS) in
-  let locals := map (fun (j:nat) => let n := ANum j in <{{ fp + n }}>)
-                    (seq 2 (frame_locals frame_sz)) in
+  let locals := map (fun (j:nat) => let n := ANum j in <{{ sp - frame_size + n }}>)
+                    (seq 2 (frame_locals frame_size)) in
   (* The default is unreachable while ARG_SLOTS > 0, and is a typed-memory
      address rather than a frame slot so that it cannot name fp+0 or fp+1. *)
   elems_ (ANum 0) ((* incoming ++ *) locals).
@@ -530,11 +530,11 @@ Fixpoint blk_rets_to_jump (done: nat) (blk: list inst) : list inst :=
    [base] is where this procedure's entry block sits in the whole program, which
    is what makes [done] a usable label: block labels index [prog], so a
    procedure-local [length proc] would only be right for the procedure at 0. *)
-Definition transform_proc_with_term_for_epilogue (base: nat)
+Definition transform_proc_with_term_for_epilogue (base: nat) (frame_size: nat)
   (proc: list (list inst * bool)) : list (list inst * bool) :=
   let done := base + Datatypes.length proc in
   List.map (fun '(blk, flag) => (blk_rets_to_jump done blk, flag)) proc
-  ++ [(proc_epilogue, false)].
+  ++ [(proc_epilogue frame_size, false)].
 
 Definition gen_wf_ret_addr (p: prog) : G cptr :=
   let addrs := wf_ret_addrs p in
@@ -560,25 +560,30 @@ Definition gen_call_stack (n: nat) (p: prog) : G (list cptr) :=
    slots base+1 .. base+n and sp = base+n. *)
 Definition stk_slots (base: nat) (n: nat) : list nat := rev (seq (S base) n).
 
-(* [stk] is given top of stack first: its head goes to the highest slot. *)
-Definition inject_stack_to_mem (stk: list cptr) (m: mem) (base: nat): mem :=
-  List.fold_left (fun acc '(i, ptr) => upd i acc (FP ptr))
-    (combine (stk_slots base (Datatypes.length stk)) stk) m.
+(* [stk] is given top of stack first: its head goes to the highest slot.  Only
+   the contents change: the stack region is whatever [gen_wt_mem] allocated, not
+   the number of frames written into it. *)
+Definition inject_stack_to_mem (stk: list cptr) (m: mem): mem :=
+  {|
+    heap_length := m.(heap_length)
+    ; stack_length := m.(stack_length)
+    ; memory :=
+      List.fold_left (fun acc '(i, ptr) => upd i acc (FP ptr))
+        (combine (stk_slots (stack_base m) (Datatypes.length stk)) stk) m.(memory)
+  |}.
 
-(* Build a configuration whose call stack lives in the top [stk_alloc] cells of
-   [m] (the region [gen_wt_mem] appends), keeping sp and memory consistent. The
-   slot [base] itself is left untouched, so it holds no return address and a
-   [ret] with an empty stack terminates. *)
-Definition cfg_with_stack (pc: cptr) (r: reg) (m: mem) (stk: list cptr)
-  (stk_alloc: nat) : cfg :=
-  let base := Datatypes.length m - stk_alloc in
+(* Build a configuration whose call stack lives in the stack region [m]
+   describes, keeping sp and memory consistent.  The slot [stack_base] itself is
+   left untouched, so it holds no return address and a [ret] with an empty stack
+   terminates. *)
+Definition cfg_with_stack (pc: cptr) (r: reg) (m: mem) (stk: list cptr): cfg :=
+  let base := stack_base m in
   let n := Datatypes.length stk in
   (* fp has to be a number, not whatever the register default happens to be, or
      every [fp]-relative frame access evaluates to UV and the step goes
      S_Undef.  [base + n] is the return-address slot of the innermost frame,
      which is exactly where its prologue would have pointed fp. *)
-  (pc, "fp"%string !-> N (base + n); "sp"%string !-> N (base + n); r,
-   inject_stack_to_mem stk m base).
+  (pc, "fp"%string !-> N (base + n); "sp"%string !-> N (base + n); r, inject_stack_to_mem stk m).
 
 
 
@@ -670,44 +675,48 @@ Definition seq_step_from_until (from until step: nat) : list nat :=
 
 (* Eval compute in (seq_step 0 (S (100 / (S STATIC_FRAME_SIZE))) (S STATIC_FRAME_SIZE)). *)
 
-Definition compose_load_store_guard (t : ty) (id_exp : exp) (mem : tmem) (stk_size: nat) : exp :=
-  let indices := seq 0 (Datatypes.length mem) in
-  let idx := filter_typed t (combine indices mem) in
+(* [tm] types the heap; [m] gives the layout, so the bounds of the stack region
+   no longer have to be passed separately. *)
+Definition compose_load_store_guard (t : ty) (id_exp : exp) (tm : tmem) (m : mem) : exp :=
+  let indices := seq 0 (Datatypes.length tm) in
+  let idx := filter_typed t (combine indices tm) in
   let tc := fold_left
             (fun acc x => BOr x acc)
             (map (fun id => <{{ id_exp = ANum id }}>) idx)
             <{{ false }}> in
-  let return_address_stack_indices := seq_step_from_until (Datatypes.length mem + S STATIC_FRAME_SIZE) (Datatypes.length mem + stk_size) (S STATIC_FRAME_SIZE) in
+  let return_address_stack_indices :=
+    seq_step_from_until (stack_base m + S STATIC_FRAME_SIZE) (stack_top m) (S STATIC_FRAME_SIZE) in
   let tstack := fold_left
             (fun acc x => BOr x acc)
-            (map (fun id => <{{ id_exp = ANum id }}>) return_address_stack_indices) 
+            (map (fun id => <{{ id_exp = ANum id }}>) return_address_stack_indices)
             <{{ false }}> in
-  let mem_sz := ANum (stk_size + Datatypes.length mem) in
+  let mem_sz := ANum (mem_length m) in
   let guardc := BLt id_exp mem_sz in
   (* If the register is typed as a pointer, we can also load and store to the stack return addresses *)
   match t with
-  | TPtr => BAnd (BOr tc tstack) guardc
+  (* | TPtr => BAnd (BOr tc tstack) guardc *)
+  | TPtr => BAnd tc guardc
   | TNum => BAnd tc guardc
   end.
 (* Eval compute in (compose_load_store_guard TNum <{ AId "X0"%string }> [TNum ; TPtr; TNum] 10). *)
 
-Definition transform_load_store_inst (c : rctx) (mem : tmem) (acc : list inst) (i : inst) (stk_size: nat) : M (bool * list inst) :=
+Definition transform_load_store_inst (c : rctx) (tm : tmem) (m : mem) (acc : list inst) (i : inst) : M (bool * list inst) :=
   match i with
   | <{{ store[($sp + 1)] <- $fp }}> | <{{ fp <- load[($sp + 1)] }}> => ret (false, [i])
   | <{{ x <- load[e] }}> =>
       let t := t_apply c x in
       merge <- add_block_M acc;;
       new <- add_block_M <{{ i[ x <- load[e]; jump merge] }}>;;
-      ret (true, <{{ i[branch (compose_load_store_guard t e mem stk_size) to new; jump merge] }}>)
+      ret (true, <{{ i[branch (compose_load_store_guard t e tm m) to new; jump merge] }}>)
   | <{{ store[e] <- e1 }}> =>
       merge <- add_block_M acc;;
       new <- add_block_M <{{ i[store[e] <- e1; jump merge] }}>;;
-      ret (true, <{{ i[branch (compose_load_store_guard (ty_of_exp c e1) e mem stk_size) to new; jump merge] }}>)
+      ret (true, <{{ i[branch (compose_load_store_guard (ty_of_exp c e1) e tm m) to new; jump merge] }}>)
   | _ => ret (false, [i])
   end.
 
-Definition split_and_merge (c : rctx) (mem : tmem) (stk_size: nat) (i : inst) (acc : list inst)  : M (list inst) :=
-  tr <- transform_load_store_inst c mem acc i stk_size;;
+Definition split_and_merge (c : rctx) (tm : tmem) (m : mem) (i : inst) (acc : list inst)  : M (list inst) :=
+  tr <- transform_load_store_inst c tm m acc i;;
   let '(is_split, new_insts) := tr in
 
 
@@ -718,13 +727,13 @@ Definition split_and_merge (c : rctx) (mem : tmem) (stk_size: nat) (i : inst) (a
 
     ret (new_insts ++ acc).
 
-Definition transform_load_store_blk (c : rctx) (mem : tmem) (stk_size: nat) (nblk : list inst * bool) : M (list inst * bool) :=
+Definition transform_load_store_blk (c : rctx) (tm : tmem) (m : mem) (nblk : list inst * bool) : M (list inst * bool) :=
   let (bl, is_proc) := nblk in
-  folded <- fold_rightM (split_and_merge c mem stk_size) bl <{{ i[ ret ] }}>;;
+  folded <- fold_rightM (split_and_merge c tm m) bl <{{ i[ ret ] }}>;;
   ret (folded, is_proc).
 
-Definition transform_load_store_prog (c : rctx) (mem : tmem) (stk_size: nat) (p : prog) :=
-  let '(p', newp) := mapM (transform_load_store_blk c mem stk_size) p (Datatypes.length p) in
+Definition transform_load_store_prog (c : rctx) (tm : tmem) (m : mem) (p : prog) :=
+  let '(p', newp) := mapM (transform_load_store_blk c tm m) p (Datatypes.length p) in
   (p' ++ newp).
 
 Definition gen_call_wt (c: rctx) (pst: list nat) : G inst :=
@@ -813,14 +822,10 @@ Fixpoint _gen_proc_with_term_wt (c: rctx) (tm: tmem) (fsz bsz: nat) (pst: list n
   end.
 
 Definition gen_proc_with_term_wt (c: rctx) (tm: tmem) (fsz bsz: nat) (pst: list nat)
-  (jlst: list nat) : G (list (list inst * bool)) :=
+  (jlst: list nat) (frame_size: nat) : G (list (list inst * bool)) :=
   match fsz with
   | O => ret []
   | S fsz' => n <- choose (1, max 1 bsz);;
-              (* Below MIN_STACK_FRAME_SIZE the outgoing-argument area would run
-                 into the slot holding the spilled caller fp. *)
-              (* frame_size <- choose (MIN_STACK_FRAME_SIZE, MAX_STACK_FRAME_SIZE) ;; *)
-              frame_size <- ret STATIC_FRAME_SIZE ;;
               blk <- gen_blk_with_term_wt c tm n pst jlst frame_size ;;
               rest <- _gen_proc_with_term_wt c tm fsz' bsz pst jlst frame_size ;;
               let blk := proc_prologue frame_size ++ blk in
@@ -828,9 +833,9 @@ Definition gen_proc_with_term_wt (c: rctx) (tm: tmem) (fsz bsz: nat) (pst: list 
   end.
 
 Definition gen_proc_with_term_wt_stack (c: rctx) (tm: tmem) (fsz bsz: nat)
-  (pst: list nat) (base: nat) : G (list (list inst * bool)) :=
-  p <- gen_proc_with_term_wt c tm fsz bsz pst (proc_jump_targets base fsz);;
-  ret (transform_proc_with_term_for_epilogue base p).
+  (pst: list nat) (base: nat) (frame_size: nat) : G (list (list inst * bool)) :=
+  p <- gen_proc_with_term_wt c tm fsz bsz pst (proc_jump_targets base fsz) frame_size;;
+  ret (transform_proc_with_term_for_epilogue base frame_size p).
 
 (* [pst'] carries the number of blocks to *generate* per procedure, while [pst]
    describes the program as it will *end up*, one block larger per procedure --
@@ -841,8 +846,11 @@ Fixpoint _gen_prog_with_term_wt_from (c: rctx) (tm: tmem) (bsz: nat)
   (pst pst': list nat) (base: nat) : G (list (list inst * bool)) :=
   match pst' with
   | [] => ret []
-  | fsz :: tl => hd_proc <- gen_proc_with_term_wt_stack c tm fsz bsz pst base ;;
-                tl_proc <- _gen_prog_with_term_wt_from c tm bsz pst tl (base + S fsz) ;;
+  | fsz :: tl => 
+                (* frame_size <- ret STATIC_FRAME_SIZE ;;  *)
+                frame_size <- choose (MIN_STACK_FRAME_SIZE, MAX_STACK_FRAME_SIZE) ;;
+                hd_proc <- gen_proc_with_term_wt_stack c tm fsz bsz pst base frame_size ;;
+                tl_proc <- _gen_prog_with_term_wt_from c tm bsz pst tl (base + S fsz);;
                 ret (hd_proc ++ tl_proc)
   end.
 
@@ -1014,7 +1022,9 @@ Definition gen_wt_mem (tm: tmem) (pst: list nat) (stsize: nat): G mem :=
   let idx_tm := combine indices tm in
   let gen_binds := mapGen (fun '(idx, t) => (v <- gen_val_wt t pst;; ret (idx, v))) idx_tm in
   r <- gen_binds;;
-  ret (snd (split r) ++ mkStk stsize).
+  ret {| heap_length := Datatypes.length tm
+       ; stack_length := stsize
+       ; memory := snd (split r) ++ mkStk stsize |}.
 
 Definition all_possible_vars : list string := (["X0"%string; "X1"%string; "X2"%string; "X3"%string; "X4"%string; "X5"%string]).
 
@@ -1068,8 +1078,10 @@ Fixpoint gen_pub_mem_equiv_same_ty (P : list label) (m: list val) : G (list val)
   then _gen_pub_mem_equiv_same_ty P m
   else ret [].
 
+(* [combine] stops at the shorter list, so this checks exactly the heap cells
+   [tm] types and ignores the stack region above them. *)
 Definition m_wtb (m: mem) (tm: tmem) : bool :=
-  let mtm := combine m tm in
+  let mtm := combine m.(memory) tm in
   forallb (fun '(v, t) => wt_valb v t) mtm.
 
 
@@ -1122,7 +1134,7 @@ Definition gen_no_obs_prog : G prog :=
   let bsz := 3 in
   _gen_prog_no_obs bsz pl pst pst.
 
-Definition empty_mem : mem := [].
+Definition empty_mem : mem := {| heap_length := 0; stack_length := 0; memory := [] |}.
 
 Definition empty_rs : reg := t_empty (FP (0, 0)).
 
