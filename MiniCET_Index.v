@@ -104,7 +104,8 @@ Definition wf_ret (p: prog) (pc: cptr) : Prop :=
 
 Definition wf_retb (p: prog) (pc: cptr) : bool :=
   let '(l, o) := pc in
-  match p[[(l, o)]] with
+  (* YF: We allow to return to &(0, 0) for ret masking. TBD: if we should allow any other call targets. *)
+  ((l =? 0) && (o =? 0)) || match p[[(l, o)]] with
   | Some _ => match o with
              | 0 => false
              | S o' => match p[[(l, o')]] with
