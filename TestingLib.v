@@ -62,9 +62,9 @@ Module Import MTT := TaintTracking(ST).
 
 
 Variant sc_output_st : Type :=
-  | SRStep : obs -> dirs -> spec_cfg -> sc_output_st
-  | SRError : obs -> dirs -> spec_cfg -> sc_output_st
-  | SRTerm : obs -> dirs -> spec_cfg -> sc_output_st.
+  | SRStep : obs -> dirs -> list ST.pc -> spec_cfg -> sc_output_st
+  | SRError : obs -> dirs -> list ST.pc -> spec_cfg -> sc_output_st
+  | SRTerm : obs -> dirs -> list ST.pc -> spec_cfg -> sc_output_st.
 
 Definition gen_step_direction (i: inst) (c: cfg) (pst: list nat)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) : G dirs :=
@@ -85,14 +85,14 @@ Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
       | <{{branch e to l}}> =>
           d <- gen_dbr;;
           ret (match spec_step p (S_Running sc) [d] with
-               | (S_Running sc', dir', os') => SRStep os' [d] sc'
-               | _ => SRError [] [] sc
+               | (S_Running sc', dir', os') => SRStep os' [d] [pc] sc'
+               | _ => SRError [] [] [pc] sc
                end)
       | <{{call e}}> =>
           d <- gen_dcall pst;;
           ret (match spec_step p (S_Running sc) [d] with
-               | (S_Running sc', dir', os') => SRStep os' [d] sc'
-               | _ => SRError [] [] sc
+               | (S_Running sc', dir', os') => SRStep os' [d] [pc] sc'
+               | _ => SRError [] [] [pc] sc
                end)
       | <{{ret}}> =>
           (* At the bottom of the in-memory stack the slot "sp" points at holds
@@ -100,103 +100,109 @@ Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
           match MCC.ret_addr r m with
           | None =>
               ret (match spec_step p (S_Running sc) [] with
-                   | (S_Term, _, _) => SRTerm [] [] sc
-                   | (S_Running sc', dir', os') => SRStep os' [] sc'
-                   | _ => SRError [] [] sc
+                   | (S_Term, _, _) => SRTerm [] [] [pc] sc
+                   | (S_Running sc', dir', os') => SRStep os' [] [pc] sc'
+                   | _ => SRError [] [] [pc] sc
                    end)
           | Some _ =>
               d <- gen_dret p;;
               ret (match spec_step p (S_Running sc) [d] with
-                   | (S_Running sc', dir', os') => SRStep os' [d] sc'
-                   | _ => SRError [] [] sc
+                   | (S_Running sc', dir', os') => SRStep os' [d] [pc] sc'
+                   | _ => SRError [] [] [pc] sc
                    end)
           end
       | ICTarget =>
           ret (match spec_step p (S_Running sc) [] with
-               | (S_Running sc', dir', os') => SRStep os' [] sc'
-               | (S_Term, _, _) => SRTerm [] [] sc
-               | _ => SRError [] [] sc
+               | (S_Running sc', dir', os') => SRStep os' [] [pc] sc'
+               | (S_Term, _, _) => SRTerm [] [] [pc] sc
+               | _ => SRError [] [] [pc] sc
                end)
       | _ =>
           ret (match spec_step p (S_Running sc) [] with
-               | (S_Running sc', dir', os') => SRStep os' [ ] sc'
-               | _ => SRError [] [] sc
+               | (S_Running sc', dir', os') => SRStep os' [ ] [pc] sc'
+               | _ => SRError [] [] [pc] sc
                end)
       end
-  | None => ret (SRError [] [] sc)
+  | None => ret (SRError [] [] [pc] sc)
   end.
 
 Variant spec_exec_result : Type :=
-  | SETerm (sc: spec_cfg) (os: obs) (ds: dirs)
-  | SEError (sc: spec_cfg) (os: obs) (ds: dirs)
-  | SEOutOfFuel (sc: spec_cfg) (os: obs) (ds: dirs).
+  | SETerm (sc: spec_cfg) (os: obs) (ds: dirs) (trace: list ST.pc)
+  | SEError (sc: spec_cfg) (os: obs) (ds: dirs) (trace: list ST.pc)
+  | SEOutOfFuel (sc: spec_cfg) (os: obs) (ds: dirs) (trace: list ST.pc).
 
 (* The configuration a speculative run got stuck in says little on its own;
    what explains it is the stack around [sp] and the directives that led there.
    [pc] is abstract in this functor, so the position is reported by whoever
    applies it. *)
-#[export] Instance showSER `{Show dir} : Show spec_exec_result :=
+#[export] Instance showSER `{Show dir} `{Show ST.pc}: Show spec_exec_result :=
   {show :=fun ser =>
       match ser with
-      | SETerm sc os ds => show_dirs ds
-      | SEError cfg os ds =>
+      | SETerm sc os ds trace => report "Speculative execution terminated"%string
+            [trace_item "trace"%string trace; ("directives"%string, show_dirs ds)]
+      | SEError cfg os ds trace =>
           let '((_, rs, m), ct, ms) := cfg in
           report "Speculative execution got stuck"%string
-            (("directives"%string, show_dirs ds)
+            (trace_item "trace"%string trace
+             :: ("directives"%string, show_dirs ds)
              :: ("observations"%string, show_obs os)
              :: ("mis-speculating"%string, show ms)
              :: ("registers"%string, show rs)
              :: mem_items m (t_apply rs "sp"%string))
-      | SEOutOfFuel _ os ds =>
+      | SEOutOfFuel _ os ds trace =>
           report "Speculative execution ran out of fuel"%string
-            [("directives"%string, show_dirs ds); ("observations"%string, show_obs os)]
+            [ trace_item "trace"%string trace
+            ; ("directives"%string, show_dirs ds)
+            ; ("observations"%string, show_obs os) ]
       end
   }.
 
-Fixpoint _gen_spec_steps_sized (f : nat) (p:prog) (pst: list nat) (sc: spec_cfg) (os: obs) (ds: dirs)
+Fixpoint _gen_spec_steps_sized (f : nat) (p:prog) (pst: list nat) (sc: spec_cfg) (os: obs) (ds: dirs) (trace: list ST.pc)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) : G (spec_exec_result) :=
   match f with
-  | 0 => ret (SEOutOfFuel sc os ds)
+  | 0 => ret (SEOutOfFuel sc os ds trace)
   | S f' =>
       sr <- gen_spec_step p sc pst gen_dbr gen_dcall gen_dret;;
       match sr with
-      | SRStep os1 ds1 sc1 =>
-          _gen_spec_steps_sized f' p pst sc1 (os ++ os1) (ds ++ ds1) gen_dbr gen_dcall gen_dret
-      | SRError os1 ds1 sc1 =>
-          (ret (SEError sc1 (os ++ os1) (ds ++ ds1)))
-      | SRTerm  os1 ds1 sc1 =>
-          ret (SETerm sc1 (os ++ os1) (ds ++ ds1))
+      | SRStep os1 ds1 trace1 sc1 =>
+          _gen_spec_steps_sized f' p pst sc1 (os ++ os1) (ds ++ ds1) (trace ++ trace1) gen_dbr gen_dcall gen_dret
+      | SRError os1 ds1 trace1 sc1 =>
+          (ret (SEError sc1 (os ++ os1) (ds ++ ds1) (trace ++ trace1)))
+      | SRTerm  os1 ds1 trace1 sc1 =>
+          ret (SETerm sc1 (os ++ os1) (ds ++ ds1) (trace ++ trace1))
       end
   end.
 
 Definition gen_spec_steps_sized (f : nat) (p:prog) (pst: list nat) (sc:spec_cfg)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) : G (spec_exec_result) :=
-  _gen_spec_steps_sized f p pst sc [] [] gen_dbr gen_dcall gen_dret.
+  _gen_spec_steps_sized f p pst sc [] [] [] gen_dbr gen_dcall gen_dret.
 
 
 Definition spec_step_acc (p:prog) (sc:spec_cfg) (ds: dirs) : sc_output_st :=
+  let '((pc, _, _), _, _) := sc in
   match spec_step p (S_Running sc) ds with
-  | (S_Running sc', ds', os) => SRStep os ds' sc'
-  | (S_Term, _, _) => SRTerm [] [] sc
-  | _ => SRError [] [] sc
+  | (S_Running sc', ds', os) => SRStep os ds' [pc] sc'
+  | (S_Term, _, _) => SRTerm [] [] [pc] sc
+  | _ => SRError [] [] [pc] sc
   end.
 
-Fixpoint _spec_steps_acc (f : nat) (p:prog) (sc:spec_cfg) (os: obs) (ds: dirs) : spec_exec_result :=
+Fixpoint _spec_steps_acc (f : nat) (p:prog) (sc:spec_cfg) (os: obs) (ds: dirs)
+  (trace: list ST.pc) : spec_exec_result :=
   match f with
-  | 0 => SEOutOfFuel sc os ds
+  | 0 => SEOutOfFuel sc os ds trace
   | S f' =>
       match spec_step_acc p sc ds with
-      | SRStep os1 ds1 sc1 =>
-          _spec_steps_acc f' p sc1 (os ++ os1) ds1
-      | SRError os1 ds1 sc1 =>
-          (SEError sc1 (os ++ os1) ds1)
-      | SRTerm os1 ds1 sc1 =>
-          (SETerm sc1 (os ++ os1) ds1)
+      | SRStep os1 ds1 trace1 sc1 =>
+          _spec_steps_acc f' p sc1 (os ++ os1) ds1 (trace ++ trace1)
+      | SRError os1 ds1 trace1 sc1 =>
+          (SEError sc1 (os ++ os1) ds1 (trace ++ trace1))
+      | SRTerm os1 ds1 trace1 sc1 =>
+          (SETerm sc1 (os ++ os1) ds1 (trace ++ trace1))
       end
   end.
 
 Definition spec_steps_acc (f : nat) (p:prog) (sc:spec_cfg) (ds: dirs) : spec_exec_result :=
-  _spec_steps_acc f p sc [] ds.
+  _spec_steps_acc f p sc [] ds [].
 
 Definition load_store_trans_basic_blk := (
     forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
@@ -379,7 +385,7 @@ Definition test_ni (transform : rctx -> tmem -> mem -> prog -> prog) := (
    | None => collect "tt failed"%string (checker tt)
   end)))).
 
-Definition test_safety_preservation `{Show dir}
+Definition test_safety_preservation `{Show dir} `{Show ST.pc}
   (harden : prog -> prog)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
   forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
@@ -395,22 +401,23 @@ Definition test_safety_preservation `{Show dir}
   let h_pst := pst_calc harden in
   forAll (gen_spec_steps_sized 200 harden h_pst iscfg gen_dbr gen_dcall gen_dret) (fun ods =>
   (match ods with
-   | SETerm sc os ds => checker true
-   | SEError c' os ds =>
+  | SETerm sc os ds trace => checker true
+  | SEError c' os ds trace =>
       let '((pc, rs, mem), _, ms) := c' in
       if is_stack_overflow rs mem then collect "Stack overflow"%string  (checker tt) else
         (* the configuration, the directives and the trace are already in the
-           [spec_exec_result] QuickChick prints *)
+          [spec_exec_result] QuickChick prints *)
         printTestCase
           (report "The hardened program got stuck under speculation"%string
-             [ inst_item "failing instruction"%string (fetch harden pc)
-             ; prog_item "hardened program"%string None harden ])
+            [ inst_item "failing instruction"%string (fetch harden pc)
+            ; ("failing pc"%string, show pc)
+            ; prog_item "hardened program"%string None harden ])
           (checker false)
-   | SEOutOfFuel _ _ ds => checker tt
-   end))
+  | SEOutOfFuel _ _ ds trace => checker tt
+  end))
   )))).
 
-Definition test_relative_security `{Show dir}
+Definition test_relative_security `{Show dir} `{Show ST.pc}
   (harden : prog -> prog)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
   forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
@@ -441,36 +448,38 @@ Definition test_relative_security `{Show dir}
                 let h_pst := pst_calc harden in
                 forAll (gen_spec_steps_sized 1000 harden h_pst iscfg1' gen_dbr gen_dcall gen_dret) (fun ods1 =>
                 (match ods1 with
-                 | SETerm _ os1 ds =>
+                 | SETerm _ os1 ds trace1 =>
 
                      let rs2' := spec_rs rs2 in
                      let icfg2' := (ipc, rs2', m2) in
                      let iscfg2' := (icfg2', true, false) in
                      let sc_r2 := spec_steps_acc 1000 harden iscfg2' ds in
                      match sc_r2 with
-                     | SETerm _ os2 _ =>
+                     | SETerm _ os2 _ trace2 =>
                          printTestCase
                            (report "The two runs agree sequentially but are distinguishable under speculation"%string
                               (obs_items "speculative run 1"%string os1
                                          "speculative run 2"%string os2
                                ++ [ ("sequential trace"%string, show_obs os1')
+                                  ; trace_item "run 2 trace"%string trace2
                                   ; prog_item "hardened program"%string None harden ]))
                            (checker (obs_eqb os1 os2))
-                     | SEOutOfFuel _ _ _ => collect "se2 oof"%string (checker tt)
+                     | SEOutOfFuel _ _ _ _ => collect "se2 oof"%string (checker tt)
                      | _ => collect "2nd speculative execution fails!"%string (checker tt)
                      end
-                 | SEOutOfFuel _ os1 ds =>
+                 | SEOutOfFuel _ os1 ds trace1 =>
                      let rs2' := spec_rs rs2 in
                      let icfg2' := (ipc, rs2', m2) in
                      let iscfg2' := (icfg2', true, false) in
                      let sc_r2 := spec_steps_acc 1000 harden iscfg2' ds in
                      match sc_r2 with
-                     | SETerm _ os2 _ => collect "se1 oof but se2 term"%string (checker tt)
-                     | SEOutOfFuel _ os2 _ =>
+                     | SETerm _ os2 _ _ => collect "se1 oof but se2 term"%string (checker tt)
+                     | SEOutOfFuel _ os2 _ trace2 =>
                          printTestCase
                            (report "Both runs ran out of fuel, but their speculative traces differ"%string
                               [ ("speculative run 2"%string, show_obs os2)
                               ; obs_diff_item os1 os2
+                              ; trace_item "run 2 trace"%string trace2
                               ; prog_item "hardened program"%string None harden ])
                            (checker (obs_eqb os1 os2))
                      | _ => collect "2nd speculative execution fails!"%string (checker tt)

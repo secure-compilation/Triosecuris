@@ -82,6 +82,11 @@ Definition show_layout (m : mem) : string :=
 
 Derive Show for ty.
 
+#[export] Instance showCptr : Show cptr :=
+  {
+    show '(l, o) := ("(" ++ show l ++ ", " ++ show o ++ ")")%string
+  }.
+
 (* One instruction per line, each with the [cptr] that addresses it, and an
    arrow on [mark] if it is given.  Hardening expands one source instruction
    into several, so the instruction a failure names is buried at an offset
@@ -166,7 +171,7 @@ Definition item {A : Type} `{Show A} (label : string) (a : A) : string * string 
    and hardened programs are deterministic functions of it, so printing one in
    a report mostly buries the line that explains the failure.  Set this to
    [true] while reading a report without the generator's output at hand. *)
-Definition print_programs : bool := false.
+Definition print_programs : bool := true.
 
 (* A [cptr] on its own is two numbers; what you want to know is which
    instruction sits there. *)
@@ -194,6 +199,61 @@ Definition prog_item (label : string) (mark : option cptr) (p : prog)
   (label, if print_programs then show_prog_marked mark p
           else (show (List.length p)
                 ++ " blocks (set Printing.print_programs to list them)")%string).
+
+(* ----------------------------------------------------------------- *)
+(** ** Execution traces *)
+
+(* The path a run took, as the program counters it visited, six to a line and
+   numbered by the step that reached them, so a step in the trace can be lined
+   up with the directive and the observation of the same index.  [pc] is
+   abstract inside the semantics functor, so this asks only for [Show]. *)
+Definition trace_width : nat := 6.
+
+(* A run with a thousand steps of fuel leaves a thousand entries, and what
+   explains the failure is at the end of it, so a long trace keeps its head and
+   its tail and says how much is missing in between. *)
+Definition trace_head : nat := 12.
+Definition trace_tail : nat := 36.
+
+Definition render_trace {A : Type} (width : nat) (f : A -> string)
+  (start : nat) (tr : list A) : string :=
+  fold_left (fun (acc : string) (ja : nat * A) =>
+      let '(j, a) := ja in
+      let i := start + j in
+      (acc ++ (if orb (Nat.eqb j 0) (Nat.eqb (Nat.modulo i width) 0)
+               then (nl ++ "  " ++ show i ++ ": ")%string
+               else " -> "%string)
+           ++ f a)%string)
+    (add_index tr) ""%string.
+
+Definition show_trace_with {A : Type} (width : nat) (f : A -> string)
+  (tr : list A) : string :=
+  let n := List.length tr in
+  match tr with
+  | [] => "<no steps>"%string
+  | _ =>
+      if Nat.leb n (trace_head + trace_tail) then render_trace width f 0 tr
+      else (render_trace width f 0 (firstn trace_head tr)
+            ++ nl ++ "  ... " ++ show (n - trace_head - trace_tail)
+            ++ " steps omitted ..."
+            ++ render_trace width f (n - trace_tail) (skipn (n - trace_tail) tr))%string
+  end.
+
+Definition show_trace {A : Type} `{Show A} (tr : list A) : string :=
+  show_trace_with trace_width show tr.
+
+Definition trace_item {A : Type} `{Show A} (label : string) (tr : list A)
+  : string * string :=
+  (label, show_trace tr).
+
+(* The same path with the instruction at each step, for the tests whose [pc] is
+   a [cptr] and whose program is at hand. *)
+Definition show_trace_at (p : prog) (tr : list cptr) : string :=
+  show_trace_with 1 (show_pc p) tr.
+
+Definition trace_at_item (label : string) (p : prog) (tr : list cptr)
+  : string * string :=
+  (label, show_trace_at p tr).
 
 (* The word, without the configuration: a report names the configuration under
    its own label. *)
