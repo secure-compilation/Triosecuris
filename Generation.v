@@ -729,7 +729,7 @@ Definition split_and_merge (c : rctx) (tm : tmem) (m : mem) (i : inst) (acc : li
 
 Definition transform_load_store_blk (c : rctx) (tm : tmem) (m : mem) (nblk : list inst * bool) : M (list inst * bool) :=
   let (bl, is_proc) := nblk in
-  folded <- fold_rightM (split_and_merge c tm m) bl <{{ i[ ret ] }}>;;
+  folded <- fold_rightM (split_and_merge c tm m) bl [];;
   ret (folded, is_proc).
 
 Definition transform_load_store_prog (c : rctx) (tm : tmem) (m : mem) (p : prog) :=
