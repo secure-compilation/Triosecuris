@@ -2,9 +2,11 @@ From Coq Require Import Arith.
 From Coq Require Import Bool.
 From Coq Require Export Strings.String.
 From Coq Require Import FunctionalExtensionality.
+From Coq.Classes Require Import EquivDec.
 From Coq Require Import List.
 From SECF Require Import Maps.
 From SECF Require Import ListMaps.
+From SECF Require Import Utils.
 
 Import ListNotations.
 Set Default Goal Selector "!".
@@ -25,10 +27,9 @@ Module Type TMap.
 
 End TMap.
 
-
 Module TotalMap <: TMap.
-  Definition t := Maps.total_map.
-  Definition init := @Maps.t_empty.
+  Definition t := Maps.total_map string.
+  Definition init := @Maps.t_empty string.
   Definition t_apply {A: Type} (m: t A) (i: string) : A := m i.
   Definition t_update {A: Type} (m: t A) (i: string) (v: A) := Maps.t_update m i v.
   Definition t_map_values {A B : Type} (f : A -> B) (m : t A) : t B :=
@@ -36,19 +37,19 @@ Module TotalMap <: TMap.
 
   Lemma t_update_eq : forall {A : Type} (m : t A) x v,
     t_apply (t_update m x v) x = v.
-  Proof. eapply Maps.t_update_eq. Qed.
+  Proof. intros. apply Maps.t_update_eq. Qed.
 
   Lemma t_update_neq : forall {A : Type} (m : t A) x1 x2 v,
     x1 <> x2 ->
     t_apply (t_update m x1 v) x2 = t_apply m x2.
-  Proof. eapply Maps.t_update_neq. Qed.
+  Proof. intros. apply Maps.t_update_neq. assumption. Qed.
 
 End TotalMap.
 
 
 Module ListTotalMap <: TMap.
-  Definition t := ListMaps.total_map.
-  Definition init := @ListMaps.t_empty.
+  Definition t := ListMaps.total_map string.
+  Definition init := @ListMaps.t_empty string.
   Definition t_apply {A: Type} (m: t A) (i: string) : A := ListMaps.apply m i.
   Definition t_update {A: Type} (m: t A) (i: string) (v: A) := ListMaps.t_update m i v.
   Definition t_map_values {A B : Type} (f : A -> B) (m : t A) : t B :=
@@ -57,11 +58,11 @@ Module ListTotalMap <: TMap.
 
   Lemma t_update_eq : forall {A : Type} (m : t A) x v,
     t_apply (t_update m x v) x = v.
-  Proof. intros. rewrite ListMaps.t_update_eq. auto. Qed.
+  Proof. intros. apply ListMaps.t_update_eq. Qed.
 
   Lemma t_update_neq : forall {A : Type} (m : t A) x1 x2 v,
     x1 <> x2 ->
     t_apply (t_update m x1 v) x2 = t_apply m x2.
-  Proof. intros. rewrite ListMaps.t_update_neq; auto. Qed.
+  Proof. intros. apply ListMaps.t_update_neq. assumption. Qed.
 
 End ListTotalMap.

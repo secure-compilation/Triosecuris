@@ -1,5 +1,41 @@
-From Stdlib Require Import List Arith.
+From Stdlib Require Import Arith Bool String List.
 Import ListNotations.
+Require Import Stdlib.Classes.EquivDec.
+
+(* EquivDec lemmas *)
+Lemma eqb_spec {R : Type} `{EqDec R eq} (x y : R) : reflect (x = y) (x ==b y).
+Proof. unfold equiv_decb. destruct (x == y); constructor; assumption. Qed.
+
+Lemma eqb_refl {R : Type} `{EqDec R eq} (x : R) : (x ==b x) = true.
+Proof.
+  unfold equiv_decb. destruct (x == x) as [_ | C];
+  [reflexivity | now exfalso; apply C].
+Qed.
+
+Lemma eqb_eq {R: Type} `{EqDec R eq} (x y : R) : (x ==b y) = true <-> x = y.
+Proof. symmetry. apply reflect_iff, eqb_spec. Qed.
+
+Lemma eqb_neq {R : Type} `{EqDec R eq} (x y : R) : (x ==b y) = false <-> x <> y.
+Proof. destruct (eqb_spec x y); split; congruence. Qed.
+
+Lemma eqb_symm {R : Type} `{EqDec R eq} (x y : R) : (x ==b y) = (y ==b x).
+Proof.
+  destruct (x ==b y) eqn:Hxy, (y ==b x) eqn:Hyx; auto.
+  - rewrite eqb_eq in Hxy. rewrite eqb_neq in Hyx. symmetry in Hxy. contradiction.
+  - rewrite eqb_neq in Hxy. rewrite eqb_eq in Hyx. symmetry in Hyx. contradiction.
+Qed.
+
+#[export]
+Instance EqBool : EqDec bool Logic.eq.
+Proof.
+  intros a b. apply equiv_dec.
+Defined.
+
+#[export]
+Instance EqString {E : Equivalence (@Logic.eq string)} : EqDec string Logic.eq.
+Proof.
+  intros a b. apply string_dec.
+Defined.
 
 Fixpoint rev_append {A:Type} (l1 l2 : list A) : list A :=
   match l1 with
