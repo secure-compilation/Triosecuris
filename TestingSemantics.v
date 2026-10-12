@@ -35,8 +35,15 @@ Notation "m '!' x" := (M.t_apply m x)
 Notation "p '[[' pc ']]'" := (C.fetch p pc) : com_scope.
 Notation "pc '+' '1'" := (C.next pc) : com_scope.
 
+(* The speculative store buffer is keyed by address, so it cannot share the
+   register notations above, which [M.t_update] fixes to string keys. *)
+Notation "x '!s->' v ';' m" := (ListMaps.t_update m x v)
+    (at level 100, v at next level, right associativity).
+Notation "m '!s' x" := (ListMaps.apply m x)
+    (at level 20, left associativity).
+
 #[local] Existing Instance C.show_pc.
-#[local] 
+
 Definition pc := C.pc.
 Definition fetch := C.fetch.
 Definition ipc : pc := C.ipc.
@@ -45,13 +52,23 @@ Definition reg := M.t val.
 Definition cfg : Type := (pc * reg) * mem.
 Definition spec_mem := total_map nat val.
 Definition spec_cfg : Type := ((cfg * spec_mem) * bool) * bool.
-Definition ideal_cfg : Type := cfg * bool.
+Definition ideal_cfg : Type := ((cfg * spec_mem)) * bool.
 
 Definition dir := direction.
 Definition dirs := list dir.
 
 Definition ismem : spec_mem := @ListMaps.t_empty nat val UV.
 Definition icfg (q : pc) (ireg : reg) (m : mem) : cfg := (q, ireg, m).
+
+(* An address a real write cannot reach: [upd_mem] past the end is a silent
+   no-op, so a speculative write there goes to the buffer instead. *)
+Definition addr_oob (n : nat) (m : mem) : bool := stack_top m <=? n.
+
+(* [UV] is the buffer's default, so it doubles as "nothing buffered here". *)
+Definition read_buffered (n : nat) (m : mem) (smem : spec_mem) : option val :=
+  if addr_oob n m
+  then match smem !s n with UV => None | v => Some v end
+  else get_mem n m.
 
 Fixpoint eval (st : reg) (e: exp) : val :=
   match e with
@@ -289,6 +306,29 @@ Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg
                 end
               end
             end
+          | <{{x<-load[e]}}> =>
+            if ct then (S_Fault, ds, []) else
+            match
+              n <- to_nat (eval r e);;
+              v' <- read_buffered n m smem;;
+              ret ((S_Running ((pc+1, (x !-> v'; r), m), smem, false, ms), ds), [OLoad n])
+            with
+            | None => untrace "load fail" (S_Undef, ds, [])
+            | Some (c, ds, os) => (c, ds, os)
+            end
+          | <{{store[e]<-e'}}> =>
+            if ct then (S_Fault, ds, []) else
+            match
+              n <- to_nat (eval r e);;
+              let v := eval r e' in
+              if addr_oob n m then
+                ret ((S_Running ((pc+1, r, m), n !s-> v ; smem, false, ms), ds), [OStore n])
+              else
+                ret ((S_Running ((pc+1, r, upd_mem n m v), smem, false, ms), ds), [OStore n])
+            with
+            | None => untrace "store fail" (S_Undef, ds, [])
+            | Some (c, ds, os) => (c, ds, os)
+            end
           | _ =>
             if ct then  (S_Fault, ds, [])
             else
@@ -336,7 +376,7 @@ Fixpoint steps (f:nat) (p:prog) (sc: state cfg) : (state cfg * obs) :=
 Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_cfg * dirs * obs) :=
   match sic with
   | S_Running ic =>
-      let '(c, ms) := ic in
+      let '(c, smem, ms) := ic in
       let '(pc, r, m) := c in
       match C.fetch p pc with
         None => untrace ("lookup fail" ++ nl) (S_Undef, ds, [])
@@ -360,7 +400,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                   let pc' := if b' then C.of_label l else (pc+1) in
                   (*!! ideal_branch_ignore_directive *)
                   (*! let pc' := if b then C.of_label l else (pc+1) in *)
-                  ret ((S_Running ((pc', r, m), ms'), tl ds), [OBranch b])
+                  ret ((S_Running ((pc', r, m), smem, ms'), tl ds), [OBranch b])
                 with
                 | None => (S_Undef, ds, [])
                 | Some (c, ds, os) => (c, ds, os)
@@ -381,10 +421,13 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                   (*!! ideal_call_no_check_target *)
                   (*! if true then *)
                     let ms' := ms || negb (C.pc_eqb pc' l) in
+                    if addr_oob (S sp) m then
+                      ret ((S_Running ((pc', "sp"%string !-> N (S sp); r, m), S sp !s-> C.to_val (pc + 1); smem, ms'), tl ds), [OCall (C.to_cptr p l) sp])
+                    else
                     (*! *)
-                    ret ((S_Running ((pc', "sp"%string !-> N (S sp); r, upd_mem (S sp) m (C.to_val (pc+1))), ms'), tl ds), [OCall (C.to_cptr p l) sp])
+                      ret ((S_Running ((pc', "sp"%string !-> N (S sp); r, upd_mem (S sp) m (C.to_val (pc+1))), smem, ms'), tl ds), [OCall (C.to_cptr p l) sp])
                     (*!! ideal-call-push-at-sp *)
-                    (*! ret ((S_Running ((pc', "sp"%string !-> N (S sp); r, upd_mem sp m (C.to_val (pc+1))), ms'), tl ds), [OCall (C.to_cptr p l) sp]) *)
+                  (*! ret ((S_Running ((pc', "sp"%string !-> N (S sp); r, upd_mem sp m (C.to_val (pc+1))), ms'), tl ds), [OCall (C.to_cptr p l) sp]) *)
                     (*!! ideal-call-no-sp-bump *)
                     (*! ret ((S_Running ((pc', r, upd_mem (S sp) m (C.to_val (pc+1))), ms'), tl ds), [OCall (C.to_cptr p l) sp]) *)
                   else Some (S_Fault, ds, [OCall (C.to_cptr p l) sp])
@@ -402,9 +445,9 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                 (*!! ideal-load-masks-spill-slot *)
                 (*! let i := if ms then (ANum 0) else e in *)
                 n <- to_nat (eval r i);;
-                v' <- get_mem n m;;
+                v' <- read_buffered n m smem;;
                 let c := (pc+1, (x !-> v'; r), m) in
-                ret (S_Running (c, ms), ds, [OLoad n])
+                ret (S_Running (c, smem, ms), ds, [OLoad n])
               with
               | None => (S_Undef, ds, [])
               | Some (c, ds, os) => (c, ds, os)
@@ -419,8 +462,11 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                 (*!! ideal-store-masks-spill-slot *)
                 (*! let i := if ms then (ANum 0) else e in *)
                 n <- to_nat (eval r i);;
-                let c:= (pc+1, r, upd_mem n m (eval r e')) in
-                ret (S_Running (c, ms), ds, [OStore n])
+                let v := eval r e' in
+                if addr_oob n m then
+                  ret (S_Running ((pc+1, r, m), n !s-> v ; smem, ms), ds, [OStore n])
+                else
+                  ret (S_Running ((pc+1, r, upd_mem n m v), smem, ms), ds, [OStore n])
               with
               | None => (S_Undef, ds, [])
               | Some (c, ds, os) => (c, ds, os)
@@ -429,7 +475,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
               match
                 sp <- to_nat (M.t_apply r "sp"%string);;
                 (*! *)
-                _pc' <- get_mem sp m;;
+                _pc' <- read_buffered sp m smem;;
                 (*!! ideal-ret-read-above-sp *)
                 (*! _pc' <- get_mem (S sp) m;; *)
                 ret (sp, _pc')
@@ -439,7 +485,6 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                 let v := if ms then C.to_val C.null_pc else _pc' in
                 (*!! ideal-ret-no-mask *)
                 (*! let v := _pc' in *)
-                let m' := upd_mem n m v in
                 match C.of_val v with
                 (* bottom of the stack: nothing was pushed there -- same rule as
                    [step] and [spec_step] *)
@@ -454,15 +499,17 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                       pc'' <- C.of_cptr p dpc;;
                       MiniCET.is_true (C.wf_retb p pc'');;
                       let ms' := ms || negb (C.pc_eqb pc' pc'') in
+                      let m' := if addr_oob n m then m else upd_mem n m v in
+                      let smem' := if addr_oob n m then n !s-> v ; smem else smem in
                       (* the architectural target, as in [spec_step] *)
                       (*! *)
-                      ret ((S_Running ((pc'', "sp"%string !-> N (n - 1); r, m'), ms'), tl ds), [ORet (C.to_cptr p pc') n])
+                      ret ((S_Running ((pc'', "sp"%string !-> N (n - 1); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc') n])
                       (*!! ideal-ret-no-sp-restore *)
-                      (*! ret ((S_Running ((pc'', r, m'), ms'), tl ds), []) *)
+                      (*! ret ((S_Running ((pc'', r, m'), smem', ms'), tl ds), []) *)
                       (*!! ideal-ret-observes-directive *)
-                      (*! ret ((S_Running ((pc'', "sp"%string !-> N (n - 1); r, m'), ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
+                      (*! ret ((S_Running ((pc'', "sp"%string !-> N (n - 1); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
                       (*!! ideal-ret-no-slot-writeback *)
-                      (*! ret ((S_Running ((pc'', "sp"%string !-> N (n - 1); r, m), ms'), tl ds), [ORet (C.to_cptr p pc') n]) *)
+                      (*! ret ((S_Running ((pc'', "sp"%string !-> N (n - 1); r, m), smem, ms'), tl ds), [ORet (C.to_cptr p pc') n]) *)
                   with
                   | None => untrace ("ideal ret failed. PC: " ++ show pc ++ "; PROGRAM: " ++ show p ++ nl) (S_Undef, ds, [])
                   | Some (c, ds, os) => (c, ds, os)
@@ -471,7 +518,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
               end
           | _ =>
               match step p (S_Running c) with
-              | (S_Running c', o) => (S_Running (c', ms), ds, o)
+              | (S_Running c', o) => (S_Running (c', smem, ms), ds, o)
               | (S_Undef, o) => (S_Undef, ds, o)
               | (S_Fault, o) => (S_Fault, ds, o)
               | (S_Term, o) => (S_Term, ds, o)

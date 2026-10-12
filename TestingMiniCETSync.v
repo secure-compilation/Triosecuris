@@ -163,8 +163,16 @@ Definition obs_eqb_sync (p: prog) (oideal ospec: obs) : bool :=
   | None => false
   end.
 
+(* The buffer holds return addresses pushed by an out-of-bounds [call], so its
+   values are translated exactly like the memory's. *)
+Definition smem_sync (p: prog) (smem: spec_mem) : option spec_mem :=
+  let '(d, l) := smem in
+  d' <- val_sync p d;;
+  l' <- map_opt (fun '(k, v) => v' <- val_sync p v;; Some (k, v')) l;;
+  ret (d', l').
+
 Definition spec_cfg_sync (p: prog) (ic: ideal_cfg): option spec_cfg :=
-  let '(c, ms) := ic in
+  let '(c, smem, ms) := ic in
   let '(pc, r, m) := c in
   pc' <- pc_sync p pc;;
   r' <- r_sync p r ms;;
@@ -178,7 +186,8 @@ Definition spec_cfg_sync (p: prog) (ic: ideal_cfg): option spec_cfg :=
   m' <- (vals <- map_opt (val_sync p) m.(memory);; Some (with_memory m vals));;
   (*!! spec_cfg_sync-no-stack *)
   (*! let m' := m in *)
-  ret (pc', r', m', ismem, false, ms).
+  smem' <- smem_sync p smem;;
+  ret (pc', r', m', smem', false, ms).
 
 Definition steps_to_sync_point (tp: prog) (tsc: spec_cfg) (ds: dirs) : option nat :=
   let '(tc, smem, ct, ms) := tsc in
@@ -252,7 +261,7 @@ Definition steps_to_sync_point (tp: prog) (tsc: spec_cfg) (ds: dirs) : option na
     end.
 
 Definition gen_directive_from_ideal_cfg (p: prog) (pst: list nat) (ic: ideal_cfg) : G dirs :=
-  let '(c, ms) := ic in
+  let '(c, _, ms) := ic in
   let '(pc, r, m) := c in
   match p[[pc]] with
   | Some i =>
@@ -279,7 +288,7 @@ Definition gen_directive_from_ideal_cfg (p: prog) (pst: list nat) (ic: ideal_cfg
   end.
 
 Definition get_directive_for_seq_behaviour (p: prog) (pst: list nat) (ic: ideal_cfg) : dirs :=
-  let '(c, ms) := ic in
+  let '(c, _, ms) := ic in
   let '(pc, r, m) := c in
   match p[[pc]] with
   | Some i =>
@@ -306,7 +315,7 @@ Definition get_directive_for_seq_behaviour (p: prog) (pst: list nat) (ic: ideal_
 
 (* Instructions [ideal_step] refuses to execute without a directive. *)
 Definition needs_dir (p: prog) (ic: ideal_cfg) : bool :=
-  let '(c, ms) := ic in
+  let '(c, _, ms) := ic in
   let '(pc, r, m) := c in
   match p[[pc]] with
   | Some <{{branch _ to _}}> | Some <{{call _}}> => true
@@ -315,7 +324,7 @@ Definition needs_dir (p: prog) (ic: ideal_cfg) : bool :=
   end.
 
 Definition gen_directive_triggering_misspec (p: prog) (pst: list nat) (ic: ideal_cfg) : G dirs :=
-  let '(c, ms) := ic in
+  let '(c, _, ms) := ic in
   let '(pc, r, m) := c in
   match p[[pc]] with
   | Some i =>
@@ -423,7 +432,7 @@ Definition single_step_cc := (
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack stk_size p) (fun stk =>
   forAll ( @arbitrary bool _)  (fun ms =>
-  let icfg := (cfg_with_stack pc rs1 m1 stk, ms) in
+  let icfg := (cfg_with_stack pc rs1 m1 stk, ismem, ms) in
   let '((_, reg, mem), _) := icfg in
   printTestCase ("Reg: " ++ nl ++ show reg ++ nl ++ "Injected mem: " ++ nl ++ show mem ++ nl)%string (
   printTestCase ("Hardened program:" ++ nl ++ show (uslh_prog p))%string (
@@ -496,7 +505,7 @@ Definition single_step_ideal_sf := (
   forAll (gen_pc_from_prog p') (fun pc =>
   forAll (gen_call_stack 3 p') (fun stk =>
   forAll (@arbitrary bool _) (fun ms =>
-  let icfg := (cfg_with_stack pc rs1 m1 stk, ms) in
+  let icfg := (cfg_with_stack pc rs1 m1 stk, ismem, ms) in
   forAll (gen_directive_from_ideal_cfg p' pst icfg) (fun ds =>
   match ideal_step p' (S_Running icfg) ds with
   | (S_Undef, _, _) => trace ("ideal exec fails sc: "%string ++ (show icfg) ++ ", prog: "%string ++ show p' ++ " prog end!!!"%string) (checker false)
@@ -516,8 +525,8 @@ Definition single_step := (
   let p := transform_load_store_prog c tm m1 p in
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack 3 p) (fun stk =>
-  let icfg1 := (cfg_with_stack pc rs1 m1 stk, true) in
-  let icfg2 := (cfg_with_stack pc rs2 m2 stk, true) in
+  let icfg1 := (cfg_with_stack pc rs1 m1 stk, ismem, true) in
+  let icfg2 := (cfg_with_stack pc rs2 m2 stk, ismem, true) in
   forAll (gen_directive_from_ideal_cfg p pst icfg1) (fun ds =>
   match (ideal_step p (S_Running icfg1) ds) with
   | (S_Running _, _, o1) =>
@@ -554,7 +563,7 @@ Definition single_step_seq_ideal := (
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack 3 p) (fun stk =>
   let cfg := cfg_with_stack pc rs1 m1 stk in
-  let icfg := (cfg, false) in
+  let icfg := (cfg, ismem, false) in
   let ds := get_directive_for_seq_behaviour p pst icfg in
   match (step p (S_Running cfg)) with
   | (S_Running _, o1) =>
@@ -591,7 +600,7 @@ Definition single_step_trigger := (
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack 3 p) (fun stk =>
   let cfg := cfg_with_stack pc rs1 m1 stk in
-  let icfg := (cfg, false) in
+  let icfg := (cfg, ismem, false) in
   forAll (gen_directive_triggering_misspec p pst icfg) (fun ds =>
   (* An empty [ds] here means no mis-speculating directive exists at this pc --
      a [ret] whose return address is the program's only well-formed one, say --
