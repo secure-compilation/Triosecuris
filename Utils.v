@@ -37,6 +37,12 @@ Proof.
   intros a b. apply string_dec.
 Defined.
 
+#[export]
+Instance EqNat : EqDec nat Logic.eq.
+Proof.
+  intros a b. apply equiv_dec.
+Qed.
+
 Fixpoint rev_append {A:Type} (l1 l2 : list A) : list A :=
   match l1 with
   | [] => l2
@@ -207,15 +213,9 @@ Proof.
       [left | right]; apply prefix_cons; auto.
 Qed.
 
-From Stdlib Require Import String.
-
-
 Definition untrace {A : Type} (s : string) (a : A) : A := a.
-
-
 
 Definition is_some {A} (v : option A) : bool := match v with
   | Some _ => true
   | None => false
   end.
-

@@ -4,11 +4,12 @@ From Stdlib Require Import Arith.EqNat.
 From Stdlib Require Import Arith.PeanoNat.
 From Stdlib Require Import Lia.
 From Stdlib Require Import List. Import ListNotations.
+From QuickChick Require Import QuickChick Tactics.
+Import QcNotation QcDefaultNotation. Open Scope qc_scope.
+Extract Inlined Constant Nat.max => "Stdlib.max".
 Set Default Goal Selector "!".
 Require Import Stdlib.Classes.EquivDec.
 
-From QuickChick Require Import QuickChick Tactics.
-Import QcNotation QcDefaultNotation. Open Scope qc_scope.
 Require Export ExtLib.Structures.Monads.
 Require Import ExtLib.Data.List.
 Import MonadNotation.
@@ -29,7 +30,7 @@ Notation t_apply := ListTotalMap.t_apply.
 Definition pub_equiv (P : ListTotalMap.t label) {X:Type} (s1 s2 : ListTotalMap.t X) :=
   forall x:string, t_apply P x = true -> t_apply s1 x = t_apply s2 x.
 
-Definition pub_equivb (P : ListTotalMap.t label) {X:Type} `{EqDec X} (s1 s2 : ListTotalMap.t X) : bool :=
+Definition pub_equivb (P : ListTotalMap.t label) {X:Type} `{EqDec X eq} (s1 s2 : ListTotalMap.t X) : bool :=
   match P, s1, s2 with
   | (dP,mP), (d1,m1), (d2,m2) =>
       if dP
@@ -60,9 +61,10 @@ Fixpoint forallb3 {A B C} (P : A -> B -> C -> bool) (a: list A) (b: list B) (c: 
 Definition pub_equiv_listb (P: list label) {X:Type} `{EqDec X} (m1 m2: list X) :=
   forallb3 (fun (a:label) (b:X) (c:X) => if a then (b ==b c) else true) P m1 m2.
 
-Definition gen_pub_equiv (P : ListTotalMap.t label) {X: Type} `{Gen X} (s: ListTotalMap.t X) : G (ListTotalMap.t X) :=
+Definition gen_pub_equiv (P : ListTotalMap.t label) {X: Type}
+  `{Gen X} (s: ListTotalMap.t X) : G (ListTotalMap.t X) :=
   let '(d, m) := s in
-  new_m <- List.fold_left (fun (acc : G (Map X)) (c : string * X) => let '(k, v) := c in
+  new_m <- List.fold_left (fun (acc : G (Map string X)) (c : string * X) => let '(k, v) := c in
     new_m <- acc;;
     new_v <- (if t_apply P k then ret v else arbitrary);;
     ret ((k, new_v)::new_m)
@@ -1053,7 +1055,7 @@ Definition wt_valb (v: val) (t: ty) : bool :=
   | _, _ => false
   end.
 
-Definition rs_wtb (rs : total_map val) (c : rctx) : bool :=
+Definition rs_wtb (rs : total_map string val) (c : rctx) : bool :=
   let '(dv, m) := rs in
   let '(dt, tm) := c in
   wt_valb dv dt && forallb (fun '(x, t) => wt_valb (t_apply rs x) t) tm.

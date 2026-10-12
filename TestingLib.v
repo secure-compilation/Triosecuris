@@ -60,7 +60,6 @@ Module Import MTT := TaintTracking(ST).
 
 
 
-
 Variant sc_output_st : Type :=
   | SRStep : obs -> dirs -> list ST.pc -> spec_cfg -> sc_output_st
   | SRError : obs -> dirs -> list ST.pc -> spec_cfg -> sc_output_st
@@ -77,7 +76,7 @@ Definition gen_step_direction (i: inst) (c: cfg) (pst: list nat)
 
 Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir): G sc_output_st :=
-  let '(c, ct, ms) := sc in
+  let '(c, smem, ct, ms) := sc in
   let '(pc, r, m) := c in
   match fetch p pc with
   | Some i =>
@@ -141,7 +140,7 @@ Variant spec_exec_result : Type :=
       | SETerm sc os ds trace => report "Speculative execution terminated"%string
             [trace_item "trace"%string trace; ("directives"%string, show_dirs ds)]
       | SEError cfg os ds trace =>
-          let '((_, rs, m), ct, ms) := cfg in
+          let '((_, rs, m), smem, ct, ms) := cfg in
           report "Speculative execution got stuck"%string
             (trace_item "trace"%string trace
              :: ("directives"%string, show_dirs ds)
@@ -179,7 +178,7 @@ Definition gen_spec_steps_sized (f : nat) (p:prog) (pst: list nat) (sc:spec_cfg)
 
 
 Definition spec_step_acc (p:prog) (sc:spec_cfg) (ds: dirs) : sc_output_st :=
-  let '((pc, _, _), _, _) := sc in
+  let '((pc, _, _), _, _, _) := sc in
   match spec_step p (S_Running sc) ds with
   | (S_Running sc', ds', os) => SRStep os ds' [pc] sc'
   | (S_Term, _, _) => SRTerm [] [] [pc] sc
@@ -237,7 +236,7 @@ Definition load_store_trans_stuck_free := (
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 100) (fun m =>
   let p' := transform_load_store_prog c tm m p in
-  let icfg := (ipc, "sp" !-> N (stack_base m); rs, m) in
+  let icfg := (ipc, "sp"%string !-> N (stack_base m); rs, m) in
   let r1 := stuck_free 1000 p' icfg in
   match r1 with
   | ETerm st os => checker true
@@ -266,7 +265,7 @@ Definition no_obs_prog_no_obs := (
   (* no heap, a small stack: sp starts at the stack base, which holds no return
      address, so a [ret] there terminates *)
   let m := {| heap_length := 0; stack_length := 10; memory := mkStk 10 |} in
-  let icfg := (ipc, "sp" !-> N (stack_base m); empty_rs, m) in
+  let icfg := (ipc, "sp"%string !-> N (stack_base m); empty_rs, m) in
     match taint_tracking 100 p icfg with
     | Some (_, leaked_vars, leaked_mems) =>
         checker (seq.nilp leaked_vars && seq.nilp leaked_mems)
@@ -289,7 +288,7 @@ Definition unused_var_no_leak `{Show input_st}
   forAll gen_prog_and_unused_var (fun '(c, tm, pst, p, unused_var) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 105) (fun m =>
-  let icfg := (ipc, "sp" !-> N (stack_base m); rs, m) in
+  let icfg := (ipc, "sp"%string !-> N (stack_base m); rs, m) in
   let p' := transform_prog c tm m p in
   match stuck_free 100 p' icfg with
   | ETerm (_, _, tobs) os =>
@@ -317,14 +316,14 @@ Definition unused_var_no_leak `{Show input_st}
           (checker false)
   end)))).
 
-Definition gen_pub_equiv_same_ty (P : total_map label) (s: total_map val) : G (total_map val) :=
+Definition gen_pub_equiv_same_ty (P : total_map string label) (s: total_map string val) : G (total_map string val) :=
   let f := fun v => match v with
                  | N _ => n <- arbitrary;; ret (N n)
                  | FP _ => l <- arbitrary;; ret (FP l)
                  | UV => ret UV
                  end in
   let '(d, m) := s in
-  new_m <- List.fold_left (fun (acc : G (Map val)) (c : string * val) => let '(k, v) := c in
+  new_m <- List.fold_left (fun (acc : G (Map string val)) (c : string * val) => let '(k, v) := c in
     new_m <- acc;;
     new_v <- (if t_apply P k then ret v else f v);;
     ret ((k, new_v)::new_m)
@@ -355,7 +354,7 @@ Definition test_ni (transform : rctx -> tmem -> mem -> prog -> prog) := (
   forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 100) (fun m =>
-  let icfg := (ipc, "sp" !-> N (stack_base m); rs, m) in
+  let icfg := (ipc, "sp"%string !-> N (stack_base m); rs, m) in
   let p' := transform c tm m p in
   let r1 := taint_tracking 100 p' icfg in
   match r1 with
@@ -366,7 +365,7 @@ Definition test_ni (transform : rctx -> tmem -> mem -> prog -> prog) := (
       (* the pub-equivalent run keeps the same layout, only the contents vary *)
       forAll (gen_pub_mem_equiv_same_ty PM m.(memory)) (fun m'vals =>
       let m' := with_memory m m'vals in
-      let icfg' := (ipc, "sp" !-> N (stack_base m); rs', m') in
+      let icfg' := (ipc, "sp"%string !-> N (stack_base m); rs', m') in
       let r2 := taint_tracking 100 p' icfg' in
       match r2 with
       | Some (os2', _, _) =>
@@ -391,19 +390,19 @@ Definition test_safety_preservation `{Show dir} `{Show ST.pc}
   forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 200) (fun m =>
-  let rs := "sp" !-> N (stack_base m); rs in
+  let rs := "sp"%string !-> N (stack_base m); rs in
   let icfg := (ipc, rs, m) in
   let p' := transform_load_store_prog c tm m p in
   let harden := harden p' in
   let rs' := spec_rs rs in
   let icfg' := (ipc, rs', m) in
-  let iscfg := (icfg', true, false) in
+  let iscfg := (icfg', ismem, true, false) in
   let h_pst := pst_calc harden in
   forAll (gen_spec_steps_sized 200 harden h_pst iscfg gen_dbr gen_dcall gen_dret) (fun ods =>
   (match ods with
   | SETerm sc os ds trace => checker true
   | SEError c' os ds trace =>
-      let '((pc, rs, mem), _, ms) := c' in
+      let '((pc, rs, mem), _, _, ms) := c' in
       if is_stack_overflow rs mem then collect "Stack overflow"%string  (checker tt) else
         (* the configuration, the directives and the trace are already in the
           [spec_exec_result] QuickChick prints *)
@@ -423,7 +422,7 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
   forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst 1000) (fun m1 =>
-  let rs1 := "sp" !-> N (stack_base m1); rs1 in
+  let rs1 := "sp"%string !-> N (stack_base m1); rs1 in
   let icfg1 := (ipc, rs1, m1) in
   let p' := transform_load_store_prog c tm m1 p in
   let r1 := taint_tracking 1000 p' icfg1 in
@@ -432,7 +431,7 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
       let P := (false, map (fun x => (x,true)) tvars) in
       let PM := tms_to_pm (mem_length m1) tms in
       forAll (gen_pub_equiv_same_ty P rs1) (fun rs2 =>
-      let rs2 := "sp" !-> N (stack_base m1); rs2 in
+      let rs2 := "sp"%string !-> N (stack_base m1); rs2 in
       (* same layout as [m1], only the contents differ *)
       forAll (gen_pub_mem_equiv_same_ty PM m1.(memory)) (fun m2vals =>
       let m2 := with_memory m1 m2vals in
@@ -444,7 +443,7 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
           then (let harden := harden p' in
                 let rs1' := spec_rs rs1 in
                 let icfg1' := (ipc, rs1', m1) in
-                let iscfg1' := (icfg1', true, false) in
+                let iscfg1' := (icfg1', ismem, true, false) in
                 let h_pst := pst_calc harden in
                 forAll (gen_spec_steps_sized 1000 harden h_pst iscfg1' gen_dbr gen_dcall gen_dret) (fun ods1 =>
                 (match ods1 with
@@ -452,7 +451,7 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
 
                      let rs2' := spec_rs rs2 in
                      let icfg2' := (ipc, rs2', m2) in
-                     let iscfg2' := (icfg2', true, false) in
+                     let iscfg2' := (icfg2', ismem, true, false) in
                      let sc_r2 := spec_steps_acc 1000 harden iscfg2' ds in
                      match sc_r2 with
                      | SETerm _ os2 _ trace2 =>
@@ -470,7 +469,7 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
                  | SEOutOfFuel _ os1 ds trace1 =>
                      let rs2' := spec_rs rs2 in
                      let icfg2' := (ipc, rs2', m2) in
-                     let iscfg2' := (icfg2', true, false) in
+                     let iscfg2' := (icfg2', ismem, true, false) in
                      let sc_r2 := spec_steps_acc 1000 harden iscfg2' ds in
                      match sc_r2 with
                      | SETerm _ os2 _ _ => collect "se1 oof but se2 term"%string (checker tt)
