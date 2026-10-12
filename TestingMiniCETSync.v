@@ -28,7 +28,8 @@ From SECF Require Import TestingSemantics ListMaps.
 (*! Section testing_sync *)
 Module Import MCC := MiniCETCommon(ListTotalMap).
 Local Module Import MCSemantics := MiniCETSemantics(ListTotalMap).
-Local Module Import IS := IdealStepSemantics(MCSemantics).
+
+Definition pc_is_cptr : MCSemantics.pc = cptr := @Logic.eq_refl Type cptr.
 
 (* Extract Constant defNumTests => "100000". *)
 

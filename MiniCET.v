@@ -38,10 +38,17 @@ Inductive binop : Type :=
 
 Definition cptr : Type := nat * nat.
 
+Definition pc_eqb (p1 p2 : cptr) : bool :=
+  (fst p1 =? fst p2) && (snd p1 =? snd p2).
+
+Definition null_pc : cptr := (0, 0).
+
 Variant val : Type :=
   | N (n:nat)
   | FP (pc: cptr)
   | UV.
+
+Definition null_fp : val := FP null_pc.
 
 Inductive ty : Type := | TNum | TPtr.
 
@@ -310,8 +317,8 @@ Definition observation_eqb (os1 : observation) (os2 : observation) : bool :=
   | OBranch b, OBranch b' => Bool.eqb b b'
   | OLoad i, OLoad i' => (i =? i')
   | OStore i, OStore i' => (i =? i')
-  | OCall v n, OCall v' n' => (fst v =? fst v') && (snd v =? snd v') && (n =? n')
-  | ORet v n, ORet v' n' => (fst v =? fst v') && (snd v =? snd v') && (n =? n')
+  | OCall v n, OCall v' n' => pc_eqb v v' && (n =? n')
+  | ORet v n, ORet v' n' => pc_eqb v v' && (n =? n')
   | _, _ => false
   end.
 
@@ -708,7 +715,7 @@ Definition wf_calling_convention (p : prog) : bool :=
 Definition wf_retb (p: prog) (pc: cptr) : bool :=
   let '(l, o) := pc in
   (* YF: We allow to return to &(0, 0) for ret masking. TBD: if we should allow any other call targets. *)
-  ((l =? 0) && (o =? 0)) || match MiniCET.fetch p (l, o) with
+  pc_eqb (l, o) null_pc || match MiniCET.fetch p (l, o) with
   | Some _ => match o with
              | 0 => false
              | S o' => match MiniCET.fetch p (l, o') with
