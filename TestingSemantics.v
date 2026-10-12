@@ -23,13 +23,15 @@ Module Type Semantics(M : TMap).
   Parameter pc : Type.
   Definition reg := M.t val.
   Definition cfg : Type := (pc * reg) * mem.
-  Definition spec_cfg : Type := (cfg * bool) * bool.
+  Definition spec_mem := total_map nat val.
+  Definition spec_cfg : Type := ((cfg * spec_mem) * bool) * bool.
   Definition ideal_cfg : Type := cfg * bool.
 
   Definition dir := direction.
   Definition dirs := list dir.
 
   Parameter ipc : pc.
+  Parameter ismem : spec_mem.
   Parameter icfg : pc -> reg -> mem -> cfg.
 
   Parameter eval : reg -> exp -> val.
@@ -45,13 +47,15 @@ Module Import Common := MiniCETCommon(M).
 
 Definition reg := M.t val.
 Definition cfg : Type := (cptr*reg)*mem.
-Definition spec_cfg : Type := ((cfg * bool) * bool).
+Definition spec_mem := total_map nat val.
+Definition spec_cfg : Type := (((cfg * spec_mem) * bool) * bool).
 Definition ideal_cfg : Type := cfg * bool.
 
 Definition pc := cptr.
 Definition ipc : cptr := (0, 0).
 Definition icfg (ipc : pc) (ireg : reg) (mem : mem) : cfg :=
   (ipc, ireg, mem).
+Definition ismem := @ListMaps.t_empty nat val UV.
 
 Definition dir := direction.
 Definition dirs := dirs.
@@ -165,7 +169,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
   Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg * dirs * obs) :=
     match ssc with
     | S_Running sc =>
-        let '(c, ct, ms) := sc in
+        let '(c, smem, ct, ms) := sc in
         let '(pc, r, m) := c in
         match p[[pc]] with
         | None => untrace "lookup fail" (S_Undef, ds, [])
@@ -183,7 +187,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
                   let b := not_zero n in
                   let ms' := ms || negb (Bool.eqb b b') in
                   let pc' := if b' then (l, 0) else (pc+1) in
-                  ret ((S_Running ((pc', r, m), ct, ms'), tl ds), [OBranch b])
+                  ret ((S_Running ((pc', r, m), smem, ct, ms'), tl ds), [OBranch b])
               with
               | None => untrace "branch fail" (S_Undef, ds, [])
               | Some (c, ds, os) => (c, ds, os)
@@ -199,8 +203,12 @@ Fixpoint eval (st : reg) (e: exp) : val :=
                   l <- to_fp (eval r e);;
                   sp <- to_nat (M.t_apply r "sp");;
                   let ms' := ms || negb ((fst pc' =? fst l) && (snd l =? (snd pc')%nat)) in
+                  if stack_top m <=? S sp then 
+                  (* Update spec mem if stack out of bounds *)
+                    ret ((S_Running ((pc', "sp" !-> N (S sp); r, m), ListMaps.t_update smem (S sp) (FP (pc + 1)), true, ms'), tl ds), [OCall l sp])
                   (*! *)
-                  ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (FP (pc+1))), true, ms'), tl ds), [OCall l sp])
+                  else
+                    ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (FP (pc+1))), smem, true, ms'), tl ds), [OCall l sp])
                   (*!! spec-call-no-set-ct *)
                   (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (FP (pc+1))), ct, ms'), tl ds), [OCall l sp]) *)
                   (*!! spec-call-push-pc *)
@@ -213,9 +221,9 @@ Fixpoint eval (st : reg) (e: exp) : val :=
               end
             | <{{ctarget}}> =>
               match
-                is_true ct;;
+                (* is_true ct;; *)
                 (*! *)
-                (ret (S_Running ((pc+1, r, m), false, ms), ds, []))
+                (ret (S_Running ((pc+1, r, m), smem, false, ms), ds, []))
                 (*!! spec_ctarget_no_clear *)
                 (*! (ret (S_Running ((pc+1, r, m), ct, ms), ds, [])) *)
               with
@@ -226,7 +234,11 @@ Fixpoint eval (st : reg) (e: exp) : val :=
               if ct then (S_Fault, ds, []) else
               match
                 sp <- to_nat (M.t_apply r "sp");;
-                _pc' <- get_mem sp m;;
+                (* Check the speculative cache *)
+                _pc' <- match ListMaps.apply smem sp with
+                  | UV => get_mem sp m 
+                  | pc' => Some pc' 
+                end;;
                 ret (sp, _pc')
               with
               | None => untrace "ret: no return slot" (S_Undef, ds, [])
@@ -244,7 +256,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
                       is_true (wf_retb p pc'');;
                       let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
                       (*! *)
-                      ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), false, ms'), tl ds), [ORet pc' n])
+                      ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), smem, false, ms'), tl ds), [ORet pc' n])
                       (*!! spec-ret-no-sp-restore *)
                       (*! ret ((S_Running ((pc'', r, m), false, ms'), tl ds), []) *)
                       (*!! spec-ret-observes-directive *)
@@ -256,10 +268,10 @@ Fixpoint eval (st : reg) (e: exp) : val :=
                 end
               end
             | _ =>
-              if ct then   (S_Fault, ds, [])
+              if ct then  (S_Fault, ds, [])
               else
                 match step p (S_Running c) with
-                | (S_Running c', o) => (S_Running (c', false, ms), ds, o)
+                | (S_Running c', o) => (S_Running (c', smem, false, ms), ds, o)
                 | (S_Undef, o) => (S_Undef, ds, o)
                 | (S_Fault, o) => (S_Fault, ds, o)
                 | (S_Term, o) => (S_Term, ds, o)
@@ -353,7 +365,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                   (*! if true then *)
                     let ms' := ms || negb ((fst pc' =? fst l) && (snd pc' =? snd l)) in
                     (*! *)
-                    ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (FP (pc+1))), ms'), tl ds), [OCall l sp])
+                    ret ((S_Running ((pc', "sp"%string !-> N (S sp); r, upd_mem (S sp) m (FP (pc+1))), ms'), tl ds), [OCall l sp])
                     (*!! ideal-call-push-at-sp *)
                     (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem sp m (FP (pc+1))), ms'), tl ds), [OCall l sp]) *)
                     (*!! ideal-call-no-sp-bump *)
@@ -426,7 +438,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                       let ms' := ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) in
                       (* the architectural target, as in [spec_step] *)
                       (*! *)
-                      ret ((S_Running ((pc'', "sp" !-> N (n - 1); r, m'), ms'), tl ds), [ORet pc' n])
+                      ret ((S_Running ((pc'', "sp"%string !-> N (n - 1); r, m'), ms'), tl ds), [ORet pc' n])
                       (*!! ideal-ret-no-sp-restore *)
                       (*! ret ((S_Running ((pc'', r, m'), ms'), tl ds), []) *)
                       (*!! ideal-ret-observes-directive *)

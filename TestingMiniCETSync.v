@@ -177,10 +177,10 @@ Definition spec_cfg_sync (p: prog) (ic: ideal_cfg): option spec_cfg :=
   m' <- (vals <- map_opt (val_sync p) m.(memory);; Some (with_memory m vals));;
   (*!! spec_cfg_sync-no-stack *)
   (*! let m' := m in *)
-  ret (pc', r', m', false, ms).
+  ret (pc', r', m', ismem, false, ms).
 
 Definition steps_to_sync_point (tp: prog) (tsc: spec_cfg) (ds: dirs) : option nat :=
-  let '(tc, ct, ms) := tsc in
+  let '(tc, smem, ct, ms) := tsc in
   let '(pc, r, m) := tc in
 
     blk <- nth_error tp (fst pc);;
@@ -399,11 +399,12 @@ Definition mem_eqb (m1 m2 : mem) : bool :=
   && (m1.(memory) ==b m2.(memory)).
 
 Definition spec_cfg_eqb_up_to_callee (st1 st2 : spec_cfg) :=
-  let '(pc1, r1, m1, c1, ms1) := st1 in
-  let '(pc2, r2, m2, c2, ms2) := st2 in
+  let '(pc1, r1, m1, smem1, c1, ms1) := st1 in
+  let '(pc2, r2, m2, smem2, c2, ms2) := st2 in
   (pc1 ==b pc2)
   && (c1 ==b c2) && (ms1 ==b ms2)
   && mem_eqb m1 m2
+  && (smem1 ==b smem2)
   && pub_equivb (t_empty public) r1 (callee !-> (r1 ! callee) ; r2).
 
 Instance showCfg : Show cfg := {
@@ -469,7 +470,7 @@ Definition single_step_cc := (
       end
       )
   end
-  )))))))).
+  ))))))))).
 
 QuickChick single_step_cc.
 
@@ -481,7 +482,6 @@ Definition single_step_sf := (
   forAll (gen_pc_from_prog p') (fun pc =>
   forAll (gen_call_stack 3 p') (fun stk =>
   let sc := cfg_with_stack pc rs1 m1 stk in
-  let '(_, r, m) := sc in
   match step p' (S_Running sc) with
   | (S_Undef, _) => trace ("seq exec fails sc: "%string ++ (show sc) ++ ", prog: "%string ++ show p' ++ " prog end!!!"%string) (checker false)
   | _ => checker true
