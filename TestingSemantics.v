@@ -94,244 +94,244 @@ Include SemTypes M C.
 
 Existing Instance C.show_pc.
 
-  Definition step (p:prog) (sc:state cfg) : (state cfg * obs) :=
-    match sc with
-    | S_Running c =>
-        let '(pc, r, m) := c in
-        match p[[pc]] with
-        | Some i =>
-            match i with
-            | <{{skip}}> | <{{ctarget}}> =>
-              (S_Running (pc+1, r, m), [])
-            | <{{x:=e}}> =>
-              (S_Running (pc+1, (x !-> eval r e; r), m), [])
-            | <{{x <- div e1, e2}}> =>
-              match
-                v1 <- to_nat (eval r e1);;
-                v2 <- to_nat (eval r e2);;
-                let res: val := match v2 with
-                  | 0 => UV
-                  | _ => N (div v1 v2)
-                  end
-                in
-                Some ((pc + 1, (x !-> res; r), m), [ODiv v1 v2])
-              with
-              | Some (c, o) =>
-                (S_Running c, o)
-              | None =>
-                (S_Undef, [])
+Definition step (p:prog) (sc:state cfg) : (state cfg * obs) :=
+  match sc with
+  | S_Running c =>
+      let '(pc, r, m) := c in
+      match p[[pc]] with
+      | Some i =>
+          match i with
+          | <{{skip}}> | <{{ctarget}}> =>
+            (S_Running (pc+1, r, m), [])
+          | <{{x:=e}}> =>
+            (S_Running (pc+1, (x !-> eval r e; r), m), [])
+          | <{{x <- div e1, e2}}> =>
+            match
+              v1 <- to_nat (eval r e1);;
+              v2 <- to_nat (eval r e2);;
+              let res: val := match v2 with
+                | 0 => UV
+                | _ => N (div v1 v2)
+                end
+              in
+              Some ((pc + 1, (x !-> res; r), m), [ODiv v1 v2])
+            with
+            | Some (c, o) =>
+              (S_Running c, o)
+            | None =>
+              (S_Undef, [])
+            end
+          | <{{branch e to l}}> =>
+            match
+              n <- to_nat (eval r e);;
+              let b := not_zero n in
+              ret ((if b then C.of_label l else pc+1, r, m), [OBranch b])
+            with
+            | Some (c, o) => (S_Running c, o)
+            | None => (S_Undef, [])
+            end
+          | <{{jump l}}> =>
+            (S_Running (C.of_label l, r, m), [])
+          | <{{x<-load[e]}}> =>
+            match
+              n <- to_nat (eval r e);;
+              v' <- get_mem n m;;
+              ret ((pc+1, (x !-> v'; r), m), [OLoad n])
+            with
+            | Some (c, o) => (S_Running c, o)
+            | None => (S_Undef, [])
+            end
+          | <{{store[e]<-e'}}> =>
+            match
+              n <- to_nat (eval r e);;
+              ret ((pc+1, r, upd_mem n m (eval r e')), [OStore n])
+            with
+            | Some (c, o) => (S_Running c, o)
+            | None => (S_Undef, [])
+            end
+          | <{{call e}}> =>
+            match
+              l <- C.of_val (eval r e);;
+              sp <- to_nat (M.t_apply r "sp");;
+              ret ((l, "sp" !-> N (S sp); r, upd_mem (S sp) m (C.to_val (pc+1))), [OCall (C.to_cptr p l) sp])
+            with
+            | Some (c, o) => (S_Running c, o)
+            | None => (S_Undef, [])
+            end
+          (*| <{{x <- peek}}> =>*)
+            (*let val := *)
+              (*match sk with*)
+              (*| [] => UV*)
+              (*| pc' :: _ => FP pc'*)
+              (*end*)
+            (*in*)
+            (*(S_Running (pc + 1, (x !-> val; r), m), [])*)
+          | <{{ret}}> =>
+            match
+              sp <- to_nat (M.t_apply r "sp");;
+              _pc' <- get_mem sp m;;
+              ret (sp, _pc')
+            with
+            | None => (S_Undef, [])
+            | Some (n, _pc') =>
+              match C.of_val _pc' with
+              (* bottom of the stack: this returns out of the program *)
+              | None => if stack_empty n m then (S_Term, []) else (S_Undef, [])
+              | Some pc' => (S_Running (pc', "sp" !-> N(n - 1); r, m), [ORet (C.to_cptr p pc') n])
               end
-            | <{{branch e to l}}> =>
-              match
+            end
+          end
+      | None => (S_Fault, [])
+      end
+  | s => (s, [])
+  end.
+
+Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg * dirs * obs) :=
+  match ssc with
+  | S_Running sc =>
+      let '(c, smem, ct, ms) := sc in
+      let '(pc, r, m) := c in
+      match p[[pc]] with
+      | None => untrace "lookup fail" (S_Undef, ds, [])
+      | Some i =>
+          match i with
+          | <{{branch e to l}}> =>
+            if ct then   (S_Fault, ds, []) else
+            match
+              if seq.nilp ds then
+                untrace "Branch: Directions are empty!" None
+              else
+                d <- hd_error ds;;
+                b' <- is_dbranch d;;
                 n <- to_nat (eval r e);;
                 let b := not_zero n in
-                ret ((if b then C.of_label l else pc+1, r, m), [OBranch b])
-              with
-              | Some (c, o) => (S_Running c, o)
-              | None => (S_Undef, [])
-              end
-            | <{{jump l}}> =>
-              (S_Running (C.of_label l, r, m), [])
-            | <{{x<-load[e]}}> =>
-              match
-                n <- to_nat (eval r e);;
-                v' <- get_mem n m;;
-                ret ((pc+1, (x !-> v'; r), m), [OLoad n])
-              with
-              | Some (c, o) => (S_Running c, o)
-              | None => (S_Undef, [])
-              end
-            | <{{store[e]<-e'}}> =>
-              match
-                n <- to_nat (eval r e);;
-                ret ((pc+1, r, upd_mem n m (eval r e')), [OStore n])
-              with
-              | Some (c, o) => (S_Running c, o)
-              | None => (S_Undef, [])
-              end
-            | <{{call e}}> =>
-              match
+                let ms' := ms || negb (Bool.eqb b b') in
+                let pc' := if b' then C.of_label l else (pc+1) in
+                ret ((S_Running ((pc', r, m), smem, ct, ms'), tl ds), [OBranch b])
+            with
+            | None => untrace "branch fail" (S_Undef, ds, [])
+            | Some (c, ds, os) => (c, ds, os)
+            end
+          | <{{call e}}> =>
+            if ct then   (S_Fault, ds, []) else
+            match
+              if seq.nilp ds then
+                untrace "Call: Directions are empty!" None
+              else
+                d <- hd_error ds;;
+                dpc <- is_dcall d;;
+                pc' <- C.of_cptr p dpc;;
                 l <- C.of_val (eval r e);;
                 sp <- to_nat (M.t_apply r "sp");;
-                ret ((l, "sp" !-> N (S sp); r, upd_mem (S sp) m (C.to_val (pc+1))), [OCall (C.to_cptr p l) sp])
-              with
-              | Some (c, o) => (S_Running c, o)
-              | None => (S_Undef, [])
-              end
-            (*| <{{x <- peek}}> =>*)
-              (*let val := *)
-                (*match sk with*)
-                (*| [] => UV*)
-                (*| pc' :: _ => FP pc'*)
-                (*end*)
-              (*in*)
-              (*(S_Running (pc + 1, (x !-> val; r), m), [])*)
-            | <{{ret}}> =>
-              match
-                sp <- to_nat (M.t_apply r "sp");;
-                _pc' <- get_mem sp m;;
-                ret (sp, _pc')
-              with
-              | None => (S_Undef, [])
-              | Some (n, _pc') =>
-                match C.of_val _pc' with
-                (* bottom of the stack: this returns out of the program *)
-                | None => if stack_empty n m then (S_Term, []) else (S_Undef, [])
-                | Some pc' => (S_Running (pc', "sp" !-> N(n - 1); r, m), [ORet (C.to_cptr p pc') n])
-                end
-              end
-            end
-        | None => (S_Fault, [])
-        end
-    | s => (s, [])
-    end.
-
-  Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg * dirs * obs) :=
-    match ssc with
-    | S_Running sc =>
-        let '(c, smem, ct, ms) := sc in
-        let '(pc, r, m) := c in
-        match p[[pc]] with
-        | None => untrace "lookup fail" (S_Undef, ds, [])
-        | Some i =>
-            match i with
-            | <{{branch e to l}}> =>
-              if ct then   (S_Fault, ds, []) else
-              match
-                if seq.nilp ds then
-                  untrace "Branch: Directions are empty!" None
-                else
-                  d <- hd_error ds;;
-                  b' <- is_dbranch d;;
-                  n <- to_nat (eval r e);;
-                  let b := not_zero n in
-                  let ms' := ms || negb (Bool.eqb b b') in
-                  let pc' := if b' then C.of_label l else (pc+1) in
-                  ret ((S_Running ((pc', r, m), smem, ct, ms'), tl ds), [OBranch b])
-              with
-              | None => untrace "branch fail" (S_Undef, ds, [])
-              | Some (c, ds, os) => (c, ds, os)
-              end
-            | <{{call e}}> =>
-              if ct then   (S_Fault, ds, []) else
-              match
-                if seq.nilp ds then
-                  untrace "Call: Directions are empty!" None
-                else
-                  d <- hd_error ds;;
-                  dpc <- is_dcall d;;
-                  pc' <- C.of_cptr p dpc;;
-                  l <- C.of_val (eval r e);;
-                  sp <- to_nat (M.t_apply r "sp");;
-                  let ms' := ms || negb (C.pc_eqb pc' l) in
-                  if stack_top m <=? S sp then
-                  (* Update spec mem if stack out of bounds *)
-                    ret ((S_Running ((pc', "sp" !-> N (S sp); r, m), ListMaps.t_update smem (S sp) (C.to_val (pc + 1)), true, ms'), tl ds), [OCall (C.to_cptr p l) sp])
-                  (*! *)
-                  else
-                    ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (C.to_val (pc+1))), smem, true, ms'), tl ds), [OCall (C.to_cptr p l) sp])
-                  (*!! spec-call-no-set-ct *)
-                  (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (C.to_val (pc+1))), smem, ct, ms'), tl ds), [OCall (C.to_cptr p l) sp]) *)
-                  (*!! spec-call-push-pc *)
-                  (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (C.to_val pc)), smem, true, ms'), tl ds), [OCall (C.to_cptr p l) sp]) *)
-                  (*!! spec-call-no-sp-bump *)
-                  (*! ret ((S_Running ((pc', r, upd_mem (S sp) m (C.to_val (pc+1))), smem, true, ms'), tl ds), [OCall (C.to_cptr p l) sp]) *)
-              with
-              | None => untrace "call fail" (S_Undef, ds, [])
-              | Some (c, ds, os) => (c, ds, os)
-              end
-            | <{{ctarget}}> =>
-              match
-                (* is_true ct;; *)
+                let ms' := ms || negb (C.pc_eqb pc' l) in
+                if stack_top m <=? S sp then
+                (* Update spec mem if stack out of bounds *)
+                  ret ((S_Running ((pc', "sp" !-> N (S sp); r, m), ListMaps.t_update smem (S sp) (C.to_val (pc + 1)), true, ms'), tl ds), [OCall (C.to_cptr p l) sp])
                 (*! *)
-                (ret (S_Running ((pc+1, r, m), smem, false, ms), ds, []))
-                (*!! spec_ctarget_no_clear *)
-                (*! (ret (S_Running ((pc+1, r, m), smem, ct, ms), ds, [])) *)
-              with
-              | None => untrace "ctarget fail!" (S_Undef, ds, [])
-              | Some (c, ds, os) => (c, ds, os)
-              end
-            | <{{ret}}> =>
-              if ct then (S_Fault, ds, []) else
-              match
-                sp <- to_nat (M.t_apply r "sp");;
-                (* Check the speculative cache *)
-                _pc' <- match ListMaps.apply smem sp with
-                  | UV => get_mem sp m
-                  | pc' => Some pc'
-                end;;
-                ret (sp, _pc')
-              with
-              | None => untrace "ret: no return slot" (S_Undef, ds, [])
-              | Some (n, _pc') =>
-                match C.of_val _pc' with
-                (* bottom of the stack: nothing was pushed there *)
-                | None => if stack_empty n m then (S_Term, ds, []) else (S_Undef, ds, [])
-                | Some pc' =>
-                  match
-                    if seq.nilp ds then
-                      untrace "Ret: Directions are empty!" None
-                    else
-                      d <- hd_error ds;;
-                      dpc <- is_dret d;;
-                      pc'' <- C.of_cptr p dpc;;
-                      is_true (C.wf_retb p pc'');;
-                      let ms' := ms || negb (C.pc_eqb pc' pc'') in
-                      (*! *)
-                      ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc') n])
-                      (*!! spec-ret-no-sp-restore *)
-                      (*! ret ((S_Running ((pc'', r, m), smem, false, ms'), tl ds), []) *)
-                      (*!! spec-ret-observes-directive *)
-                      (*! ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
-                  with
-                  | None => untrace "ret fail" (S_Undef, ds, [])
-                  | Some (c, ds, os) => (c, ds, os)
-                  end
-                end
-              end
-            | _ =>
-              if ct then  (S_Fault, ds, [])
-              else
-                match step p (S_Running c) with
-                | (S_Running c', o) => (S_Running (c', smem, false, ms), ds, o)
-                | (S_Undef, o) => (S_Undef, ds, o)
-                | (S_Fault, o) => (S_Fault, ds, o)
-                | (S_Term, o) => (S_Term, ds, o)
-                end
+                else
+                  ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (C.to_val (pc+1))), smem, true, ms'), tl ds), [OCall (C.to_cptr p l) sp])
+                (*!! spec-call-no-set-ct *)
+                (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (C.to_val (pc+1))), smem, ct, ms'), tl ds), [OCall (C.to_cptr p l) sp]) *)
+                (*!! spec-call-push-pc *)
+                (*! ret ((S_Running ((pc', "sp" !-> N (S sp); r, upd_mem (S sp) m (C.to_val pc)), smem, true, ms'), tl ds), [OCall (C.to_cptr p l) sp]) *)
+                (*!! spec-call-no-sp-bump *)
+                (*! ret ((S_Running ((pc', r, upd_mem (S sp) m (C.to_val (pc+1))), smem, true, ms'), tl ds), [OCall (C.to_cptr p l) sp]) *)
+            with
+            | None => untrace "call fail" (S_Undef, ds, [])
+            | Some (c, ds, os) => (c, ds, os)
             end
-        end
-    | s => (s, ds, [])
-    end.
+          | <{{ctarget}}> =>
+            match
+              (* is_true ct;; *)
+              (*! *)
+              (ret (S_Running ((pc+1, r, m), smem, false, ms), ds, []))
+              (*!! spec_ctarget_no_clear *)
+              (*! (ret (S_Running ((pc+1, r, m), smem, ct, ms), ds, [])) *)
+            with
+            | None => untrace "ctarget fail!" (S_Undef, ds, [])
+            | Some (c, ds, os) => (c, ds, os)
+            end
+          | <{{ret}}> =>
+            if ct then (S_Fault, ds, []) else
+            match
+              sp <- to_nat (M.t_apply r "sp");;
+              (* Check the speculative cache *)
+              _pc' <- match ListMaps.apply smem sp with
+                | UV => get_mem sp m
+                | pc' => Some pc'
+              end;;
+              ret (sp, _pc')
+            with
+            | None => untrace "ret: no return slot" (S_Undef, ds, [])
+            | Some (n, _pc') =>
+              match C.of_val _pc' with
+              (* bottom of the stack: nothing was pushed there *)
+              | None => if stack_empty n m then (S_Term, ds, []) else (S_Undef, ds, [])
+              | Some pc' =>
+                match
+                  if seq.nilp ds then
+                    untrace "Ret: Directions are empty!" None
+                  else
+                    d <- hd_error ds;;
+                    dpc <- is_dret d;;
+                    pc'' <- C.of_cptr p dpc;;
+                    is_true (C.wf_retb p pc'');;
+                    let ms' := ms || negb (C.pc_eqb pc' pc'') in
+                    (*! *)
+                    ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc') n])
+                    (*!! spec-ret-no-sp-restore *)
+                    (*! ret ((S_Running ((pc'', r, m), smem, false, ms'), tl ds), []) *)
+                    (*!! spec-ret-observes-directive *)
+                    (*! ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
+                with
+                | None => untrace "ret fail" (S_Undef, ds, [])
+                | Some (c, ds, os) => (c, ds, os)
+                end
+              end
+            end
+          | _ =>
+            if ct then  (S_Fault, ds, [])
+            else
+              match step p (S_Running c) with
+              | (S_Running c', o) => (S_Running (c', smem, false, ms), ds, o)
+              | (S_Undef, o) => (S_Undef, ds, o)
+              | (S_Fault, o) => (S_Fault, ds, o)
+              | (S_Term, o) => (S_Term, ds, o)
+              end
+          end
+      end
+  | s => (s, ds, [])
+  end.
 
-  Fixpoint spec_steps (f:nat) (p:prog) (sc: state spec_cfg) (ds: dirs)
-    : (state spec_cfg * dirs * obs) :=
-    match f with
-    | S f' =>
-        match sc with
-        | S_Running c =>
-            let '(c1,ds1,o1) := spec_step p sc ds in
-            let '(c2,ds2,o2) := spec_steps f' p c1 ds1 in
-            (c2,ds2,o1++o2)
-        | s => (s, ds, [])
-        end
-    | 0 =>
-        (sc, ds, [])
-    end.
+Fixpoint spec_steps (f:nat) (p:prog) (sc: state spec_cfg) (ds: dirs)
+  : (state spec_cfg * dirs * obs) :=
+  match f with
+  | S f' =>
+      match sc with
+      | S_Running c =>
+          let '(c1,ds1,o1) := spec_step p sc ds in
+          let '(c2,ds2,o2) := spec_steps f' p c1 ds1 in
+          (c2,ds2,o1++o2)
+      | s => (s, ds, [])
+      end
+  | 0 =>
+      (sc, ds, [])
+  end.
 
 
-  Fixpoint steps (f:nat) (p:prog) (sc: state cfg) : (state cfg * obs) :=
-    match f with
-    | S f' =>
-        match sc with
-        | S_Running c =>
-            let '(c1, o1) := step p sc in
-            let '(c2, o2) := steps f' p c1 in
-            (c2, o1++o2)
-        | s => (s, [])
-        end
-    | 0 =>
-        (sc, [])
-    end.
+Fixpoint steps (f:nat) (p:prog) (sc: state cfg) : (state cfg * obs) :=
+  match f with
+  | S f' =>
+      match sc with
+      | S_Running c =>
+          let '(c1, o1) := step p sc in
+          let '(c2, o2) := steps f' p c1 in
+          (c2, o1++o2)
+      | s => (s, [])
+      end
+  | 0 =>
+      (sc, [])
+  end.
 
 Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_cfg * dirs * obs) :=
   match sic with
