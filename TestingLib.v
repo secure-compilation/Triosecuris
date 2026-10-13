@@ -147,7 +147,8 @@ Variant spec_exec_result : Type :=
              :: ("observations"%string, show_obs os)
              :: ("mis-speculating"%string, show ms)
              :: ("registers"%string, show rs)
-             :: mem_items m (t_apply rs "sp"%string))
+             :: buffer_item "store buffer"%string smem
+             :: mem_items m (t_apply rs "sp"%string) smem)
       | SEOutOfFuel _ os ds trace =>
           report "Speculative execution ran out of fuel"%string
             [ trace_item "trace"%string trace
@@ -243,21 +244,19 @@ Definition load_store_trans_stuck_free := (
   | EOutOfFuel st os => collect "Out-of-fuel"%string (checker tt)
   | EError st os => 
       let '((pc, rs, mem), _, _) := st in
-      if is_stack_overflow rs mem then collect "Stack overflow"%string (checker tt) else (
-        if is_sp_fp_uv rs then collect "Stack pointer undefined"%string (checker tt) else 
-          (* the pc comes from running [p'], so the instruction does too *)
-          match fetch p' pc with
-          | Some <{ call _ }> => collect "Undef call"%string (checker tt)
-          | Some <{ ret }>    => collect "Undef ret"%string (checker tt)
-          | i => printTestCase
-                  (report "The guarded program got stuck on an instruction that is not a call or a ret"%string
-                     (inst_item "failing instruction"%string i
-                      :: ("observations"%string, show_obs os)
-                      :: ("registers"%string, show rs)
-                      :: mem_items mem (t_apply rs "sp"%string)
-                      ++ [prog_item "guarded program"%string None p']))
-                  (checker false)
-          end)
+      (* the pc comes from running [p'], so the instruction does too *)
+      match fetch p' pc with
+      | Some <{ call _ }> => collect "Undef call"%string (checker tt)
+      | Some <{ ret }>    => collect "Undef ret"%string (checker tt)
+      | i => printTestCase
+              (report "The guarded program got stuck on an instruction that is not a call or a ret"%string
+                  (inst_item "failing instruction"%string i
+                  :: ("observations"%string, show_obs os)
+                  :: ("registers"%string, show rs)
+                  :: mem_items mem (t_apply rs "sp"%string) ismem
+                  ++ [prog_item "guarded program"%string None p']))
+              (checker false)
+      end
   end)))).
 
 Definition no_obs_prog_no_obs := (
@@ -305,13 +304,12 @@ Definition unused_var_no_leak `{Show input_st}
   | EOutOfFuel st os => checker tt
   | EError st os =>
       let '((pc, rs, mem), _, _) := st in
-      if is_stack_overflow rs mem then collect "Stack overflow"%string (checker tt) else
         printTestCase
           (report "Taint tracking got stuck for a reason other than stack overflow"%string
              (inst_item "failing instruction"%string (fetch p' pc)
               :: ("observations"%string, show_obs os)
               :: ("registers"%string, show rs)
-              :: mem_items mem (t_apply rs "sp"%string)
+              :: mem_items mem (t_apply rs "sp"%string) ismem
               ++ [prog_item "guarded program"%string None p']))
           (checker false)
   end)))).
@@ -403,16 +401,15 @@ Definition test_safety_preservation `{Show dir} `{Show ST.pc}
   | SETerm sc os ds trace => checker true
   | SEError c' os ds trace =>
       let '((pc, rs, mem), _, _, ms) := c' in
-      if is_stack_overflow rs mem then collect "Stack overflow"%string  (checker tt) else
-        (* the configuration, the directives and the trace are already in the
-          [spec_exec_result] QuickChick prints *)
-        printTestCase
-          (report "The hardened program got stuck under speculation"%string
-            [ inst_item "failing instruction"%string (fetch harden pc)
-            ; ("failing pc"%string, show pc)
-            ; prog_item "hardened program"%string None harden ])
-          (checker false)
-  | SEOutOfFuel _ _ ds trace => checker tt
+      (* the configuration, the directives and the trace are already in the
+        [spec_exec_result] QuickChick prints *)
+      printTestCase
+        (report "The hardened program got stuck under speculation"%string
+          [ inst_item "failing instruction"%string (fetch harden pc)
+          ; ("failing pc"%string, show pc)
+          ; prog_item "hardened program"%string None harden ])
+        (checker false)
+  | SEOutOfFuel _ _ ds trace => checker true (* YF: I think it should be true, as we could progress *)
   end))
   )))).
 

@@ -74,7 +74,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
   match e with
   | ANum n => N n
   | AId x => M.t_apply st x
-  | ABin b e1 e2 => eval_binop b (eval st e1) (eval st e2)
+  | ABin b e1 e2 => eval_binop b (eval st e1) (eval st e2) C.max_in_domain
   | <{b ? e1 : e2}> =>
       match to_nat (eval st b) with
       | Some n1 => if not_zero n1 then eval st e1 else eval st e2
@@ -194,7 +194,7 @@ Definition step (p:prog) (sc:state cfg) : (state cfg * obs) :=
               match C.of_val _pc' with
               (* bottom of the stack: this returns out of the program *)
               | None => if stack_empty n m then (S_Term, []) else (S_Undef, [])
-              | Some pc' => (S_Running (pc', "sp" !-> N(n - 1); r, m), [ORet (C.to_cptr p pc') n])
+              | Some pc' => (S_Running (pc', "sp" !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m), [ORet (C.to_cptr p pc') n])
               end
             end
           end
@@ -295,11 +295,11 @@ Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg
                     is_true (C.wf_retb p pc'');;
                     let ms' := ms || negb (C.pc_eqb pc' pc'') in
                     (*! *)
-                    ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc') n])
+                    ret ((S_Running ((pc'', "sp" !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc') n])
                     (*!! spec-ret-no-sp-restore *)
                     (*! ret ((S_Running ((pc'', r, m), smem, false, ms'), tl ds), []) *)
                     (*!! spec-ret-observes-directive *)
-                    (*! ret ((S_Running ((pc'', "sp" !-> N(n - 1); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
+                    (*! ret ((S_Running ((pc'', "sp" !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
                 with
                 | None => untrace "ret fail" (S_Undef, ds, [])
                 | Some (c, ds, os) => (c, ds, os)
@@ -503,13 +503,13 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                       let smem' := if addr_oob n m then n !s-> v ; smem else smem in
                       (* the architectural target, as in [spec_step] *)
                       (*! *)
-                      ret ((S_Running ((pc'', "sp"%string !-> N (n - 1); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc') n])
+                      ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc') n])
                       (*!! ideal-ret-no-sp-restore *)
                       (*! ret ((S_Running ((pc'', r, m'), smem', ms'), tl ds), []) *)
                       (*!! ideal-ret-observes-directive *)
-                      (*! ret ((S_Running ((pc'', "sp"%string !-> N (n - 1); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
+                      (*! ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
                       (*!! ideal-ret-no-slot-writeback *)
-                      (*! ret ((S_Running ((pc'', "sp"%string !-> N (n - 1); r, m), smem, ms'), tl ds), [ORet (C.to_cptr p pc') n]) *)
+                      (*! ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m), smem, ms'), tl ds), [ORet (C.to_cptr p pc') n]) *)
                   with
                   | None => untrace ("ideal ret failed. PC: " ++ show pc ++ "; PROGRAM: " ++ show p ++ nl) (S_Undef, ds, [])
                   | Some (c, ds, os) => (c, ds, os)

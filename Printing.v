@@ -171,7 +171,7 @@ Definition item {A : Type} `{Show A} (label : string) (a : A) : string * string 
    and hardened programs are deterministic functions of it, so printing one in
    a report mostly buries the line that explains the failure.  Set this to
    [true] while reading a report without the generator's output at hand. *)
-Definition print_programs : bool := true.
+Definition print_programs : bool := false.
 
 (* A [cptr] on its own is two numbers; what you want to know is which
    instruction sits there. *)
@@ -347,24 +347,52 @@ Definition show_sp (sp_val : val) (m : mem) : string :=
    a marker on the slot [sp] points at.  Tests allocate far more stack than
    they use, so printing all of it buries the handful of cells that matter:
    everything up to [sp], plus every slot that was ever written, is enough. *)
-Definition show_stack (m : mem) (sp_val : val) : string :=
+Fixpoint buffer_live (seen : list nat) (l : list (nat * val)) : list (nat * val) :=
+  match l with
+  | [] => []
+  | (k, v) :: tl =>
+      if existsb (Nat.eqb k) seen
+      then buffer_live seen tl
+      else (k, v) :: buffer_live (k :: seen) tl
+  end.
+
+Definition buffer_lookup (live : list (nat * val)) (a : nat) : option val :=
+  match filter (fun kv => Nat.eqb (fst kv) a) live with
+  | (_, v) :: _ => Some v
+  | [] => None
+  end.
+
+(* Slots past [stack_top] are not in [m] at all -- an overflowing push lands in
+   the speculative buffer -- so the stack a failing run actually sees is the
+   memory cells up to the top, continued by the buffered ones above it. *)
+Definition show_stack (m : mem) (sp_val : val) (sb : val * list (nat * val))
+  : string :=
   let base := stack_base m in
+  let top := stack_top m in
+  let live := buffer_live [] (snd sb) in
   let cells := firstn m.(stack_length) (skipn base m.(memory)) in
   let written := fold_left (fun acc '(i, v) =>
       match v with UV => acc | _ => Nat.max acc (S i) end) (add_index cells) 0 in
-  let upto := Nat.max written
-                (match sp_val with N n => S (n - base) | _ => 0 end) in
-  match firstn upto cells with
-  | [] => "<empty>"%string
-  | shown =>
-      (nl ++ fold_left (fun acc '(i, v) =>
-          (acc ++ (if (match sp_val with
-                       | N n => Nat.eqb n (base + i)
-                       | _ => false
-                       end) then "->" else "  ")
-               ++ " [" ++ show (base + i) ++ "] " ++ show v ++ nl)%string)
-         (add_index shown) ""%string)%string
-  end.
+  let hi_mem := base + Nat.max written
+                  (match sp_val with N n => S (n - base) | _ => 0 end) in
+  let hi := fold_left (fun acc kv => Nat.max acc (S (fst kv))) live hi_mem in
+  let row (a : nat) : string :=
+    let mark := if (match sp_val with N n => Nat.eqb n a | _ => false end)
+                then "->"%string else "  "%string in
+    if Nat.ltb a top then
+      match get_mem a m with
+      | Some v => (mark ++ " [" ++ show a ++ "] " ++ show v ++ nl)%string
+      | None => ""%string
+      end
+    else
+      match buffer_lookup live a with
+      | Some v => (mark ++ " [" ++ show a ++ "] " ++ show v
+                        ++ "   (buffered)" ++ nl)%string
+      | None => ""%string
+      end in
+  let body := fold_left (fun (acc : string) (a : nat) => (acc ++ row a)%string)
+                (seq base (hi - base)) ""%string in
+  if String.eqb body ""%string then "<empty>"%string else (nl ++ body)%string.
 
 (* Printing.v stays a leaf module, so it carries its own cell equality rather
    than importing [Generation.val_eqb]. *)
@@ -392,13 +420,29 @@ Definition mem_diff (m1 m2 : mem) : string :=
    ++ (if String.eqb differing ""%string
        then "  (the cells agree)"%string else differing))%string.
 
+Definition show_store_buffer (sb : val * list (nat * val)) : string :=
+  let '(_, l) := sb in
+  match buffer_live [] l with
+  | [] => "<empty>"%string
+  | live =>
+      (nl ++ fold_left (fun (acc : string) (kv : nat * val) =>
+          let '(k, v) := kv in
+          (acc ++ "  [" ++ show k ++ "] " ++ show v ++ nl)%string)
+         live ""%string)%string
+  end.
+
+Definition buffer_item (label : string) (sb : val * list (nat * val))
+  : string * string :=
+  (label, show_store_buffer sb).
+
 (* What a memory failure needs: the bounds, where [sp] sits in them, the heap
    cells and the part of the stack that was used. *)
-Definition mem_items (m : mem) (sp_val : val) : list (string * string) :=
+Definition mem_items (m : mem) (sp_val : val) (sb : val * list (nat * val))
+  : list (string * string) :=
   [ ("memory"%string, show_layout m)
   ; ("sp"%string, show_sp sp_val m)
   ; ("heap"%string, show (firstn m.(heap_length) m.(memory)))
-  ; ("stack"%string, show_stack m sp_val) ].
+  ; ("stack"%string, show_stack m sp_val sb) ].
 
 (* ----------------------------------------------------------------- *)
 (** ** Configurations *)
@@ -413,22 +457,30 @@ Definition show_cfg {R : Type} `{Show R} (pc : cptr) (rs : R) (m : mem) : string
 (* Everything about a configuration a failing test wants: where it is, what
    sits there, what the registers hold and what the stack looks like. *)
 Definition cfg_items {R : Type} `{Show R}
-  (p : prog) (pc : cptr) (rs : R) (m : mem) (sp_val : val) : list (string * string) :=
-  (pc_item "pc"%string p pc) :: (item "registers"%string rs) :: mem_items m sp_val.
+  (p : prog) (pc : cptr) (rs : R) (m : mem) (sp_val : val)
+  (sb : val * list (nat * val)) : list (string * string) :=
+  (pc_item "pc"%string p pc) :: (item "registers"%string rs) :: mem_items m sp_val sb.
 
 (* A whole configuration as one block, for reports that show two of them side
    by side.  The shapes are spelled out rather than named, because [cfg] and
    its speculative and ideal forms are only named inside the functor. *)
 Definition show_ideal_cfg {R : Type} `{Show R}
-  (p : prog) (ic : ((cptr * R) * mem) * bool) (sp_val : val) : string :=
-  let '(pc, rs, m, ms) := ic in
-  fields (cfg_items p pc rs m sp_val ++ [("mis-speculating"%string, show ms)]).
+  (p : prog) (ic : (((cptr * R) * mem) * (val * list (nat * val))) * bool)
+  (sp_val : val) : string :=
+  let '(pc, rs, m, smem, ms) := ic in
+  fields (cfg_items p pc rs m sp_val smem
+          ++ [ buffer_item "store buffer"%string smem
+             ; ("mis-speculating"%string, show ms) ]).
 
 Definition show_spec_cfg {R : Type} `{Show R}
-  (p : prog) (sc : (((cptr * R) * mem) * bool) * bool) (sp_val : val) : string :=
-  let '(pc, rs, m, ct, ms) := sc in
-  fields (cfg_items p pc rs m sp_val
-          ++ [("awaiting ctarget"%string, show ct); ("mis-speculating"%string, show ms)]).
+  (p : prog)
+  (sc : ((((cptr * R) * mem) * (val * list (nat * val))) * bool) * bool)
+  (sp_val : val) : string :=
+  let '(pc, rs, m, smem, ct, ms) := sc in
+  fields (cfg_items p pc rs m sp_val smem
+          ++ [ buffer_item "store buffer"%string smem
+             ; ("awaiting ctarget"%string, show ct)
+             ; ("mis-speculating"%string, show ms) ]).
 
 (* ----------------------------------------------------------------- *)
 (** ** Comparing two runs *)

@@ -17,6 +17,8 @@ Import MonadNotation. Open Scope monad_scope.
 Module Type Code.
   Parameter pc : Type.
 
+  Parameter max_in_domain : nat.
+
   Parameter fetch    : prog -> pc -> option inst.
   Parameter next     : pc -> pc.
   Parameter of_label : nat -> pc.
@@ -46,6 +48,8 @@ End Code.
 
 Module BlockCode <: Code.
   Definition pc : Type := cptr.
+
+  Definition max_in_domain : nat := 4096.
 
   Definition fetch    : prog -> pc -> option inst := MiniCET.fetch.
   Definition next     : pc -> pc := MiniCET.inc.
