@@ -155,9 +155,6 @@ Notation "x <> y"  := (ABin BinImpl (ABin BinEq x y) (ANum 0)) (in custom com at
 Notation "x && y"  := (ABin BinAnd x y) (in custom com at level 80, left associativity).
 Notation "'~' b"   := (ABin BinImpl b (ANum 0)) (in custom com at level 75, right associativity).
 
-(* Coercions are not inserted in patterns, so leaves have to be written
-   explicitly there: [#n] for [ANum n] and [$x] for [AId x], e.g.
-   [match i with <{{ fp := $sp - #1 }}> => ...]. *)
 Notation "'#' n" := (ANum n)
   (in custom com at level 0, n constr at level 0, only parsing) : com_scope.
 Notation "'$' x" := (AId x)
@@ -299,7 +296,10 @@ Definition stack_base (m : mem) : nat := m.(heap_length).
 Definition stack_top (m : mem) : nat := m.(heap_length) + m.(stack_length).
 Definition mem_length (m : mem) : nat := Datatypes.length m.(memory).
 
-Definition get_mem (i : nat) (m : mem) : option val := nth_error m.(memory) i.
+Definition get_mem (i : nat) (m : mem) : val := match nth_error m.(memory) i with
+  | Some x => x
+  | None => UV
+  end.
 
 (* Nothing was ever pushed at or below the base, so a [ret] with sp there ends
    the execution rather than returning. *)
@@ -562,9 +562,6 @@ Proof.
     eapply IHl in X'. rewrite X'. clarify.
 Qed.
 
-(* Addresses [uslh_inst] leaves unmasked: the slot the calling convention
-   spills the caller's fp into.  The ideal semantics has to make the same
-   exception, or the two disagree about what a speculative access reads. *)
 Definition unmasked_addr (e: exp) : bool :=
   match e with
   (* #_ is some constant *)
@@ -674,9 +671,6 @@ Compute (pst_calc sample_prog_for_grouping).
 Definition proc_prologue (frame_sz: nat) : list inst :=
   <{{ i[ sp := sp + frame_sz ] (* allocating a new frame *) }}>.
 
-(* Mentions no frame size: sp is recovered from fp, and the caller's fp from the
-   slot the prologue spilled it into, so frames may differ in size.  sp has to be
-   restored first, while fp still points at this frame. *)
 Definition proc_epilogue (frame_sz: nat) : list inst :=
   <{{ i[ sp := sp - frame_sz;
          ret ] (* return *) }}>.

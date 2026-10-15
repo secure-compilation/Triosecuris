@@ -404,63 +404,18 @@ Fixpoint gen_exp_wt (sz: nat) (c: rctx) (pst: list nat) : G exp :=
 
 (* ********** In-memory stack: frame layout, prologue/epilogue and call stacks ********** *)
 
-(* The layout below mirrors Appel's "A stack frame" (Modern Compiler
-   Implementation, Figure 6.2) onto the stack this language actually has.  In
-   the figure the stack grows towards *lower* addresses; here [step] grows it
-   towards higher indices ([call] stores its return address at [S sp] and moves
-   sp there, [ret] reads it back at [sp]), so the figure is mirrored: "deeper in
-   the stack" means "higher index".
-
-   A procedure entered by [call] starts with sp pointing at the slot holding its
-   return address; write [R] for that slot.  The prologue sets fp to [R] and
-   allocates [frame_size] further slots, giving, for a frame with [ARG_SLOTS = a]:
-
-     index          contents                     Appel's name
-     -------------------------------------------------------------------------
-     fp - a         incoming argument a-1  \
-     ...            ...                     |  incoming arguments -- these slots
-     fp - 2         incoming argument 1     |  belong to the *caller's* frame,
-     fp - 1         incoming static link   /   which wrote them as its outgoing
-                                               arguments (the "view shift")
-     ---------------------------------------- frame boundary
-     fp + 0  (= R) <--fp return address        pushed by [call] itself
-     fp + 1         saved caller fp            saved registers
-     fp + 2         local / temporary      \
-     ...            ...                     |  local variables, temporaries
-     fp + frame_size-a    local / temporary  /
-     fp + frame_size-a+1  outgoing argument a-1 \
-     ...            ...                        |  outgoing arguments
-     fp + frame_size-1    outgoing argument 1    |
-     fp + frame_size  <--sp outgoing static link/
-
-   So sp = fp + frame_size throughout the body.  fp sits on the return-address
-   slot, as ebp does on x86 after [push ebp; mov ebp, esp]: the caller's sp was
-   [R - 1], so the argument the caller wrote at [sp - j] is the one this
-   procedure reads at [fp - (j+1)].  That correspondence is the view shift, and
-   it is why the caller-side argument stores use sp while the body uses fp. *)
-
 (* Slots reserved at the top of every frame for outgoing arguments: the static
    link plus [ARG_SLOTS - 1] arguments. *)
 Definition ARG_SLOTS := 3.
 
 (* A frame needs the saved-fp slot plus the outgoing-argument area; anything
    above that is locals and temporaries. *)
-(* [S ARG_SLOTS], not [ARG_SLOTS + 1]: MiniCET's "pc + 1" notation captures the
-   literal [+ 1] and would read this as [inc ARG_SLOTS]. *)
 Definition MIN_STACK_FRAME_SIZE := S ARG_SLOTS.
 Definition MAX_STACK_FRAME_SIZE := ARG_SLOTS + 8.
 Definition STATIC_FRAME_SIZE := 16.
 
-(* Number of local/temporary slots in a frame of size [frame_size], i.e. the slots
-   fp+2 .. fp+frame_size-ARG_SLOTS. *)
 Definition frame_locals (frame_size: nat) : nat := frame_size - ARG_SLOTS - 1.
 
-(* An address inside the current frame, reached through fp as in the layout
-   comment at the top of this file: either an incoming argument the caller wrote
-   into its outgoing-argument area, or one of this frame's own locals.  The
-   return address (fp+0) and the saved caller fp (fp+1) are deliberately not
-   generated, so no generated instruction can break the frame chain -- which is
-   also why the incoming arguments start at [fp - 1] rather than [fp]. *)
 Definition gen_frame_slot (frame_size: nat) : G exp :=
   let incoming := map (fun (j:nat) => let n := ANum j in <{{ sp - frame_size - n }}>)
                       (seq 1 ARG_SLOTS) in
@@ -470,14 +425,7 @@ Definition gen_frame_slot (frame_size: nat) : G exp :=
      address rather than a frame slot so that it cannot name fp+0 or fp+1. *)
   elems_ (ANum 0) ((* incoming ++ *) locals).
 
-(* Caller-side view shift.  [call] moves sp to [S sp] and the callee's prologue
-   points fp there, so the callee's fp is this procedure's sp plus one: the slot
-   written here as [sp - j] is the slot the callee reads as [fp - (j+1)].  See
-   the layout comment at the top of this file.  The static link at [sp] is the
-   caller's own fp, as in Appel's figure.  The remaining slots carry ordinary
-   arguments, taken from the TNum variables of the context and padded with 0, so
-   that every incoming slot the callee may read has been written. *)
-Definition view_shift_stores (c: rctx) : list inst :=
+(* Definition view_shift_stores (c: rctx) : list inst :=
   let nums := filter_vars_by_ty TNum c in
   let arg (j: nat) : exp :=
     match nth_error nums (j - 1) with
@@ -489,9 +437,6 @@ Definition view_shift_stores (c: rctx) : list inst :=
       (seq 1 (ARG_SLOTS - 1))
   ++ <{{ i[ store[(sp)] <- fp ] }}>.
 
-(* The stores have to stay immediately in front of the call, with no control
-   flow in between, so they are spliced in per instruction rather than per
-   block. *)
 Fixpoint blk_view_shift (c: rctx) (blk: list inst) : list inst :=
   match blk with
   | [] => []
@@ -505,14 +450,10 @@ Definition transform_prog_for_view_shift (c: rctx) (p: prog) : prog * (list nat)
     let shifted_blk := blk_view_shift c blk in
     ((shifted_blk, flag), List.length shifted_blk)) p in
   let (prog, pst) := List.split view_shift in
-  (prog, pst).
+  (prog, pst). *)
 
-(* Blocks a jump or branch inside one procedure may target.  A procedure with
-   [fsz] generated blocks whose entry is block [base] occupies [base .. base+fsz]
-   once [transform_proc_with_term_for_epilogue] has appended its epilogue block,
-   so its non-entry blocks -- the epilogue among them, since jumping there is
-   just an early return -- are [base+1 .. base+fsz].  The entry itself is
-   excluded: only [call] may target it, and [wf_label p false] rejects it. *)
+(* Only the jump targets within the procedure, which starts as [base] and has
+ a size [fsz], are allowed. *)
 Definition proc_jump_targets (base fsz: nat) : list nat := seq (S base) fsz.
 
 (* Every [ret] becomes a jump to the procedure's single epilogue block, so the
@@ -581,10 +522,6 @@ Definition inject_stack_to_mem (stk: list cptr) (m: mem): mem :=
 Definition cfg_with_stack (pc: cptr) (r: reg) (m: mem) (stk: list cptr): cfg :=
   let base := stack_base m in
   let n := Datatypes.length stk in
-  (* fp has to be a number, not whatever the register default happens to be, or
-     every [fp]-relative frame access evaluates to UV and the step goes
-     S_Undef.  [base + n] is the return-address slot of the innermost frame,
-     which is exactly where its prologue would have pointed fp. *)
   (pc, "fp"%string !-> N (base + n); "sp"%string !-> N (base + n); r, inject_stack_to_mem stk m).
 
 
@@ -694,9 +631,10 @@ Definition compose_load_store_guard (t : ty) (id_exp : exp) (tm : tmem) (m : mem
             <{{ false }}> in
   let mem_sz := ANum (mem_length m) in
   let guardc := BLt id_exp mem_sz in
-  (* If the register is typed as a pointer, we can also load and store to the stack return addresses *)
   match t with
-  (* | TPtr => BAnd (BOr tc tstack) guardc *)
+  (* If the register is typed as a pointer, we can also load and store to the stack return addresses *)
+  (** | TPtr => BAnd (BOr tc tstack) guardc *)
+  (** Currently disabled.  *)
   | TPtr => BAnd tc guardc
   | TNum => BAnd tc guardc
   end.
