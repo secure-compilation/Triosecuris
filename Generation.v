@@ -715,8 +715,8 @@ Definition _gen_term_wt (gen_branch : rctx -> list nat -> list nat -> nat -> nat
                         (gen_jump : list nat -> nat -> G inst)
                         (c: rctx) (tm: tmem) (pst: list nat) (jlst: list nat) : G inst :=
   match jlst with
-  | nil => ret IRet
-  | hd :: _ => freq_ (ret IRet) ([(1, ret IRet) ; (2, gen_jump jlst hd)])
+  | nil => ret IExit
+  | hd :: _ => freq_ (ret IExit) ([(1, ret IExit) ; (10, ret IRet) ; (20, gen_jump jlst hd)])
   end.
 
 Definition gen_term_wt (c: rctx) (tm: tmem) (pst: list nat) (jlst: list nat) (frame_size: nat) : G inst :=
@@ -741,7 +741,7 @@ Definition basic_block_checker (blk: list inst) : bool :=
   match blk with
   | [] => false
   | _ => match seq.last ISkip blk with
-        | IRet | IJump _ => true
+        | IRet | IJump _ | IExit => true
         | _ => false
         end
   end.
@@ -905,7 +905,7 @@ Fixpoint vars_exp (e:exp) : list string :=
 
 Definition vars_inst (i: inst) : list string :=
   match i with
-  | ISkip | IRet | ICTarget | IJump _ => []
+  | ISkip | IRet | ICTarget | IJump _ | IExit => []
   | IAsgn x e => x :: vars_exp e
   | IBranch e l => vars_exp e
   | ILoad x e => x :: vars_exp e
@@ -949,6 +949,21 @@ Definition gen_prog_ty_ctx_wt (bsz pl: nat) : G (rctx * tmem * list nat * prog) 
   pst <- gen_partition pl;;
   let pstf := map S pst in
   p <- _gen_prog_with_term_wt c tm bsz pstf pst;;
+  (* main proc should end with exit *)
+  let procs := group_by_proc p in
+  let p := match procs with
+  | fst :: tl =>
+    match rev fst with
+    | (blk, flag) :: blks => 
+      match rev blk with
+      | <{{ exit }}> :: _ => p
+      | _ :: insts => List.concat ((rev ((rev (<{{ exit }}> :: insts), flag) :: blks)) :: tl)
+      | _ => p
+      end
+    | _ => p
+    end
+  | _ => p
+  end in 
   ret (c, tm, pstf, p).
 
 Fixpoint mkStk (sz: nat) := match sz with
@@ -1032,7 +1047,7 @@ Definition gen_inst_no_obs (pl: nat) (pst: list nat) : G inst :=
   then ret <{ skip }>
   else freq [
            (1, ret ISkip);
-           (1, ret IRet);
+           (1, ret IExit);
            (1, l <- elems_ (0,0) jlb;; ret (IJump (fst l)))
          ].
 

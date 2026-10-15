@@ -215,7 +215,8 @@ Inductive inst : Type :=
   | ICall (fp:exp)
   | ICTarget
   (*| IPeek (x : string)*)
-  | IRet.
+  | IRet
+  | IExit.
 
 Notation "'skip'"  :=
   ISkip (in custom com at level 0) : com_scope.
@@ -256,6 +257,8 @@ Notation "'ctarget'"  :=
       (*no associativity) : com_scope.*)
 Notation "'ret'"  :=
   IRet (in custom com at level 0) : com_scope.
+Notation "'exit'"  :=
+  IExit (in custom com at level 0) : com_scope.
 
 Definition prog := list (list inst * bool).
 
@@ -300,10 +303,6 @@ Definition get_mem (i : nat) (m : mem) : val := match nth_error m.(memory) i wit
   | Some x => x
   | None => UV
   end.
-
-(* Nothing was ever pushed at or below the base, so a [ret] with sp there ends
-   the execution rather than returning. *)
-Definition stack_empty (sp_val : nat) (m : mem) : bool := sp_val <=? stack_base m.
 
 Definition upd_mem (i : nat) (m : mem) (v : val) : mem :=
   {| heap_length := m.(heap_length)
@@ -691,7 +690,7 @@ Fixpoint wf_exp (p:prog) (e : exp) : bool :=
 
 Definition wf_inst (p:prog) (i : inst) : bool :=
   match i with
-  | <{{skip}}> | <{{ctarget}}> | <{{ret}}> => true
+  | <{{skip}}> | <{{ctarget}}> | <{{ret}}> | <{{exit}}> => true
   | <{{_:=e}}> | <{{_<-load[e]}}> | <{{call e}}> => wf_exp p e
   | <{{_<-div e1, e2}}> => wf_exp p e1 && wf_exp p e2
   | <{{store[e]<-e'}}> => wf_exp p e && wf_exp p e'
@@ -713,16 +712,32 @@ Definition wf_proc_calling_convention (p: prog) (proc: prog) : bool :=
     | <{{ sp := $sp + #poff }}> :: _, 
       <{{ ret }}> :: <{{ sp := $sp - #eoff }}> :: _ => 
         Bool.eqb pflag true && Bool.eqb eflag false && (eoff =? poff)
+    | <{{ sp := $sp + #poff }}> :: _, 
+      <{{ exit }}> :: <{{ sp := $sp - #eoff }}> :: _ => 
+        Bool.eqb pflag true && Bool.eqb eflag false && (eoff =? poff)
     | _, _ => false
     end
   | _, _ => false
+  end.
+
+Definition wf_exit (p: prog) : bool :=
+  let fst_proc := nth 0 (group_by_proc p) [] in
+  match rev fst_proc with
+  | (insts, _) :: _ =>
+    match rev insts with
+    | <{{ exit }}> :: _ => true
+    | _ => false
+    end
+  | _ => false
   end.
 
 Definition wf (p:prog) : bool :=
   forallb (wf_blk p) p.
 
 Definition wf_calling_convention (p : prog) : bool :=
-  forallb (wf_blk p) p && forallb (wf_proc_calling_convention p) (group_by_proc p).
+  (* YF: Now the first block of the program ((0, 0), aka main) should end with <{{ exit }}> to sequentially terminate *)
+  (* There can be more exits though *)
+  forallb (wf_blk p) p && forallb (wf_proc_calling_convention p) (group_by_proc p) && wf_exit p.
 
 Definition wf_retb (p: prog) (pc: cptr) : bool :=
   let '(l, o) := pc in
@@ -793,7 +808,7 @@ Fixpoint e_unused (x:string) (e:exp) : Prop :=
 
 Definition i_unused (x:string) (i:inst) : Prop :=
   match i with
-  | <{{skip}}> | <{{jump _}}> | <{{ret}}> | <{{ctarget}}> => True
+  | <{{skip}}> | <{{jump _}}> | <{{ret}}> | <{{ctarget}}> | <{{exit}}> => True
   | <{{y := e}}> => y <> x /\ e_unused x e
   | <{{branch e to l}}> => e_unused x e
   | <{{y <- load[i]}}> => y <> x /\ e_unused x i
@@ -893,7 +908,7 @@ Definition ret_addr (r: reg) (m: mem) : option cptr :=
   v <- nth_error m.(memory) sp;;
   to_fp v.
 
-Definition final_spec_cfg (p: prog) (sc: spec_cfg) : bool :=
+(* Definition final_spec_cfg (p: prog) (sc: spec_cfg) : bool :=
   let '(c, ct, ms) := sc in
   let '(pc, rs, m) := c in
   match fetch p pc with
@@ -906,7 +921,7 @@ Definition final_spec_cfg (p: prog) (sc: spec_cfg) : bool :=
              | _ => false
              end
   | None => false
-  end.
+  end. *)
 
 End MiniCETCommon.
 

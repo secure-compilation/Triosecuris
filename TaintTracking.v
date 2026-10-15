@@ -44,9 +44,6 @@ Definition join_taints t1 t2 := remove_dupes sum_eqb (t1 ++ t2).
 
 Module TaintTracking (Import ST: Semantics ListTotalMap).
 
-(* not Imported: only used for [ret_addr], and it would shadow ST's names *)
-Module MCC := MiniCETCommon(ListTotalMap).
-
 Definition tcptr := taint.
 Definition treg := ListTotalMap.t taint.
 Definition tamem := list taint.
@@ -104,7 +101,7 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
   let '(pc, rs, m) := c in
   let '(tpc, trs, tm, ts) := tc in
   match i with
-  | <{ skip }> | <{ ctarget }> | <{ jump _ }> =>
+  | <{ skip }> | <{ ctarget }> | <{ jump _ }> | <{ exit }> =>
       match tctx with
       | CDefault => Some (tc, tobs)
       | _ => None
@@ -211,7 +208,7 @@ Definition get_ctx (rs: ST.reg) (i: inst) : option taint_ctx  :=
 
 (* The call stack is in memory: a [ret] is final when the slot "sp" points at
    holds no return address (see [MiniCET.ret_addr]). *)
-Definition final_cfg (p: prog) (c: ST.cfg) : bool :=
+(* Definition final_cfg (p: prog) (c: ST.cfg) : bool :=
   let '(pc, rs, m) := c in
   match ST.fetch p pc with
   | Some i => match i with
@@ -222,7 +219,7 @@ Definition final_cfg (p: prog) (c: ST.cfg) : bool :=
              | _ => false
              end
   | None => false
-  end.
+  end. *)
 
 Definition step_taint_track (p: prog) : evaluator unit :=
   mkEvaluator _ (fun (ist : input_st) =>

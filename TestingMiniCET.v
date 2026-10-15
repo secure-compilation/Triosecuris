@@ -17,6 +17,8 @@ From SECF Require Import MiniCET TaintTracking MapsFunctor TestingLib TestingSem
 
 (*! Section testing_ETE *)
 
+(* Extract Constant defNumTests => "100000". *)
+
 Module Import MCC := MiniCETSemantics ListTotalMap.
 Module Import TS := TestingStrategies MCC.
 Module Import TT := TaintTracking MCC.
@@ -110,14 +112,12 @@ Definition no_obs_prog_no_obs := TS.no_obs_prog_no_obs.
 (*! QuickChick no_obs_prog_no_obs. *)
 QuickChick no_obs_prog_no_obs.
 
-
-
-Example implicit_flow_test p rs icfg
-  (P: p = [([ IBranch (AId "x") 1; IJump 1 ], true); ([ IAsgn "y"%string (ANum 1); IRet], false)])
+Example implicit_flow_test p rs (icfg: cfg)
+  (P: p = [([ IBranch (AId "x") 1; IJump 1 ], true); ([ IAsgn "y"%string (ANum 1); IExit], false)])
   (RS: rs = (N 0, [("x"%string, N 10); ("y"%string, N 0)]))
   (* one memory cell, and sp = 0 (the register default) points at it: it holds
      no return address, so the final [ret] terminates *)
-  (ICFG: icfg = (ipc, rs, [UV])):
+  (ICFG: icfg = (ipc, rs, {| heap_length := 1; stack_length := 0; memory := [UV] |})):
   match taint_tracking 10 p icfg with
   | Some (obs, leaked_vars, _) =>
       existsb (String.eqb "x") leaked_vars
@@ -132,7 +132,7 @@ Qed.
 
 
 Definition unused_var_no_leak_transform_load_store :=
-  unused_var_no_leak (fun c tm stk_alloc p => transform_load_store_prog c tm stk_alloc p).
+  unused_var_no_leak transform_load_store_prog.
 
 (*! QuickChick unused_var_no_leak_transform_load_store. *)
 QuickChick unused_var_no_leak_transform_load_store.
@@ -171,7 +171,7 @@ QuickChick gen_mem_wt_is_wt.
 
 
 Definition test_ni_transform_load_store :=
-  test_ni (fun c tm stk_alloc p => transform_load_store_prog c tm stk_alloc p).
+  test_ni transform_load_store_prog.
 (*! QuickChick test_ni_transform_load_store. *)
 QuickChick test_ni_transform_load_store.
 

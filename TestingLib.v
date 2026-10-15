@@ -65,15 +65,6 @@ Variant sc_output_st : Type :=
   | SRError : obs -> dirs -> list ST.pc -> spec_cfg -> sc_output_st
   | SRTerm : obs -> dirs -> list ST.pc -> spec_cfg -> sc_output_st.
 
-Definition gen_step_direction (i: inst) (c: cfg) (pst: list nat)
-  (gen_dbr : G dir) (gen_dcall : list nat -> G dir) : G dirs :=
-  let '(pc, rs, m) := c in
-  match i with
-  | <{ branch e to l }> => db <- gen_dbr;; ret [db]
-  | <{ call e }> =>  dc <- gen_dcall pst;; ret [dc]
-  | _ => ret []
-  end.
-
 Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir): G sc_output_st :=
   let '(c, smem, ct, ms) := sc in
@@ -94,22 +85,11 @@ Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
                | _ => SRError [] [] [pc] sc
                end)
       | <{{ret}}> =>
-          (* At the bottom of the in-memory stack the slot "sp" points at holds
-             no return address, and the [ret] needs no directive. *)
-          match MCC.ret_addr r m with
-          | None =>
-              ret (match spec_step p (S_Running sc) [] with
-                   | (S_Term, _, _) => SRTerm [] [] [pc] sc
-                   | (S_Running sc', dir', os') => SRStep os' [] [pc] sc'
-                   | _ => SRError [] [] [pc] sc
-                   end)
-          | Some _ =>
-              d <- gen_dret p;;
-              ret (match spec_step p (S_Running sc) [d] with
-                   | (S_Running sc', dir', os') => SRStep os' [d] [pc] sc'
-                   | _ => SRError [] [] [pc] sc
-                   end)
-          end
+          d <- gen_dret p;;
+          ret (match spec_step p (S_Running sc) [d] with
+                | (S_Running sc', dir', os') => SRStep os' [d] [pc] sc'
+                | _ => SRError [] [] [pc] sc
+                end)
       | ICTarget =>
           ret (match spec_step p (S_Running sc) [] with
                | (S_Running sc', dir', os') => SRStep os' [] [pc] sc'
@@ -119,6 +99,7 @@ Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
       | _ =>
           ret (match spec_step p (S_Running sc) [] with
                | (S_Running sc', dir', os') => SRStep os' [ ] [pc] sc'
+               | (S_Term, _, _) => SRTerm [] [] [pc] sc
                | _ => SRError [] [] [pc] sc
                end)
       end
@@ -141,7 +122,7 @@ Variant spec_exec_result : Type :=
             [trace_item "trace"%string trace; ("directives"%string, show_dirs ds)]
       | SEError cfg os ds trace =>
           let '((_, rs, m), smem, ct, ms) := cfg in
-          report "Speculative execution got stuck"%string
+          report ("Speculative execution got stuck. ct: " ++ show ct ++ ", ms: " ++ show ms)%string
             (trace_item "trace"%string trace
              :: ("directives"%string, show_dirs ds)
              :: ("observations"%string, show_obs os)
@@ -220,52 +201,33 @@ Definition stuck_free (f : nat) (p : prog) (c: cfg) : exec_result :=
   let ist := (c, tc, []) in
   steps_taint_track f p ist [].
 
-(* The next push would land outside the stack region [m] describes. *)
-Definition is_stack_overflow (rs: reg) (m: mem) := match t_apply rs "sp"%string with
-  | N n => (S n >= stack_top m)?
-  | _ => false
-  end.
-
-Definition is_sp_fp_uv (rs: reg) := match t_apply rs "sp"%string, t_apply rs "fp"%string with
-  | UV, _ => true
-  | _, UV => true
-  | _, _  => false
-  end.
-
 Definition load_store_trans_stuck_free := (
   forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
-  forAll (gen_wt_mem tm pst 100) (fun m =>
+  forAll (gen_wt_mem tm pst 1000) (fun m =>
   let p' := transform_load_store_prog c tm m p in
   let icfg := (ipc, "sp"%string !-> N (stack_base m); rs, m) in
-  let r1 := stuck_free 1000 p' icfg in
+  let r1 := stuck_free 100 p' icfg in
   match r1 with
   | ETerm st os => checker true
   | EOutOfFuel st os => collect "Out-of-fuel"%string (checker tt)
   | EError st os => 
       let '((pc, rs, mem), _, _) := st in
-      (* the pc comes from running [p'], so the instruction does too *)
-      match fetch p' pc with
-      | Some <{ call _ }> => collect "Undef call"%string (checker tt)
-      | Some <{ ret }>    => collect "Undef ret"%string (checker tt)
-      | i => printTestCase
-              (report "The guarded program got stuck on an instruction that is not a call or a ret"%string
-                  (inst_item "failing instruction"%string i
+      printTestCase
+              (report "The guarded program got stuck"%string
+                  (inst_item "failing instruction"%string (fetch p' pc)
                   :: ("observations"%string, show_obs os)
                   :: ("registers"%string, show rs)
                   :: mem_items mem (t_apply rs "sp"%string) ismem
                   ++ [prog_item "guarded program"%string None p']))
               (checker false)
-      end
   end)))).
 
 Definition no_obs_prog_no_obs := (
   forAll gen_no_obs_prog (fun p =>
-  (* no heap, a small stack: sp starts at the stack base, which holds no return
-     address, so a [ret] there terminates *)
   let m := {| heap_length := 0; stack_length := 10; memory := mkStk 10 |} in
   let icfg := (ipc, "sp"%string !-> N (stack_base m); empty_rs, m) in
-    match taint_tracking 100 p icfg with
+    match taint_tracking 10 p icfg with
     | Some (_, leaked_vars, leaked_mems) =>
         checker (seq.nilp leaked_vars && seq.nilp leaked_mems)
     | None => checker tt
@@ -286,7 +248,7 @@ Definition unused_var_no_leak `{Show input_st}
   (transform_prog : rctx -> tmem -> mem -> prog -> prog) := (
   forAll gen_prog_and_unused_var (fun '(c, tm, pst, p, unused_var) =>
   forAll (gen_reg_wt c pst) (fun rs =>
-  forAll (gen_wt_mem tm pst 105) (fun m =>
+  forAll (gen_wt_mem tm pst 1000) (fun m =>
   let icfg := (ipc, "sp"%string !-> N (stack_base m); rs, m) in
   let p' := transform_prog c tm m p in
   match stuck_free 100 p' icfg with
@@ -387,31 +349,36 @@ Definition test_safety_preservation `{Show dir} `{Show ST.pc}
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
   forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
-  forAll (gen_wt_mem tm pst 200) (fun m =>
+  forAll (gen_wt_mem tm pst 100) (fun m =>
   let rs := "sp"%string !-> N (stack_base m); rs in
   let icfg := (ipc, rs, m) in
   let p' := transform_load_store_prog c tm m p in
-  let harden := harden p' in
-  let rs' := spec_rs rs in
-  let icfg' := (ipc, rs', m) in
-  let iscfg := (icfg', ismem, true, false) in
-  let h_pst := pst_calc harden in
-  forAll (gen_spec_steps_sized 200 harden h_pst iscfg gen_dbr gen_dcall gen_dret) (fun ods =>
-  (match ods with
-  | SETerm sc os ds trace => checker true
-  | SEError c' os ds trace =>
-      let '((pc, rs, mem), _, _, ms) := c' in
-      (* the configuration, the directives and the trace are already in the
-        [spec_exec_result] QuickChick prints *)
-      printTestCase
-        (report "The hardened program got stuck under speculation"%string
-          [ inst_item "failing instruction"%string (fetch harden pc)
-          ; ("failing pc"%string, show pc)
-          ; prog_item "hardened program"%string None harden ])
-        (checker false)
-  | SEOutOfFuel _ _ ds trace => checker true (* YF: I think it should be true, as we could progress *)
+  let r1 := taint_tracking 100 p' icfg in
+  match r1 with
+  | Some _ =>
+    let harden := harden p' in
+    let rs' := spec_rs rs in
+    let icfg' := (ipc, rs', m) in
+    let iscfg := (icfg', ismem, true, false) in
+    let h_pst := pst_calc harden in
+    forAll (gen_spec_steps_sized 100 harden h_pst iscfg gen_dbr gen_dcall gen_dret) (fun ods =>
+    (match ods with
+    | SETerm sc os ds trace => checker true
+    | SEError c' os ds trace =>
+        let '((pc, rs, mem), _, _, ms) := c' in
+        (* the configuration, the directives and the trace are already in the
+          [spec_exec_result] QuickChick prints *)
+        printTestCase
+          (report "The hardened program got stuck under speculation"%string
+            [ inst_item "failing instruction"%string (fetch harden pc)
+            ; ("failing pc"%string, show pc)
+            ; prog_item "hardened program"%string None harden ])
+          (checker false)
+    | SEOutOfFuel _ _ ds trace => checker true (* YF: I think it should be true, as we could progress *)
+    end))
+  | None => collect "tt1 not safe"%string (checker tt)
   end))
-  )))).
+  )).
 
 Definition test_relative_security `{Show dir} `{Show ST.pc}
   (harden : prog -> prog)

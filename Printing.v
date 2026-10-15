@@ -77,6 +77,7 @@ Definition show_layout (m : mem) : string :=
          | ICTarget => "ctarget"
          (*| IPeek x => x ++ " <- peek"*)
          | IRet => "ret"
+         | IExit => "exit"
          end)%string
   }.
 
@@ -171,7 +172,7 @@ Definition item {A : Type} `{Show A} (label : string) (a : A) : string * string 
    and hardened programs are deterministic functions of it, so printing one in
    a report mostly buries the line that explains the failure.  Set this to
    [true] while reading a report without the generator's output at hand. *)
-Definition print_programs : bool := false.
+Definition print_programs : bool := true.
 
 (* A [cptr] on its own is two numbers; what you want to know is which
    instruction sits there. *)
@@ -379,11 +380,7 @@ Definition show_stack (m : mem) (sp_val : val) (sb : val * list (nat * val))
   let row (a : nat) : string :=
     let mark := if (match sp_val with N n => Nat.eqb n a | _ => false end)
                 then "->"%string else "  "%string in
-    if Nat.ltb a top then
-      match get_mem a m with
-      | Some v => (mark ++ " [" ++ show a ++ "] " ++ show v ++ nl)%string
-      | None => ""%string
-      end
+    if Nat.ltb a top then (mark ++ " [" ++ show a ++ "] " ++ show (get_mem a m) ++ nl)%string
     else
       match buffer_lookup live a with
       | Some v => (mark ++ " [" ++ show a ++ "] " ++ show v

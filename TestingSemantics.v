@@ -83,9 +83,6 @@ Fixpoint eval (st : reg) (e: exp) : val :=
   | <{&l}> => C.eval_fptr l
   end.
 
-(* The return address of the current frame, or None at the bottom of the
-   stack.  Reads a code pointer through [C.of_val], so it keeps working for a
-   machine whose code pointers are not [FP]. *)
 Definition ret_addr (r : reg) (m : mem) : option pc :=
   sp <- to_nat (M.t_apply r "sp"%string);;
   C.of_val (get_mem sp m).
@@ -189,11 +186,13 @@ Definition step (p:prog) (sc:state cfg) : (state cfg * obs) :=
             | None => (S_Undef, [])
             | Some (_sp, _pc') =>
               match C.of_val _pc' with
-              (* bottom of the stack: this returns out of the program *)
-              | None => if stack_empty _sp m then (S_Term, []) else (S_Undef, [])
+              (* no code pointer in the slot: [exit] is the only terminator *)
+              | None => (S_Undef, [])
               | Some pc' => (S_Running (pc', "sp" !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m), [ORet (C.to_cptr p pc') _sp])
               end
             end
+          | <{{exit}}> =>
+            (S_Term, [])
           end
       | None => (S_Fault, [])
       end
@@ -279,8 +278,8 @@ Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg
             | None => untrace "ret: no return slot" (S_Undef, ds, [])
             | Some (_sp, _pc') =>
               match C.of_val _pc' with
-              (* bottom of the stack: nothing was pushed there *)
-              | None => if stack_empty _sp m then (S_Term, ds, []) else (S_Undef, ds, [])
+              (* no code pointer in the slot: [exit] is the only terminator *)
+              | None => (S_Undef, ds, [])
               | Some pc' =>
                 match
                   if seq.nilp ds then
@@ -289,11 +288,10 @@ Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg
                     d <- hd_error ds;;
                     dpc <- is_dret d;;
                     pc'' <- C.of_cptr p dpc;;
-                    trace ("RET will be at " ++ show pc'' ++ nl)%string (
                     is_true (C.wf_retb p pc'');;
                     let ms' := ms || negb (C.pc_eqb pc' pc'') in
                     (*! *)
-                    ret ((S_Running ((pc'', "sp" !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc') _sp]))
+                    ret ((S_Running ((pc'', "sp" !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc') _sp])
                     (*!! spec-ret-no-sp-restore *)
                     (*! ret ((S_Running ((pc'', r, m), smem, false, ms'), tl ds), []) *)
                     (*!! spec-ret-observes-directive *)
@@ -340,6 +338,7 @@ Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg
       end
   | s => (s, ds, [])
   end.
+
 
 Fixpoint spec_steps (f:nat) (p:prog) (sc: state spec_cfg) (ds: dirs)
   : (state spec_cfg * dirs * obs) :=
@@ -484,9 +483,9 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                 (*!! ideal-ret-no-mask *)
                 (*! let v := _pc' in *)
                 match C.of_val v with
-                (* bottom of the stack: nothing was pushed there -- same rule as
-                   [step] and [spec_step] *)
-                | None => if stack_empty _sp m then (S_Term, ds, []) else (S_Undef, ds, [])
+                (* no code pointer in the slot -- same rule as [step] and
+                   [spec_step]; [exit] is the only terminator *)
+                | None => (S_Undef, ds, [])
                 | Some pc' =>
                   match
                     if seq.nilp ds then
