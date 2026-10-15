@@ -65,9 +65,9 @@ Definition icfg (q : pc) (ireg : reg) (m : mem) : cfg := (q, ireg, m).
 Definition addr_oob (n : nat) (m : mem) : bool := stack_top m <=? n.
 
 (* [UV] is the buffer's default, so it doubles as "nothing buffered here". *)
-Definition read_buffered (n : nat) (m : mem) (smem : spec_mem) : option val :=
+Definition read_buffered (n : nat) (m : mem) (smem : spec_mem) : val :=
   if addr_oob n m
-  then match smem !s n with UV => None | v => Some v end
+  then smem !s n
   else get_mem n m.
 
 Fixpoint eval (st : reg) (e: exp) : val :=
@@ -88,8 +88,7 @@ Fixpoint eval (st : reg) (e: exp) : val :=
    machine whose code pointers are not [FP]. *)
 Definition ret_addr (r : reg) (m : mem) : option pc :=
   sp <- to_nat (M.t_apply r "sp"%string);;
-  v <- get_mem sp m;;
-  C.of_val v.
+  C.of_val (get_mem sp m).
 
 End SemTypes.
 
@@ -152,8 +151,7 @@ Definition step (p:prog) (sc:state cfg) : (state cfg * obs) :=
           | <{{x<-load[e]}}> =>
             match
               n <- to_nat (eval r e);;
-              v' <- get_mem n m;;
-              ret ((pc+1, (x !-> v'; r), m), [OLoad n])
+              ret ((pc+1, (x !-> (get_mem n m); r), m), [OLoad n])
             with
             | Some (c, o) => (S_Running c, o)
             | None => (S_Undef, [])
@@ -186,15 +184,14 @@ Definition step (p:prog) (sc:state cfg) : (state cfg * obs) :=
           | <{{ret}}> =>
             match
               sp <- to_nat (M.t_apply r "sp");;
-              _pc' <- get_mem sp m;;
-              ret (sp, _pc')
+              ret (sp, get_mem sp m)
             with
             | None => (S_Undef, [])
-            | Some (n, _pc') =>
+            | Some (_sp, _pc') =>
               match C.of_val _pc' with
               (* bottom of the stack: this returns out of the program *)
-              | None => if stack_empty n m then (S_Term, []) else (S_Undef, [])
-              | Some pc' => (S_Running (pc', "sp" !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m), [ORet (C.to_cptr p pc') n])
+              | None => if stack_empty _sp m then (S_Term, []) else (S_Undef, [])
+              | Some pc' => (S_Running (pc', "sp" !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m), [ORet (C.to_cptr p pc') _sp])
               end
             end
           end
@@ -213,7 +210,7 @@ Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg
       | Some i =>
           match i with
           | <{{branch e to l}}> =>
-            if ct then   (S_Fault, ds, []) else
+            if ct then (S_Fault, ds, []) else
             match
               if seq.nilp ds then
                 untrace "Branch: Directions are empty!" None
@@ -273,17 +270,17 @@ Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg
             match
               sp <- to_nat (M.t_apply r "sp");;
               (* Check the speculative cache *)
-              _pc' <- match ListMaps.apply smem sp with
+              let _pc' := match ListMaps.apply smem sp with
                 | UV => get_mem sp m
-                | pc' => Some pc'
-              end;;
+                | pc' => pc'
+              end in
               ret (sp, _pc')
             with
             | None => untrace "ret: no return slot" (S_Undef, ds, [])
-            | Some (n, _pc') =>
+            | Some (_sp, _pc') =>
               match C.of_val _pc' with
               (* bottom of the stack: nothing was pushed there *)
-              | None => if stack_empty n m then (S_Term, ds, []) else (S_Undef, ds, [])
+              | None => if stack_empty _sp m then (S_Term, ds, []) else (S_Undef, ds, [])
               | Some pc' =>
                 match
                   if seq.nilp ds then
@@ -292,10 +289,11 @@ Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg
                     d <- hd_error ds;;
                     dpc <- is_dret d;;
                     pc'' <- C.of_cptr p dpc;;
+                    trace ("RET will be at " ++ show pc'' ++ nl)%string (
                     is_true (C.wf_retb p pc'');;
                     let ms' := ms || negb (C.pc_eqb pc' pc'') in
                     (*! *)
-                    ret ((S_Running ((pc'', "sp" !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc') n])
+                    ret ((S_Running ((pc'', "sp" !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc') _sp]))
                     (*!! spec-ret-no-sp-restore *)
                     (*! ret ((S_Running ((pc'', r, m), smem, false, ms'), tl ds), []) *)
                     (*!! spec-ret-observes-directive *)
@@ -310,7 +308,7 @@ Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg
             if ct then (S_Fault, ds, []) else
             match
               n <- to_nat (eval r e);;
-              v' <- read_buffered n m smem;;
+              let v' := read_buffered n m smem in
               ret ((S_Running ((pc+1, (x !-> v'; r), m), smem, false, ms), ds), [OLoad n])
             with
             | None => untrace "load fail" (S_Undef, ds, [])
@@ -445,7 +443,7 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                 (*!! ideal-load-masks-spill-slot *)
                 (*! let i := if ms then (ANum 0) else e in *)
                 n <- to_nat (eval r i);;
-                v' <- read_buffered n m smem;;
+                let v': val := read_buffered n m smem in
                 let c := (pc+1, (x !-> v'; r), m) in
                 ret (S_Running (c, smem, ms), ds, [OLoad n])
               with
@@ -475,20 +473,20 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
               match
                 sp <- to_nat (M.t_apply r "sp"%string);;
                 (*! *)
-                _pc' <- read_buffered sp m smem;;
+                let _pc': val := read_buffered sp m smem in
                 (*!! ideal-ret-read-above-sp *)
                 (*! _pc' <- get_mem (S sp) m;; *)
                 ret (sp, _pc')
               with
               | None => untrace ("ideal ret: no return slot. PC: " ++ show pc ++ nl) (S_Undef, ds, [])
-              | Some (n, _pc') =>
+              | Some (_sp, _pc') =>
                 let v := if ms then C.to_val C.null_pc else _pc' in
                 (*!! ideal-ret-no-mask *)
                 (*! let v := _pc' in *)
                 match C.of_val v with
                 (* bottom of the stack: nothing was pushed there -- same rule as
                    [step] and [spec_step] *)
-                | None => if stack_empty n m then (S_Term, ds, []) else (S_Undef, ds, [])
+                | None => if stack_empty _sp m then (S_Term, ds, []) else (S_Undef, ds, [])
                 | Some pc' =>
                   match
                     if seq.nilp ds then
@@ -499,11 +497,11 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                       pc'' <- C.of_cptr p dpc;;
                       MiniCET.is_true (C.wf_retb p pc'');;
                       let ms' := ms || negb (C.pc_eqb pc' pc'') in
-                      let m' := if addr_oob n m then m else upd_mem n m v in
-                      let smem' := if addr_oob n m then n !s-> v ; smem else smem in
+                      let m' := if addr_oob _sp m then m else upd_mem _sp m v in
+                      let smem' := if addr_oob _sp m then _sp !s-> v ; smem else smem in
                       (* the architectural target, as in [spec_step] *)
                       (*! *)
-                      ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc') n])
+                      ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc') _sp])
                       (*!! ideal-ret-no-sp-restore *)
                       (*! ret ((S_Running ((pc'', r, m'), smem', ms'), tl ds), []) *)
                       (*!! ideal-ret-observes-directive *)
