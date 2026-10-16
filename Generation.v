@@ -410,11 +410,11 @@ Definition ARG_SLOTS := 3.
 
 (* A frame needs the saved-fp slot plus the outgoing-argument area; anything
    above that is locals and temporaries. *)
-Definition MIN_STACK_FRAME_SIZE := S ARG_SLOTS.
-Definition MAX_STACK_FRAME_SIZE := ARG_SLOTS + 8.
-Definition STATIC_FRAME_SIZE := 16.
+Definition MIN_STACK_FRAME_SIZE := 1.
+Definition MAX_STACK_FRAME_SIZE := 3.
+Definition STATIC_FRAME_SIZE := 4.
 
-Definition frame_locals (frame_size: nat) : nat := frame_size - ARG_SLOTS - 1.
+Definition frame_locals (frame_size: nat) : nat := frame_size - 1.
 
 Definition gen_frame_slot (frame_size: nat) : G exp :=
   let incoming := map (fun (j:nat) => let n := ANum j in <{{ sp - frame_size - n }}>)
