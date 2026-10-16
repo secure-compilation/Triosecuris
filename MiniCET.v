@@ -357,7 +357,7 @@ Notation "pc '+' '1'" := (inc pc) : com_scope.
 Inductive direction : Type :=
   | DBranch (b':bool)
   | DCall (lo:cptr)
-  | DRet (lo:cptr).
+  | DRet (lo: option cptr).
 
 Definition dirs := list direction.
 
@@ -379,7 +379,7 @@ Definition is_dcall (d:direction) : option cptr :=
   | _ => None
   end.
 
-Definition is_dret (d:direction) : option cptr :=
+Definition is_dret (d:direction) : option (option cptr) :=
   match d with
   | DRet pc => Some pc
   | _ => None
@@ -741,8 +741,7 @@ Definition wf_calling_convention (p : prog) : bool :=
 
 Definition wf_retb (p: prog) (pc: cptr) : bool :=
   let '(l, o) := pc in
-  (* YF: We allow to return to &(0, 0) for ret masking. TBD: if we should allow any other call targets. *)
-  pc_eqb (l, o) null_pc || match MiniCET.fetch p (l, o) with
+  match MiniCET.fetch p (l, o) with
   | Some _ => match o with
              | 0 => false
              | S o' => match MiniCET.fetch p (l, o') with
@@ -783,12 +782,12 @@ Definition block_terminator_prog (p: prog) : bool :=
 Definition wf_direction (pc: cptr) (p: prog) (d: direction) : bool :=
   match d, p[[pc]] with
   | DBranch b, Some (IBranch e l) => is_some p[[(l, 0)]]
-
   | DCall pc', Some (ICall e) => is_some p[[pc']]
-  | DRet (l, S o), Some (IRet) => match p[[(l, o)]] with 
+  | DRet (Some (l, S o)), Some (IRet) => match p[[(l, o)]] with 
                                   | Some (ICall e) => true
                                   | _ => false
                                   end
+  | DRet None, Some IRet => true
   | _, _ =>  false
   end.
 

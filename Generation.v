@@ -937,12 +937,6 @@ Definition genMinListSized {A : Type} (min_len : nat) (g : G A) : G (list A) :=
     vectorOf len g
   ).
 
-(* [pst] partitions [pl] blocks between procedures, but each procedure also gets
-   an epilogue block, so the program that comes out has [map S pst] blocks per
-   procedure and [pl + length pst] in total.  Generation is done against that
-   final shape -- it is what [proc_hd] must be taken of for the FPtr call
-   targets to name real entry blocks -- and it is the final partition that is
-   returned, since callers use it the same way (e.g. [gen_dcall]). *)
 Definition gen_prog_ty_ctx_wt (bsz pl: nat) : G (rctx * tmem * list nat * prog) :=
   c <- arbitrary;;
   tm <- genMinListSized 5 arbitrary;;

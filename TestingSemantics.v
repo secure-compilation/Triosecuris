@@ -287,15 +287,21 @@ Definition spec_step (p:prog) (ssc: state spec_cfg) (ds: dirs) : (state spec_cfg
                   else
                     d <- hd_error ds;;
                     dpc <- is_dret d;;
-                    pc'' <- C.of_cptr p dpc;;
-                    is_true (C.wf_retb p pc'');;
-                    let ms' := ms || negb (C.pc_eqb pc' pc'') in
-                    (*! *)
-                    ret ((S_Running ((pc'', "sp" !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc') _sp])
-                    (*!! spec-ret-no-sp-restore *)
-                    (*! ret ((S_Running ((pc'', r, m), smem, false, ms'), tl ds), []) *)
-                    (*!! spec-ret-observes-directive *)
-                    (*! ret ((S_Running ((pc'', "sp" !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
+                    match dpc with
+                    (* If attacker issues DRet None, then we follow the sequential path *)
+                    | None => 
+                      ret ((S_Running ((pc', "sp" !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m), smem, false, ms), tl ds), [ORet (C.to_cptr p pc') _sp])
+                    | Some dpc =>
+                      pc'' <- C.of_cptr p dpc;;
+                      is_true (C.wf_retb p pc'');;
+                      let ms' := ms || negb (C.pc_eqb pc' pc'') in
+                      (*! *)
+                      ret ((S_Running ((pc'', "sp" !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc') _sp])
+                      (*!! spec-ret-no-sp-restore *)
+                      (*! ret ((S_Running ((pc'', r, m), smem, false, ms'), tl ds), []) *)
+                      (*!! spec-ret-observes-directive *)
+                      (*! ret ((S_Running ((pc'', "sp" !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m), smem, false, ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
+                    end
                 with
                 | None => untrace "ret fail" (S_Undef, ds, [])
                 | Some (c, ds, os) => (c, ds, os)
@@ -493,20 +499,25 @@ Definition ideal_step (p: prog) (sic: state ideal_cfg) (ds: dirs): (state ideal_
                     else
                       d <- hd_error ds;;
                       dpc <- is_dret d;;
-                      pc'' <- C.of_cptr p dpc;;
-                      MiniCET.is_true (C.wf_retb p pc'');;
-                      let ms' := ms || negb (C.pc_eqb pc' pc'') in
                       let m' := if addr_oob _sp m then m else upd_mem _sp m v in
                       let smem' := if addr_oob _sp m then _sp !s-> v ; smem else smem in
-                      (* the architectural target, as in [spec_step] *)
-                      (*! *)
-                      ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc') _sp])
-                      (*!! ideal-ret-no-sp-restore *)
-                      (*! ret ((S_Running ((pc'', r, m'), smem', ms'), tl ds), []) *)
-                      (*!! ideal-ret-observes-directive *)
-                      (*! ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
-                      (*!! ideal-ret-no-slot-writeback *)
-                      (*! ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m), smem, ms'), tl ds), [ORet (C.to_cptr p pc') n]) *)
+                      match dpc with
+                      | None =>
+                        ret ((S_Running ((pc', "sp"%string !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m'), smem', ms), tl ds), [ORet (C.to_cptr p pc') _sp])
+                      | Some dpc =>
+                        pc'' <- C.of_cptr p dpc;;
+                        MiniCET.is_true (C.wf_retb p pc'');;
+                        let ms' := ms || negb (C.pc_eqb pc' pc'') in
+                        (* the architectural target, as in [spec_step] *)
+                        (*! *)
+                        ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus _sp 1 C.max_in_domain); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc') _sp])
+                        (*!! ideal-ret-no-sp-restore *)
+                        (*! ret ((S_Running ((pc'', r, m'), smem', ms'), tl ds), []) *)
+                        (*!! ideal-ret-observes-directive *)
+                        (*! ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m'), smem', ms'), tl ds), [ORet (C.to_cptr p pc'') n]) *)
+                        (*!! ideal-ret-no-slot-writeback *)
+                        (*! ret ((S_Running ((pc'', "sp"%string !-> N (eval_binop_nat BinMinus n 1 C.max_in_domain); r, m), smem, ms'), tl ds), [ORet (C.to_cptr p pc') n]) *)
+                      end
                   with
                   | None => untrace ("ideal ret failed. PC: " ++ show pc ++ "; PROGRAM: " ++ show p ++ nl) (S_Undef, ds, [])
                   | Some (c, ds, os) => (c, ds, os)

@@ -33,7 +33,7 @@ Definition gen_dcall (pst: list nat) : G dir :=
   l <- (elems_ (0, 0) (proc_hd pst));; ret (DCall l).
 
 Definition gen_dret (p: prog) : G dir :=
-  l <- elems_ (0, 0) (wf_ret_addrs p);; ret (DRet l).
+  l <- elems_ (0, 0) (wf_ret_addrs p);; ret (DRet (Some l)).
 
 Instance ShowDirection : Show dir := {
   show dir := match dir with

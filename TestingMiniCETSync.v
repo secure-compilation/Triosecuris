@@ -40,7 +40,7 @@ Definition gen_dcall (pst: list nat) : G dir :=
   l <- (elems_ (0, 0) (proc_hd pst));; ret (DCall l).
 
 Definition gen_dret (p: prog) : G dir :=
-  l <- elems_ (0, 0) (wf_ret_addrs p);; ret (DRet l).
+  l <- elems_ (0, 0) (wf_ret_addrs p);; ret (DRet (Some l)).
 
 Instance ShowDirection : Show dir := {
   show dir := match dir with
@@ -53,13 +53,8 @@ Instance ShowDirection : Show dir := {
 (* Size of the stack region [gen_wt_mem] appends after the typed memory. *)
 Definition stk_alloc := 1000.
 
-(* The return address of the current frame, or None at the bottom of the stack.
-   Same test the semantics uses to decide that a [ret] terminates. *)
 Definition lookup_sp (m : mem) (r : reg) : option cptr := ret_addr r m.
 
-(* The address a [ret] actually uses.  uSLH overwrites the slot with (0, 0)
-   while mis-speculating, so under [ms] a return always has a target -- even at
-   the bottom of the stack, where it would otherwise terminate. *)
 Definition ret_target (m : mem) (r : reg) (ms : bool) : option cptr :=
   if ms then Some (0, 0) else lookup_sp m r.
 
@@ -115,9 +110,12 @@ Definition ret_sync (p: prog) (pc: cptr) : option cptr :=
   | _ => None
   end.
 
+(* [DRet None] is the sequential path, which needs no translation; a speculated
+   target is the pc after a call, which hardening moves. *)
 Definition sync_dir (p: prog) (d: direction) : option direction :=
   match d with
-  | DRet pc => pc' <- ret_sync p pc;; ret (DRet pc')
+  | DRet None => Some (DRet None)
+  | DRet (Some pc) => pc' <- ret_sync p pc;; ret (DRet (Some pc'))
   | d => Some d
   end.
 
@@ -176,12 +174,6 @@ Definition spec_cfg_sync (p: prog) (ic: ideal_cfg): option spec_cfg :=
   let '(pc, r, m) := c in
   pc' <- pc_sync p pc;;
   r' <- r_sync p r ms;;
-  (* The stack lives in memory, so the return addresses it holds are synced as
-     part of the memory: every cell, not just the live stack slots -- a popped
-     slot still holds the return address the caller left there, translated on
-     the hardened side. *)
-  (* only the contents are translated: the hardened program has the same heap
-     and the same stack region *)
   (*! *)
   m' <- (vals <- map_opt (val_sync p) m.(memory);; Some (with_memory m vals));;
   (*!! spec_cfg_sync-no-stack *)
@@ -245,6 +237,11 @@ Definition steps_to_sync_point (tp: prog) (tsc: spec_cfg) (ds: dirs) : option na
       match (String.eqb x callee) with
       | true => match tp[[((pc+1)+1)+1]] with
                 | Some <{{ret}}> => match ds with
+                                   (* A masked return follows [&(0,0)] to a
+                                      procedure entry, so the hardened run has
+                                      the ctarget prologue still to execute;
+                                      [pc_sync] places the sync point past it. *)
+                                   | [DRet None] => Some (if ms then 6 else 5)
                                    (*! *)
                                    | [DRet _] => Some 5
                                    (*!! steps_to_sync_point-ret-4 *)
@@ -276,12 +273,9 @@ Definition gen_directive_from_ideal_cfg (p: prog) (pst: list nat) (ic: ideal_cfg
           [ pc <- gen_pc_from_prog p ;; ret [DCall pc] ]
         )
       | <{{ret}}> =>
-        (* no target means the bottom of the stack, where the [ret] terminates
-           and takes no directive *)
-        match ret_target m r ms with
-        | None => ret []
-        | Some _ => d <- gen_dret p;; ret [d]
-        end
+        (* both shapes: the sequential path, and a speculated return site *)
+        if seq.nilp (wf_ret_addrs p) then ret [DRet None]
+        else oneOf ( ret [DRet None] ;;; [ d <- gen_dret p;; ret [d] ] )
       | _ => ret []
       end
   | None => untrace "lookup error" (ret [])
@@ -303,11 +297,7 @@ Definition get_directive_for_seq_behaviour (p: prog) (pst: list nat) (ic: ideal_
         | None => []
         | Some l => [DCall l]
         end
-      | <{{ret}}> =>
-        match lookup_sp m r with
-        | Some pc => if wf_retb p pc then [DRet pc] else []
-        | None => []
-        end
+      | <{{ret}}> => [DRet None]
       | _ => []
       end
   | None => untrace "lookup error" ([])
@@ -319,7 +309,7 @@ Definition needs_dir (p: prog) (ic: ideal_cfg) : bool :=
   let '(pc, r, m) := c in
   match p[[pc]] with
   | Some <{{branch _ to _}}> | Some <{{call _}}> => true
-  | Some <{{ret}}> => match ret_target m r ms with Some _ => true | None => false end
+  | Some <{{ret}}> => true
   | _ => false
   end.
 
@@ -357,7 +347,7 @@ Definition gen_directive_triggering_misspec (p: prog) (pst: list nat) (ic: ideal
               let other_addrs := filter (fun x => negb (x ==b pc')) addrs in
               match other_addrs with
               | [] => ret []
-              | e :: tl => t <- elems_ e (e :: tl);; ret [DRet t]
+              | e :: tl => t <- elems_ e (e :: tl);; ret [DRet (Some t)]
               end
             end
       | _ => ret []
@@ -453,13 +443,14 @@ Definition single_step_cc := (
           | Some n => collect ("ideal step failed for "%string ++ show (p[[pc]]) ++ " but steps_to_sync_point was Some"%string)%string (checker tt)
           end
       | (S_Term, _, oideal) =>
+          (* [exit] is the only terminator, and uSLH leaves it a single
+             instruction, so the hardened run terminates in the same [n]. *)
           match (steps_to_sync_point (uslh_prog p) tcfg tds) with
-          (* [callee <- load[sp]] and then the [ret] that terminates *)
-          | None => match spec_steps 2 (uslh_prog p) (S_Running tcfg) tds with
+          | Some n => match spec_steps n (uslh_prog p) (S_Running tcfg) tds with
                     | (S_Term, _, ospec) =>   (checker (obs_eqb_sync p oideal ospec))
                     | _ => trace "spec exec didn't terminate"%string (checker false)
                     end
-          | Some n => collect ("ideal step failed for "%string ++ show (p[[pc]]) ++ " but steps_to_sync_point was Some"%string)%string (checker tt)
+          | None => trace "Ideal step terminates, but steps_to_sync_point undefined" (checker false)
           end
       | (S_Running icfg', _, oideal) =>
           match (steps_to_sync_point (uslh_prog p) tcfg tds) with
