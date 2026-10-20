@@ -564,7 +564,7 @@ Qed.
 Definition unmasked_addr (e: exp) : bool :=
   match e with
   (* #_ is some constant *)
-  | <{ $sp + #_ }> | <{ $sp - #_ }> | <{ $sp }> => true
+  | <{ ($sp - #_) + #_ }> | <{ ($sp - #_) - #_ }> | <{ $sp - #_ }> | <{ $sp + #_ }> | <{ $sp }> => true
   | _ => false
   end.
 
