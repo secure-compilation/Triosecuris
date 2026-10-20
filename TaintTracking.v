@@ -97,6 +97,7 @@ Variant taint_ctx :=
   | CMem (n: nat)
   | CDefault.
 
+(* YF: I think we can remove taint stack as we either way use tmem for stack *)
 Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: taint_ctx) : option (tcfg * taint) :=
   let '(pc, rs, m) := c in
   let '(tpc, trs, tm, ts) := tc in
@@ -165,10 +166,11 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
       match tctx with
       | CMem _sp =>
           let te := (_calc_taint_exp e trs) in
-          let tx := join_taints (t_apply trs "sp"%string) tpc in (* "sp" is also leaked *)
+          (* The pc and sp are added to observations later, and observations are the only sink *)
+          let tsp := join_taints (t_apply trs "sp"%string) tpc in (* "sp" is also leaked *)
           let ts' := tpc :: ts in
           let tpc' := join_taints te tpc in
-          let tc' := (tpc', ("sp"%string !-> tx ; trs), upd _sp tm tpc, ts') in
+          let tc' := (tpc', ("sp"%string !-> tsp ; trs), upd _sp tm tpc, ts') in (* remove tainted call stack ts and ts' *)
           let tobs' := join_taints (t_apply trs "sp") (join_taints tobs tpc') in
           Some (tc', tobs')
       | _ => None
@@ -179,12 +181,12 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
       | CMem _sp =>
           let tv := nth _sp tm [] in
           let tsp := t_apply trs "sp"%string in
-          let tpc' := join_taints tv (hd [] ts) in
-          let tx := join_taints tsp tpc in
+          let tpc' := join_taints tv (hd [] ts) in (* remove tainted call stack ts *)
+          let tsp' := join_taints tsp tpc in
           let ts' := tl ts in
-          let tc' := (tpc', ("sp"%string !-> tx ; trs), tm, ts') in
+          let tc' := (tpc', ("sp"%string !-> tsp' ; trs), tm, ts') in
           (* [ORet pc' sp] leaks both the return address and the stack pointer *)
-          let tobs' := join_taints (join_taints tv tsp) (join_taints tobs tpc) in
+          let tobs' := join_taints tsp (join_taints tobs tpc') in
           Some (tc', tobs')
       | _ => None
       end
