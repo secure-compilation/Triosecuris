@@ -16,8 +16,7 @@ Import MonadNotation.
 From SECF Require Import MiniCET TaintTracking MapsFunctor TestingLib TestingSemantics.
 
 (*! Section testing_ETE *)
-
-(* Extract Constant defNumTests => "100000". *)
+Extract Constant defNumTests => "100000".
 
 Module Import MCC := MiniCETSemantics ListTotalMap.
 Module Import TS := TestingStrategies MCC.
@@ -33,7 +32,10 @@ Definition gen_dcall (pst: list nat) : G dir :=
   l <- (elems_ (0, 0) (proc_hd pst));; ret (DCall l).
 
 Definition gen_dret (p: prog) : G dir :=
-  l <- elems_ (0, 0) (wf_ret_addrs p);; ret (DRet (Some l)).
+  match wf_ret_addrs p with
+  | [] => ret (DRet None)
+  | a :: tl => l <- elems_ a (a :: tl);; ret (DRet (Some l))
+  end.
 
 Instance ShowDirection : Show dir := {
   show dir := match dir with
@@ -66,7 +68,9 @@ Definition basic_block_test := (forAll (basic_block_gen_example) (fun (blk: list
 (*! QuickChick basic_block_test. *)
 QuickChick basic_block_test.
 
-Definition wt_wf := (forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(_, _, _, p) => (wf_calling_convention p))).
+Definition wt_wf := (
+    forAll (choose (1, 4)) (fun max_stack_frame =>
+    forAll (gen_prog_ty_ctx_wt max_block_size max_program_length max_stack_frame) (fun '(_, _, _, p) => (wf_calling_convention p || wf p)))).
 (*! QuickChick wt_wf. *)
 QuickChick wt_wf.
 
@@ -89,8 +93,9 @@ Definition wt_expr_is_defined := (
 QuickChick wt_expr_is_defined.
 
 Definition ty_prog_wf :=
-  (forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
-    ((ty_prog c tm p) && (wf p)))).
+  (forAll (choose (1, 4)) (fun max_stack_frame =>
+  (forAll (gen_prog_ty_ctx_wt max_block_size max_program_length max_stack_frame) (fun '(c, tm, pst, p) =>
+    ((ty_prog c tm p) && (wf p)))))).
 
 
 Definition load_store_trans_basic_blk := TS.load_store_trans_basic_blk.

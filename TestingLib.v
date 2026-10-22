@@ -27,7 +27,6 @@ From SECF Require Import
   TestingSemantics.
 From SECF Require Export Generation Printing Shrinking.
 
-
 Definition max_block_size := 8.
 Definition max_program_length := 5.
 
@@ -85,7 +84,14 @@ Definition gen_spec_step (p: prog) (sc:spec_cfg) (pst: list nat)
                | _ => SRError [] [] [pc] sc
                end)
       | <{{ret}}> =>
-          d <- gen_dret p;;
+          let masked :=
+            match t_apply r msf with
+            | N n => negb (n =? 0)
+            | _ => false
+            end in
+          d <- (if masked
+                then freq [ (3, ret (DRet None)) ; (1, gen_dret p) ]
+                else freq [ (1, ret (DRet None)) ; (3, gen_dret p) ]);;
           ret (match spec_step p (S_Running sc) [d] with
                 | (S_Running sc', dir', os') => SRStep os' [d] [pc] sc'
                 | _ => SRError [] [] [pc] sc
@@ -186,10 +192,11 @@ Definition spec_steps_acc (f : nat) (p:prog) (sc:spec_cfg) (ds: dirs) : spec_exe
   _spec_steps_acc f p sc [] ds [].
 
 Definition load_store_trans_basic_blk := (
-    forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+    forAll (choose (1, 4)) (fun max_stack_frame =>
+    forAll (gen_prog_ty_ctx_wt max_block_size max_program_length max_stack_frame) (fun '(c, tm, pst, p) =>
     forAll (gen_wt_mem tm pst 1000) (fun m =>
-      List.forallb basic_block_checker (map fst (transform_load_store_prog c tm m p))))
-).
+      List.forallb basic_block_checker (map fst (transform_load_store_prog c tm m max_stack_frame p))))
+)).
 
 Definition stuck_free (f : nat) (p : prog) (c: cfg) : exec_result :=
   let '(pc, rs, m) := c in
@@ -202,10 +209,11 @@ Definition stuck_free (f : nat) (p : prog) (c: cfg) : exec_result :=
   steps_taint_track f p ist [].
 
 Definition load_store_trans_stuck_free := (
-  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+  forAll (choose (1, 4)) (fun max_stack_frame =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length max_stack_frame) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 1000) (fun m =>
-  let p' := transform_load_store_prog c tm m p in
+  let p' := transform_load_store_prog c tm m max_stack_frame p in
   let icfg := (ipc, "sp"%string !-> N (stack_base m); rs, m) in
   let r1 := stuck_free 100 p' icfg in
   match r1 with
@@ -221,7 +229,7 @@ Definition load_store_trans_stuck_free := (
                   :: mem_items mem (t_apply rs "sp"%string) ismem
                   ++ [prog_item "guarded program"%string None p']))
               (checker false)
-  end)))).
+  end))))).
 
 Definition no_obs_prog_no_obs := (
   forAll gen_no_obs_prog (fun p =>
@@ -235,7 +243,8 @@ Definition no_obs_prog_no_obs := (
   )).
 
 Definition gen_prog_and_unused_var : G (rctx * tmem * list nat * prog * string) :=
-  '(c, tm, pst, p) <- (gen_prog_ty_ctx_wt 3 5);;
+  max_stack_frame <- choose (1, 4);;
+  '(c, tm, pst, p) <- (gen_prog_ty_ctx_wt 3 5 max_stack_frame);;
   let used_vars := remove_dupes String.eqb (vars_prog p) in
   let unused_vars := filter (fun v => negb (existsb (String.eqb v) used_vars)) all_possible_vars in
   if seq.nilp unused_vars then
@@ -245,14 +254,16 @@ Definition gen_prog_and_unused_var : G (rctx * tmem * list nat * prog * string) 
     ret (c, tm, pst, p, x).
 
 Definition unused_var_no_leak `{Show input_st}
-  (transform_prog : rctx -> tmem -> mem -> prog -> prog) := (
+  (transform_prog : rctx -> tmem -> mem -> nat -> prog -> prog) := (
+  forAll (choose (1, 4)) (fun max_stack_frame =>
   forAll gen_prog_and_unused_var (fun '(c, tm, pst, p, unused_var) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 1000) (fun m =>
   let icfg := (ipc, "sp"%string !-> N (stack_base m); rs, m) in
-  let p' := transform_prog c tm m p in
+  let p' := transform_prog c tm m max_stack_frame p in
   match stuck_free 100 p' icfg with
-  | ETerm (_, _, tobs) os =>
+  | ETerm (cfg, _, tobs) os =>
+      let '(pc, _, _) := cfg in 
       let (ids, mems) := split_sum_list tobs in
       let leaked_vars := remove_dupes String.eqb ids in
       printTestCase
@@ -261,6 +272,7 @@ Definition unused_var_no_leak `{Show input_st}
            ; ("leaked variables"%string, show leaked_vars)
            ; ("leaked addresses"%string, show mems)
            ; ("observations"%string, show_obs os)
+           ; (inst_item "failing instruction"%string (fetch p pc))
            ; prog_item "guarded program"%string None p' ])
         (checker (negb (existsb (String.eqb unused_var) leaked_vars)))
   | EOutOfFuel st os => checker tt
@@ -274,7 +286,7 @@ Definition unused_var_no_leak `{Show input_st}
               :: mem_items mem (t_apply rs "sp"%string) ismem
               ++ [prog_item "guarded program"%string None p']))
           (checker false)
-  end)))).
+  end))))).
 
 Definition gen_pub_equiv_same_ty (P : total_map string label) (s: total_map string val) : G (total_map string val) :=
   let f := fun v => match v with
@@ -297,8 +309,9 @@ Definition gen_pub_equiv_is_pub_equiv := (forAll gen_pub_vars (fun P =>
   )))).
 
 Definition gen_reg_wt_is_wt := (
-  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
-  forAll (gen_reg_wt c pst) (fun rs => rs_wtb rs c))).
+  forAll (choose (1, 4)) (fun max_stack_frame =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length max_stack_frame) (fun '(c, tm, pst, p) =>
+  forAll (gen_reg_wt c pst) (fun rs => rs_wtb rs c)))).
 
 Definition gen_pub_mem_equiv_is_pub_equiv := (forAll gen_pub_mem (fun P =>
     forAll gen_mem (fun s1 =>
@@ -307,15 +320,17 @@ Definition gen_pub_mem_equiv_is_pub_equiv := (forAll gen_pub_mem (fun P =>
     )))).
 
 Definition gen_mem_wt_is_wt := (
-  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
-  forAll (gen_wt_mem tm pst 100) (fun m => m_wtb m tm))).
+  forAll (choose (1, 4)) (fun max_stack_frame =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length max_stack_frame) (fun '(c, tm, pst, p) =>
+  forAll (gen_wt_mem tm pst 100) (fun m => m_wtb m tm)))).
 
-Definition test_ni (transform : rctx -> tmem -> mem -> prog -> prog) := (
-  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+Definition test_ni (transform : rctx -> tmem -> mem -> nat -> prog -> prog) := (
+  forAll (choose (1, 4)) (fun max_stack_frame =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length max_stack_frame) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 100) (fun m =>
   let icfg := (ipc, "sp"%string !-> N (stack_base m); rs, m) in
-  let p' := transform c tm m p in
+  let p' := transform c tm m max_stack_frame p in
   let r1 := taint_tracking 100 p' icfg in
   match r1 with
   | Some (os1', tvars, tms) =>
@@ -342,17 +357,18 @@ Definition test_ni (transform : rctx -> tmem -> mem -> prog -> prog) := (
             (checker false)
       end))
    | None => collect "tt failed"%string (checker tt)
-  end)))).
+  end))))).
 
 Definition test_safety_preservation `{Show dir} `{Show ST.pc}
   (harden : prog -> prog)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
-  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+  forAll (choose (1, 4)) (fun max_stack_frame =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length max_stack_frame) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs =>
   forAll (gen_wt_mem tm pst 100) (fun m =>
   let rs := "sp"%string !-> N (stack_base m); rs in
   let icfg := (ipc, rs, m) in
-  let p' := transform_load_store_prog c tm m p in
+  let p' := transform_load_store_prog c tm m max_stack_frame p in
   let r1 := taint_tracking 100 p' icfg in
   match r1 with
   | Some _ =>
@@ -377,18 +393,18 @@ Definition test_safety_preservation `{Show dir} `{Show ST.pc}
     | SEOutOfFuel _ _ ds trace => checker true (* YF: I think it should be true, as we could progress *)
     end))
   | None => collect "tt1 not safe"%string (checker tt)
-  end))
-  )).
+  end))))).
 
 Definition test_relative_security `{Show dir} `{Show ST.pc}
   (harden : prog -> prog)
   (gen_dbr : G dir) (gen_dcall : list nat -> G dir) (gen_dret : prog -> G dir) := (
-  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length) (fun '(c, tm, pst, p) =>
+  forAll (choose (1, 4)) (fun max_stack_frame =>
+  forAll (gen_prog_ty_ctx_wt max_block_size max_program_length max_stack_frame) (fun '(c, tm, pst, p) =>
   forAll (gen_reg_wt c pst) (fun rs1 =>
   forAll (gen_wt_mem tm pst 1000) (fun m1 =>
   let rs1 := "sp"%string !-> N (stack_base m1); rs1 in
   let icfg1 := (ipc, rs1, m1) in
-  let p' := transform_load_store_prog c tm m1 p in
+  let p' := transform_load_store_prog c tm m1 max_stack_frame p in
   let r1 := taint_tracking 1000 p' icfg1 in
   match r1 with
   | Some (os1', tvars, tms) =>
@@ -454,6 +470,6 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
       | None => collect "tt2 failed"%string (checker tt)
       end))
    | None => collect "tt1 failed"%string (checker tt)
-  end)))).
+  end))))).
 
 End TestingStrategies.

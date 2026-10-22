@@ -165,22 +165,16 @@ Definition step (p:prog) (sc:state cfg) : (state cfg * obs) :=
             match
               l <- C.of_val (eval r e);;
               sp <- to_nat (M.t_apply r "sp");;
+              is_true (S sp <=? stack_top m);;
               ret ((l, "sp" !-> N (S sp); r, upd_mem (S sp) m (C.to_val (pc+1))), [OCall (C.to_cptr p l) sp])
             with
             | Some (c, o) => (S_Running c, o)
             | None => (S_Undef, [])
             end
-          (*| <{{x <- peek}}> =>*)
-            (*let val := *)
-              (*match sk with*)
-              (*| [] => UV*)
-              (*| pc' :: _ => FP pc'*)
-              (*end*)
-            (*in*)
-            (*(S_Running (pc + 1, (x !-> val; r), m), [])*)
           | <{{ret}}> =>
             match
               sp <- to_nat (M.t_apply r "sp");;
+              is_true (sp <=? stack_top m);;
               ret (sp, get_mem sp m)
             with
             | None => (S_Undef, [])

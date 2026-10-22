@@ -8,7 +8,6 @@ From Stdlib Require Import Arith.EqNat.
 From Stdlib Require Import Arith.PeanoNat. Import Nat.
 From Stdlib Require Import Lia.
 From Stdlib Require Import List. Import ListNotations.
-From Stdlib Require Import ZArith.
 Set Default Goal Selector "!".
 
 From QuickChick Require Import QuickChick Tactics.
@@ -54,35 +53,16 @@ Definition bool_to_nat (b : bool) : nat := if b then 1 else 0.
 
 Definition eval_binop_nat (o:binop) (n1 n2 : nat) (max_in_domain: nat) : nat :=
   match o with
-  | BinPlus => n1 + n2
-  | BinMinus => 
-      let res : Z := ((Z.of_nat n1) - (Z.of_nat n2))%Z in
-      Z.to_nat (Z.modulo res (Z.of_nat max_in_domain))
-  | BinMult => n1 * n2
+  | BinPlus => (n1 + n2) mod max_in_domain
+  | BinMinus =>
+      if n2 <=? n1 then (n1 - n2) mod max_in_domain
+      else (max_in_domain - ((n2 - n1) mod max_in_domain)) mod max_in_domain
+  | BinMult => (n1 * n2) mod max_in_domain
   | BinEq => bool_to_nat (n1 =? n2)
   | BinLe => bool_to_nat (n1 <=? n2)
   | BinAnd => bool_to_nat (not_zero n1 && not_zero n2)
   | BinImpl => bool_to_nat (negb (not_zero n1) || not_zero n2)
   end.
-
-
-Lemma modulo_nonnegative : forall (v1 v2 max : nat),
-  Z.to_nat (Z.modulo ((Z.of_nat v1) - (Z.of_nat v2))%Z (Z.of_nat max)) >= 0.
-Proof.
-  intros. lia.
-Qed.
-
-Lemma modulo_wraparound_exact : forall (v1 v2 max : nat),
-  let res := ((Z.of_nat v1) - (Z.of_nat v2))%Z in
-  (res < 0)%Z -> 
-  ((- res) < (Z.of_nat max))%Z ->
-  Z.modulo res (Z.of_nat max) = ((Z.of_nat max) - (- res))%Z.
-Proof.
-  intros v1 v2 max res H1 H2.
-  rewrite <- (Z.mod_add res 1 (Z.of_nat max)) by lia.
-  rewrite Z.mod_small by lia.
-  lia.
-Qed.
 
 Inductive exp : Type :=
   | ANum (n : nat)
@@ -668,11 +648,14 @@ Definition pst_calc (p: prog) : list nat := (map proc_map (group_by_proc p)).
 Compute (pst_calc sample_prog_for_grouping).
 
 Definition proc_prologue (frame_sz: nat) : list inst :=
-  <{{ i[ sp := sp + frame_sz ] (* allocating a new frame *) }}>.
+  if (frame_sz > 1)? then
+    <{{ i[ sp := sp + frame_sz ] (* allocating a new frame *) }}>
+  else [].
 
 Definition proc_epilogue (frame_sz: nat) : list inst :=
-  <{{ i[ sp := sp - frame_sz;
-         ret ] (* return *) }}>.
+  if (frame_sz > 1)? then
+    <{{ i[ sp := sp - frame_sz; ret ] (* return *) }}>
+  else <{{ i[ret] }}>.
 
 Definition wf_label (p:prog) (is_proc:bool) (l:nat) : bool :=
   match nth_error p l with
