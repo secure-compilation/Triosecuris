@@ -12,7 +12,6 @@ Require Import ExtLib.Data.Monads.OptionMonad.
 From SECF Require Import Maps.
 From SECF Require Import MapsFunctor.
 From SECF Require Import sflib.
-
 Set Default Goal Selector "!".
 
 
@@ -27,15 +26,15 @@ Reserved Notation
   "p '|-' '<((' c '))>' '-->^' os '<((' ct '))>'"
   (at level 40, c constr, ct constr).
 
-Inductive seq_eval_small_step_inst (p:prog) :
+Inductive seq_eval_small_step_inst (p: prog) :
   @state cfg -> @state cfg -> obs -> Prop :=
-  | SSMI_Skip : forall pc rs m stk,
+  | SSMI_Skip : forall pc rs m,
       p[[pc]] = Some <{{ skip }}> ->
-      p |- <(( S_Running (pc, rs, m, stk) ))> -->^[] <(( S_Running (pc+1, rs, m, stk) ))>
-  | SSMI_Asgn : forall pc r m sk e x,
+      p |- <(( S_Running (pc, rs, m) ))> -->^[] <(( S_Running (pc+1, rs, m) ))>
+  | SSMI_Asgn : forall pc r m e x,
       p[[pc]] = Some <{{ x := e }}> ->
-      p |- <(( S_Running (pc, r, m, sk) ))> -->^[] <(( S_Running (pc+1, (x !-> (eval r e); r), m, sk) ))>
-  | SSMI_Div : forall pc r m sk e1 e2 x v1 v2,
+      p |- <(( S_Running (pc, r, m) ))> -->^[] <(( S_Running (pc+1, (x !-> (eval r e); r), m) ))>
+  | SSMI_Div : forall pc r m e1 e2 x v1 v2,
       p[[pc]] = Some <{{ x <- div e1, e2 }}> ->
       to_nat (eval r e1) = Some v1 ->
       to_nat (eval r e2) = Some v2 ->
@@ -44,44 +43,41 @@ Inductive seq_eval_small_step_inst (p:prog) :
                 | _ => N (div v1 v2)
                 end
       in
-      p |- <(( S_Running (pc, r, m, sk) ))> -->^[ODiv v1 v2] <(( S_Running (pc+1, (x !-> res; r), m, sk) ))>
-  | SSMI_Branch : forall pc pc' r m sk e n l,
+      p |- <(( S_Running (pc, r, m) ))> -->^[ODiv v1 v2] <(( S_Running (pc+1, (x !-> res; r), m) ))>
+  | SSMI_Branch : forall pc pc' r m e n l,
       p[[pc]] = Some <{{ branch e to l }}> ->
       to_nat (eval r e) = Some n ->
       pc' = (if (not_zero n) then (l,0) else pc+1) ->
-      p |- <(( S_Running (pc, r, m, sk) ))> -->^[OBranch (not_zero n)] <(( S_Running (pc', r, m, sk) ))>
-  | SSMI_Jump : forall l pc r m sk,
+      p |- <(( S_Running (pc, r, m) ))> -->^[OBranch (not_zero n)] <(( S_Running (pc', r, m) ))>
+  | SSMI_Jump : forall l pc r m,
       p[[pc]] = Some <{{ jump l }}> ->
-      p |- <(( S_Running (pc, r, m, sk) ))> -->^[] <(( S_Running ((l,0), r, m, sk) ))>
-  | SSMI_Load : forall pc r m sk x e n v',
+      p |- <(( S_Running (pc, r, m) ))> -->^[] <(( S_Running ((l,0), r, m) ))>
+  | SSMI_Load : forall pc r m x e n v',
       p[[pc]] = Some <{{ x <- load[e] }}> ->
       to_nat (eval r e) = Some n ->
-      nth_error m n = Some v' ->
-      p |- <(( S_Running (pc, r, m, sk) ))> -->^[OLoad n] <(( S_Running (pc+1, (x !-> v'; r), m, sk) ))>
-  | SSMI_Store : forall pc r m sk e e' n,
+      nth_error m.(memory) n = Some v' ->
+      p |- <(( S_Running (pc, r, m) ))> -->^[OLoad n] <(( S_Running (pc+1, (x !-> v'; r), m) ))>
+  | SSMI_Store : forall pc r m e e' n,
       p[[pc]] = Some <{{ store[e] <- e' }}> ->
       to_nat (eval r e) = Some n ->
-      p |- <(( S_Running (pc, r, m, sk) ))> -->^[OStore n] <(( S_Running (pc+1, r, upd n m (eval r e'), sk) ))>
-  | SSMI_Call : forall pc r m sk e l,
+      p |- <(( S_Running (pc, r, m) ))> -->^[OStore n] <(( S_Running (pc+1, r, upd_mem n m (eval r e')) ))>
+  | SSMI_Call : forall pc r (m : mem) e sp_val l,
       p[[pc]] = Some <{{ call e }}> ->
       to_fp (eval r e) = Some l ->
-      p |- <(( S_Running (pc, r, m, sk) ))> -->^[OCall l] <(( S_Running (l, r, m, ((pc+1)::sk)) ))>
-  | SSMI_Ret : forall pc r m sk pc',
+      r ! sp = N sp_val ->
+      S sp_val < stack_top m ->
+      p |- <(( S_Running (pc, r, m) ))> -->^[OCall l sp_val] <(( S_Running (l, sp !-> N (S sp_val); r, upd_mem (S sp_val) m (FP (pc + 1)))))>
+  (* How to handle arithmetic of sp_val here? And where to incorporate the wrapping around sp? *)
+  | SSMI_Ret : forall pc r (m: mem) sp_val pc',
       p[[pc]] = Some <{{ ret }}> ->
-      p |- <(( S_Running (pc, r, m, pc'::sk) ))> -->^[] <(( S_Running (pc', r, m, sk) ))>
-  (*| SSMI_Peek : forall pc r m sk x, [> YH: Maybe we can assume source program does not contain peek instruction. <]*)
-      (*p[[pc]] = Some <{{x <- peek}}> ->*)
-      (*let val := match sk with *)
-                (*| [] => UV*)
-                (*| pc' :: sk' => FP pc'*)
-                (*end*)
-      (*in*)
-      (*p |- <(( S_Running (pc, r, m, sk) ))> -->^[] <(( S_Running (pc+1, (x !-> val; r), m, sk) ))>*)
+      r ! sp = N sp_val ->
+      sp_val < stack_top m ->
+      nth_error m.(memory) sp_val = Some (FP pc') ->
+      p |- <(( S_Running (pc, r, m) ))> -->^[ORet pc' sp_val] <(( S_Running (pc', sp !-> N (sp_val - 1) ; r, m) ))>
   | SSMI_Term : forall pc r m,
-      p[[pc]] = Some <{{ ret }}> ->
-      p |- <(( S_Running (pc, r, m, []) ))> -->^[] <(( S_Term ))>
-
-  where "p |- <(( c ))> -->^ os <(( ct ))>" :=
+      p[[pc]] = Some <{{ exit }}> ->
+      p |- <(( S_Running (pc, r, m) ))> -->^[] <(( S_Term ))>
+  where "p '|-' '<((' c '))>' '-->^' os '<((' ct '))>'" :=
       (seq_eval_small_step_inst p c ct os).
 
 Reserved Notation
@@ -104,8 +100,7 @@ Definition wf_ret (p: prog) (pc: cptr) : Prop :=
 
 Definition wf_retb (p: prog) (pc: cptr) : bool :=
   let '(l, o) := pc in
-  (* YF: We allow to return to &(0, 0) for ret masking. TBD: if we should allow any other call targets. *)
-  ((l =? 0) && (o =? 0)) || match p[[(l, o)]] with
+  match p[[(l, o)]] with
   | Some _ => match o with
              | 0 => false
              | S o' => match p[[(l, o')]] with
@@ -142,15 +137,20 @@ Reserved Notation
   "p '|-' '<((' sc '))>' '-->_' ds '^^' os '<((' sct '))>'"
   (at level 40, sc constr, sct constr).
 
+Definition read_buffered (sbuffer : spec_mem) (m : mem) (index : nat) : val := match sbuffer ! index with
+  | UV => get_mem index m
+  | x => x
+  end.
+
 Inductive spec_eval_small_step (p:prog):
   @state spec_cfg -> @state spec_cfg -> dirs -> obs -> Prop :=
-  | SpecSMI_Skip  :  forall pc r m sk ms,
+  | SpecSMI_Skip  :  forall pc r m ms sbuffer,
       p[[pc]] = Some <{{ skip }}> ->
-      p |- <(( S_Running ((pc, r, m, sk), false, ms) ))> -->_[]^^[] <(( S_Running ((pc+1, r, m, sk), false, ms) ))>
-  | SpecSMI_Asgn : forall pc r m sk ms e x,
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, ms) ))> -->_[]^^[] <(( S_Running ((pc+1, r, m), sbuffer, false, ms) ))>
+  | SpecSMI_Asgn : forall pc r m ms e x sbuffer,
       p[[pc]] = Some <{{ x := e }}> ->
-      p |- <(( S_Running ((pc, r, m, sk), false, ms) ))> -->_[]^^[] <(( S_Running ((pc+1, (x !-> (eval r e); r), m, sk), false, ms) ))>
-  | SpecSMI_Div : forall pc r m sk ms e1 e2 x v1 v2,
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, ms) ))> -->_[]^^[] <(( S_Running ((pc+1, (x !-> (eval r e); r), m), sbuffer, false, ms) ))>
+  | SpecSMI_Div : forall pc r m ms e1 e2 x v1 v2 sbuffer,
       p[[pc]] = Some <{{ x <- div e1, e2 }}> ->
       to_nat (eval r e1) = Some v1 ->
       to_nat (eval r e2) = Some v2 ->
@@ -159,57 +159,84 @@ Inductive spec_eval_small_step (p:prog):
                 | _ => N (div v1 v2)
                 end
       in
-      p |- <(( S_Running (pc, r, m, sk, false, ms) ))> -->_[]^^[ODiv v1 v2] <(( S_Running (pc+1, (x !-> res; r), m, sk, false, ms) ))>
-  | SpecSMI_Branch : forall pc pc' r m sk ms ms' b (b': bool) e n l,
+      p |- <(( S_Running (pc, r, m, sbuffer, false, ms) ))> -->_[]^^[ODiv v1 v2] <(( S_Running (pc+1, (x !-> res; r), m, sbuffer, false, ms) ))>
+  | SpecSMI_Branch : forall pc pc' r m ms ms' b (b': bool) e n l sbuffer,
       p[[pc]] = Some <{{ branch e to l }}> ->
       to_nat (eval r e) = Some n ->
       b = (not_zero n) ->
       pc' = (if b' then (l, 0) else (pc+1)) ->
       ms' = ms || negb (Bool.eqb b b') ->
-      p |- <(( S_Running ((pc, r, m, sk), false, ms) ))> -->_[DBranch b']^^[OBranch b] <(( S_Running ((pc', r, m, sk), false, ms') ))>
-  | SpecSMI_Jump : forall l pc r m sk ms,
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, ms) ))> -->_[DBranch b']^^[OBranch b] <(( S_Running ((pc', r, m), sbuffer, false, ms') ))>
+  | SpecSMI_Jump : forall l pc r m ms sbuffer,
       p[[pc]] = Some <{{ jump l }}> ->
-      p |- <(( S_Running ((pc, r, m, sk), false, ms) ))> -->_[]^^[] <(( S_Running (((l,0), r, m, sk), false, ms) ))>
-  | SpecSMI_Load : forall pc r m sk x e n v' ms,
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, ms) ))> -->_[]^^[] <(( S_Running (((l,0), r, m), sbuffer, false, ms) ))>
+  | SpecSMI_Load : forall pc r m x e n v' sbuffer,
       p[[pc]] = Some <{{ x <- load[e] }}> ->
       to_nat (eval r e) = Some n ->
-      nth_error m n = Some v' ->
-      p |- <(( S_Running ((pc, r, m, sk), false, ms) ))> -->_[]^^[OLoad n] <(( S_Running ((pc+1, (x !-> v'; r), m, sk), false, ms) ))>
-  | SpecSMI_Store : forall pc r m sk e e' n ms,
+      nth_error m.(memory) n = Some v' ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, false) ))> -->_[]^^[OLoad n] <(( S_Running ((pc+1, (x !-> v'; r), m), sbuffer, false, false) ))>
+  | SpecSMI_Load_Misspec : forall pc r m x e n v' sbuffer,
+      p[[pc]] = Some <{{ x <- load[e] }}> ->
+      to_nat (eval r e) = Some n ->
+      (* If we are misspeculating, we can use speculative buffer and fallback to the memory if the value is not specified in it *)
+      v' = sbuffer ! n ->
+      (* nth_error m.(memory) n = None -> *)
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, true) ))> -->_[]^^[OLoad n] <(( S_Running ((pc+1, (x !-> v'; r), m), sbuffer, false, true) ))>
+  | SpecSMI_Store : forall pc r m e e' n sbuffer,
       p[[pc]] = Some <{{ store[e] <- e' }}> ->
       to_nat (eval r e) = Some n ->
-      p |- <(( S_Running ((pc, r, m, sk), false, ms) ))> -->_[]^^[OStore n] <(( S_Running ((pc+1, r, upd n m (eval r e'), sk), false, ms) ))>
-  | SpecSMI_Call : forall pc pc' r m sk e l ms ms',
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, false) ))> -->_[]^^[OStore n] <(( S_Running ((pc+1, r, upd_mem n m (eval r e')), n !-> eval r e' ; sbuffer, false, false) ))>
+  | SpecSMI_Store_Misspec : forall pc r m e e' n sbuffer,
+      p[[pc]] = Some <{{ store[e] <- e' }}> ->
+      to_nat (eval r e) = Some n ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, true) ))> -->_[]^^[OStore n] <(( S_Running ((pc+1, r, m), n !-> (eval r e') ; sbuffer, false, true) ))>
+  | SpecSMI_Call : forall pc pc' r m e l ms' sp_val sbuffer,
       p[[pc]] = Some <{{ call e }}> ->
       to_fp (eval r e) = Some l ->
-      ms' = ms || negb ((fst pc' =? fst l)%nat && (snd pc' =? snd l)%nat) ->
-      p |- <(( S_Running ((pc, r, m, sk), false, ms) ))> -->_[DCall pc']^^[OCall l] <(( S_Running ((pc', r, m, (pc + 1)::sk), true, ms') ))>
-  | SpecSMI_CTarget : forall pc r m sk ct ms,
-      p[[pc]] = Some <{{ ctarget }}> ->
-      p |- <(( S_Running ((pc, r, m, sk), ct, ms) ))> -->_[]^^[] <(( S_Running ((pc+1, r, m, sk), false, ms) ))>
-  | SpecSMI_Ret : forall pc r m sk pc' pc'' ms ms',
+      r ! sp = N sp_val ->
+      (* S sp_val < stack_top m -> *)
+      ms' = negb ((fst pc' =? fst l)%nat && (snd pc' =? snd l)%nat) ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, false) ))> -->_[DCall pc']^^[OCall l sp_val] <(( S_Running ((pc', sp !-> N (S sp_val) ; r, upd_mem (S sp_val) m (FP (pc + 1))), S sp_val !-> FP (pc + 1); sbuffer, true, ms') ))>
+  | SpecSMI_Call_Misspec : forall pc pc' r m e l sp_val sbuffer,
+      p[[pc]] = Some <{{ call e }}> ->
+      to_fp (eval r e) = Some l ->
+      r ! sp = N sp_val ->
+      (* S sp_val >= stack_top m -> *)
+      (* YF: test if we can require this step only under known speculation *)
+      (* ms' = ms || negb ((fst pc' =? fst l)%nat && (snd pc' =? snd l)%nat) -> *)
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, true) ))> -->_[DCall pc']^^[OCall l sp_val] <(( S_Running ((pc', sp !-> N (S sp_val) ; r, m), S sp_val !-> FP (pc + 1) ; sbuffer, true, true) ))>
+  | SpecSMI_Ret : forall pc r m pc' pc'' (dir : option cptr) ms' sp_val sbuffer,
       p[[pc]] = Some <{{ ret }}> ->
       wf_ret p pc'' ->
-      ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) ->
-      p |- <(( S_Running ((pc, r, m, pc'::sk), false, ms) ))> -->_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), false, ms') ))>
-  (*| SpecSMI_Peek : forall pc r m sk ms x,*)
-      (*p[[pc]] = Some <{{x <- peek}}> ->*)
-      (*let val := match sk with *)
-                (*| [] => UV*)
-                (*| pc' :: sk' => FP pc'*)
-                (*end*)
-      (*in*)
-      (*p |- <(( S_Running (pc, r, m, sk, false, ms) ))> -->_[]^^[] <(( S_Running (pc+1, (x !-> val; r), m, sk, false, ms) ))>*)
-  | SpecSMI_Term : forall pc r m ms,
+      r ! sp = N sp_val ->
+      (* sp_val < stack_top m -> *)
+      (* "DRet None" means "follow sequential ret" *)
+      pc'' = match dir with Some pc'' => pc'' | None => pc' end ->
+      ms' = negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat)->
+      nth_error m.(memory) sp_val = Some (FP pc') ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, false) ))> -->_[DRet dir]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, false, ms') ))>
+  | SpecSMI_Ret_Misspec : forall pc r m pc' pc'' (dir : option cptr) sp_val sbuffer,
       p[[pc]] = Some <{{ ret }}> ->
-      p |- <(( S_Running ((pc, r, m, []), false, ms) ))> -->_[]^^[] <(( S_Term ))>
-  | SpecSMI_Fault : forall pc r m sk ms,
+      wf_ret p pc'' ->
+      r ! sp = N sp_val ->
+      sbuffer ! sp_val = FP pc' ->
+      (* "DRet None" means "follow sequential ret" *)
+      pc'' = match dir with Some pc'' => pc'' | None => pc' end ->
+      (* sp_val >= stack_top m -> *)
+      (* ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) -> *)
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, true) ))> -->_[DRet dir]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, false, true) ))>
+  | SpecSMI_Term : forall pc r m ms sbuffer,
+      p[[pc]] = Some <{{ exit }}> ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, ms) ))> -->_[]^^[] <(( S_Term ))>
+  | SpecSMI_CTarget : forall pc r m ct ms sbuffer,
+    p[[pc]] = Some <{{ ctarget }}> ->
+    p |- <(( S_Running ((pc, r, m), sbuffer, ct, ms) ))> -->_[]^^[] <(( S_Running ((pc+1, r, m), sbuffer, false, ms) ))>
+  | SpecSMI_Fault : forall pc r m ms sbuffer,
       p[[pc]] <> Some <{{ ctarget }}> ->
-      p |- <(( S_Running ((pc, r, m, sk), true, ms) ))> -->_[]^^[] <(( S_Fault ))>
+      p |- <(( S_Running ((pc, r, m), sbuffer, true, ms) ))> -->_[]^^[] <(( S_Fault ))>
 
   where "p |- <(( sc ))> -->_ ds ^^ os  <(( sct ))>" :=
     (spec_eval_small_step p sc sct ds os).
-
 
 Reserved Notation
   "p '|-' '<((' sc '))>' '-->*_' ds '^^' os '^^' n '<((' sct '))>'"
@@ -226,19 +253,46 @@ Inductive multi_spec_inst (p:prog) :
   where "p |- <(( sc ))> -->*_ ds ^^ os ^^ n <(( sct ))>" :=
     (multi_spec_inst p sc sct ds os n).
 
+Theorem mem_is_subset_of_sbuffer_while_no_misspec : forall p m m' (sb sb' : spec_mem) pc pc' r r' os ds ct ct' ms',
+  (forall n v, nth_error m.(memory) n = Some v -> sb ! n = v) ->
+  p |- <(( (S_Running ((pc, r, m), sb, ct, false))))> -->_ ds ^^ os <(( S_Running ((pc', r', m'), sb', ct', ms') ))> ->
+  forall n v, nth_error m'.(memory) n = Some v -> sb' ! n = v.
+Proof.
+  intros p m m' sb sb' pc pc' r r' os ds ct ct' ms' Hsubset Htrace n v.
+  inv Htrace; intros Hmem; eauto; unfold upd_mem in *; cbn [memory] in *.
+  (* store seq *)
+  - destruct (Nat.eq_dec n0 n) as [<-|Hneq].
+    + rewrite t_update_eq.
+      assert (Hlt : n0 < Datatypes.length (upd n0 (memory m) (eval r' e'))).
+      { apply nth_error_Some. congruence. }
+      rewrite upd_length in Hlt.
+      rewrite upd_eq in Hmem by assumption. congruence.
+    + rewrite t_update_neq by assumption.
+      apply Hsubset. rewrite upd_neq in Hmem by assumption. assumption.
+  (* call seq *)
+  - destruct (Nat.eq_dec (S sp_val) n) as [<-|Hneq].
+    + rewrite t_update_eq.
+      assert (Hlt : S sp_val < Datatypes.length (upd (S sp_val) (memory m) (FP (pc + 1)))).
+      { apply nth_error_Some. congruence. }
+      rewrite upd_length in Hlt.
+      rewrite upd_eq in Hmem by assumption. congruence.
+    + rewrite t_update_neq by assumption.
+      apply Hsubset. rewrite upd_neq in Hmem by assumption. assumption.
+Qed.
+
 Reserved Notation
   "p '|-' '<((' ic '))>' '-->i_' ds '^^' os '<((' ict '))>'"
   (at level 40, ic constr, ict constr).
 
 Inductive ideal_eval_small_step_inst (p:prog) :
   @state ideal_cfg -> @state ideal_cfg -> dirs -> obs -> Prop :=
-  | ISMI_Skip  :  forall pc r m sk ms,
+  | ISMI_Skip  :  forall pc r m ms sbuffer,
       p[[pc]] = Some <{{ skip }}> ->
-      p |- <(( S_Running ((pc, r, m, sk), ms) ))> -->i_[]^^[] <(( S_Running ((pc+1, r, m, sk), ms) ))>
-  | ISMI_Asgn : forall pc r m sk ms e x,
+      p |- <(( S_Running ((pc, r, m), sbuffer, ms) ))> -->i_[]^^[] <(( S_Running ((pc+1, r, m), sbuffer, ms) ))>
+  | ISMI_Asgn : forall pc r m ms e x sbuffer,
       p[[pc]] = Some <{{ x := e }}> ->
-      p |- <(( S_Running ((pc, r, m, sk), ms) ))> -->i_[]^^[] <(( S_Running ((pc+1, (x !-> (eval r e); r), m, sk), ms) ))>
-  | ISMI_Div : forall pc r m sk (ms: bool) e1 e2 x v1 v2,
+      p |- <(( S_Running ((pc, r, m), sbuffer, ms) ))> -->i_[]^^[] <(( S_Running ((pc+1, (x !-> (eval r e); r), m), sbuffer, ms) ))>
+  | ISMI_Div : forall pc r m (ms: bool) e1 e2 x v1 v2 sbuffer,
       p[[pc]] = Some <{{ x <- div e1, e2 }}> ->
       (if ms then Some 0 else to_nat (eval r e1)) = Some v1 ->
       (if ms then Some 0 else to_nat (eval r e2)) = Some v2 ->
@@ -247,60 +301,107 @@ Inductive ideal_eval_small_step_inst (p:prog) :
                 | _ => N (div v1 v2)
                 end
       in
-      p |- <(( S_Running (pc, r, m, sk, ms) ))> -->i_[]^^[ODiv v1 v2] <(( S_Running (pc+1, (x !-> res; r), m, sk, ms) ))>
-  | ISMI_Branch : forall pc pc' r m sk (ms ms' b b' : bool) e n' l,
+      p |- <(( S_Running ((pc, r, m), sbuffer, ms) ))> -->i_[]^^[ODiv v1 v2] <(( S_Running ((pc+1, (x !-> res; r), m), sbuffer, ms) ))>
+  | ISMI_Branch : forall pc pc' r m (ms ms' b b' : bool) e n' l sbuffer,
       p[[pc]] = Some <{{ branch e to l }}> ->
       (if ms then Some 0 else to_nat (eval r e)) = Some n' ->
       b = (not_zero n') ->
       pc' = (if b' then (l,0) else pc+1) ->
       ms' = (ms || (negb (Bool.eqb b b'))) ->
-      p |- <(( S_Running ((pc, r, m, sk), ms) ))> -->i_[DBranch b']^^[OBranch b] <(( S_Running ((pc', r, m, sk), ms') ))>
-  | ISMI_Jump : forall l pc r m sk ms,
+      p |- <(( S_Running ((pc, r, m), sbuffer, ms) ))> -->i_[DBranch b']^^[OBranch b] <(( S_Running ((pc', r, m), sbuffer, ms') ))>
+  | ISMI_Jump : forall l pc r m ms sbuffer,
       p[[pc]] = Some <{{ jump l }}> ->
-      p |- <(( S_Running ((pc, r, m, sk), ms) ))> -->i_[]^^[] <(( S_Running (((l,0), r, m, sk), ms) ))>
-  | ISMI_Load : forall pc r m sk x e n me v' (ms : bool),
+      p |- <(( S_Running ((pc, r, m), sbuffer, ms) ))> -->i_[]^^[] <(( S_Running (((l,0), r, m), sbuffer, ms) ))>
+  | ISMI_Load : forall pc r m x e n v' sbuffer,
       p[[pc]] = Some <{{ x <- load[e] }}> ->
-      me = (if ms then (ANum 0) else e) ->
-      to_nat (eval r me) = Some n ->
-      nth_error m n = Some v' ->
-      p |- <(( S_Running ((pc, r, m, sk), ms) ))> -->i_[]^^[OLoad n] <(( S_Running ((pc+1, (x !-> v'; r), m, sk), ms) ))>
-  | ISMI_Store : forall pc r m sk e e' me n (ms : bool),
+      to_nat (eval r e) = Some n ->
+      nth_error m.(memory) n = Some v' ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, false) ))> -->i_[]^^[OLoad n] <(( S_Running ((pc+1, (x !-> v'; r), m), sbuffer, false) ))>
+  | ISMI_Load_Misspec : forall pc r m x e v' (sbuffer : spec_mem),
+      p[[pc]] = Some <{{ x <- load[e] }}> ->
+      sbuffer ! 0 = v' ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, true) ))> -->i_[]^^[OLoad 0] <(( S_Running ((pc+1, (x !-> v'; r), m), sbuffer, true) ))>
+  | ISMI_Store : forall pc r m e e' n sbuffer,
       p[[pc]] = Some <{{ store[e] <- e' }}> ->
-      me = (if ms then (ANum 0) else e) ->
-      to_nat (eval r me) = Some n ->
-      p |- <(( S_Running ((pc, r, m, sk), ms) ))> -->i_[]^^[OStore n] <(( S_Running ((pc+1, r, upd n m (eval r e'), sk), ms) ))>
-  | ISMI_Call : forall pc pc' r m sk e l (ms ms' : bool) blk,
+      to_nat (eval r e) = Some n ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, false) ))> -->i_[]^^[OStore n] <(( S_Running ((pc+1, r, upd_mem n m (eval r e')), n !-> eval r e' ; sbuffer, false) ))>
+  | ISMI_Store_Misspec : forall pc r m e e' sbuffer,
+    p[[pc]] = Some <{{ store[e] <- e' }}> ->
+    p |- <(( S_Running ((pc, r, m), sbuffer, true) ))> -->i_[]^^[OStore 0] <(( S_Running ((pc+1, r, m), 0 !-> eval r e' ; sbuffer, true) ))>
+  | ISMI_Call : forall pc pc' r m e l (ms' : bool) blk sp_val sbuffer,
       p[[pc]] = Some <{{ call e }}> ->
-      (if ms then Some (0,0) else to_fp (eval r e)) = Some l ->
-      ms' = ms || negb ((fst pc' =? fst l)%nat && (snd pc' =? snd l)%nat) ->
+      r ! sp = N sp_val ->
+      to_fp (eval r e) = Some l ->
+      ms' = negb ((fst pc' =? fst l)%nat && (snd pc' =? snd l)%nat) ->
       nth_error p (fst pc') = Some blk ->
       snd blk = true ->
       snd pc' = 0 ->
-      p |- <(( S_Running ((pc, r, m, sk), ms) ))> -->i_[DCall pc']^^[OCall l] <(( S_Running ((pc', r, m, (pc+1)::sk), ms') ))>
-  | ISMI_Call_F : forall pc pc' r m sk e l (ms : bool),
+      p |- <(( S_Running ((pc, r, m), sbuffer, false) ))> -->i_[DCall pc']^^[OCall l sp_val] <(( S_Running ((pc', sp !-> N (S sp_val) ; r, upd_mem (S sp_val) m (FP (pc + 1))), S sp_val !-> FP (pc + 1) ; sbuffer, ms') ))>
+  | ISMI_Call_Misspec : forall pc pc' r m e blk sp_val sbuffer,
+      p[[pc]] = Some <{{ call e }}> ->
+      r ! sp = N sp_val ->
+      (* ms' = negb ((fst pc' =? 0)%nat && (snd pc' =? 0)%nat) -> *)
+      nth_error p (fst pc') = Some blk ->
+      snd blk = true ->
+      snd pc' = 0 ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, true) ))> -->i_[DCall pc']^^[OCall (0, 0) sp_val] <(( S_Running ((pc', sp !-> N (S sp_val) ; r, m), S sp_val !-> FP (pc + 1) ; sbuffer, true) ))>
+  | ISMI_Call_F : forall pc pc' r m e l (ms : bool) sp_val sbuffer,
       p[[pc]] = Some <{{ call e }}> ->
       (if ms then Some (0,0) else to_fp (eval r e)) = Some l ->
+      r ! sp = N sp_val ->
       (forall blk, nth_error p (fst pc') = Some blk -> snd blk = false \/ snd pc' <> 0) ->
-      p |- <(( S_Running ((pc, r, m, sk), ms) ))> -->i_[DCall pc']^^[OCall l] <(( S_Fault ))>
-  | ISMI_Ret : forall pc r m sk pc' pc'' ms ms',
+      p |- <(( S_Running ((pc, r, m), sbuffer, ms) ))> -->i_[DCall pc']^^[OCall l sp_val] <(( S_Fault ))>
+  | ISMI_Ret : forall pc r m pc' pc'' (dir : option cptr) ms' sp_val sbuffer,
       p[[pc]] = Some <{{ ret }}> ->
       wf_ret p pc'' ->
-      ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) ->
-      p |- <(( S_Running ((pc, r, m, pc'::sk), ms) ))> -->i_[DRet pc'']^^[] <(( S_Running ((pc'', r, m, sk), ms') ))>
-  (*| ISMI_Peek : forall pc r m sk ms x, [> YH: Do we need this for source program? <]*)
-      (*p[[pc]] = Some <{{x <- peek}}> ->*)
-      (*let val := match sk with *)
-                (*| [] => UV*)
-                (*| pc' :: sk' => FP pc'*)
-                (*end*)
-      (*in*)
-      (*p |- <(( S_Running (pc, r, m, sk, ms) ))> -->i_[]^^[] <(( S_Running (pc+1, (x !-> val; r), m, sk, ms) ))>*)
-  | ISMI_Term : forall pc r m ms,
+      r ! sp = N sp_val ->
+      nth_error m.(memory) sp_val = Some (FP pc') ->
+      (* "DRet None" means "follow sequential ret" *)
+      pc'' = match dir with Some pc'' => pc'' | None => pc' end ->
+      ms' = negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, false) ))> -->i_[DRet dir]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, ms') ))>
+  | ISMI_Ret_Misspec : forall pc r m (pc' pc'' : cptr) (dir : option cptr) sp_val sbuffer,
       p[[pc]] = Some <{{ ret }}> ->
-      p |- <(( S_Running ((pc, r, m, []), ms) ))> -->i_[]^^[] <(( S_Term ))>
+      r ! sp = N sp_val ->
+      sbuffer ! sp_val = FP pc' ->
+      pc'' = match dir with Some pc'' => pc'' | None => pc' end ->
+      wf_ret p pc'' ->
+      (* ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) -> *)
+      p |- <(( S_Running ((pc, r, m), sbuffer, true) ))> -->i_[DRet dir]^^[ORet (0, 0) sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sp_val !-> FP (0, 0) ; sbuffer, true) ))>
+  | ISMI_Term : forall pc r m ms sbuffer,
+      p[[pc]] = Some <{{ exit }}> ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, ms) ))> -->i_[]^^[] <(( S_Term ))>
 
   where "p |- <(( ic ))> -->i_ ds ^^ os  <(( ict ))>" :=
     (ideal_eval_small_step_inst p ic ict ds os).
+
+
+Theorem mem_is_subset_of_sbuffer_while_no_misspec_ideal : forall p m m' (sb sb' : spec_mem) pc pc' r r' os ds ms',
+  (forall n v, nth_error m.(memory) n = Some v -> sb ! n = v) ->
+  p |- <(( (S_Running ((pc, r, m), sb, false))))> -->i_ ds ^^ os <(( S_Running ((pc', r', m'), sb', ms') ))> ->
+  forall n v, nth_error m'.(memory) n = Some v -> sb' ! n = v.
+Proof.
+  intros p m m' sb sb' pc pc' r r' os ds ms' Hsubset Htrace n v.
+  inv Htrace; intros Hmem; eauto; unfold upd_mem in *; cbn [memory] in *.
+  (* store seq *)
+  - destruct (Nat.eq_dec n0 n) as [<-|Hneq].
+    + rewrite t_update_eq.
+      assert (Hlt : n0 < Datatypes.length (upd n0 (memory m) (eval r' e'))).
+      { apply nth_error_Some. congruence. }
+      rewrite upd_length in Hlt.
+      rewrite upd_eq in Hmem by assumption. congruence.
+    + rewrite t_update_neq by assumption.
+      apply Hsubset. rewrite upd_neq in Hmem by assumption. assumption.
+  (* call seq *)
+  - destruct (Nat.eq_dec (S sp_val) n) as [<-|Hneq].
+    + rewrite t_update_eq.
+      assert (Hlt : S sp_val < Datatypes.length (upd (S sp_val) (memory m) (FP (pc + 1)))).
+      { apply nth_error_Some. congruence. }
+      rewrite upd_length in Hlt.
+      rewrite upd_eq in Hmem by assumption. congruence.
+    + rewrite t_update_neq by assumption.
+      apply Hsubset. rewrite upd_neq in Hmem by assumption. assumption.
+Qed.
 
 Reserved Notation
   "p '|-' '<((' ic '))>' '-->i*_' ds '^^' os '<((' ict '))>'"
