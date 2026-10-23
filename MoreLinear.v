@@ -220,8 +220,8 @@ Notation "x '!->' v ';' m" := (M.t_update m x v)
 Notation "m '!' x" := (M.t_apply m x)
     (at level 20, left associativity).
 
-Definition reg := M.t val.
-Definition reg_init := M.init UV.
+Definition reg := M.t string val.
+Definition reg_init := @M.init string val UV.
 Definition dir := direction.
 Definition dirs := dirs.
 Definition pc := nat.
@@ -310,7 +310,7 @@ Definition machine_inst (p: MiniCET.prog) (len: nat) (i: inst) : option inst :=
     | Some e1', Some e2' => Some (IStore e1' e2')
     | _, _ => None
     end
-  | IPeek _ | ISkip | IRet | ICTarget => Some i
+  | ISkip | IRet | ICTarget | IExit => Some i
   end.
 
 Definition transpose {X : Type} (l : list (option X)) : option (list X) :=

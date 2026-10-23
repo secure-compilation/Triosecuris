@@ -23,7 +23,7 @@ Definition fold_extra {A : Type} {B : Type} (f : A -> list B -> B -> list B -> A
     end
   in aux [] l v.
 
-#[export] Instance shrinkTotalMap {X : Type} `{Shrink X}: Shrink (ListTotalMap.t X) :=
+#[export] Instance shrinkTotalMap {X : Type} `{Shrink X}: Shrink (ListTotalMap.t string X) :=
   {shrink := fun '(d, m) =>
 
       (List.map (fun d' => (d', m)) (shrink d)) ++

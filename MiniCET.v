@@ -51,7 +51,18 @@ Inductive ty : Type := | TNum | TPtr.
 Definition not_zero (n : nat) : bool := negb (n =? 0).
 Definition bool_to_nat (b : bool) : nat := if b then 1 else 0.
 
-Definition eval_binop_nat (o:binop) (n1 n2 : nat) (max_in_domain: nat) : nat :=
+Definition eval_binop_nat (o:binop) (n1 n2 : nat) : nat :=
+  match o with
+  | BinPlus => n1 + n2
+  | BinMinus => n1 - n2
+  | BinMult => n1 * n2
+  | BinEq => bool_to_nat (n1 =? n2)
+  | BinLe => bool_to_nat (n1 <=? n2)
+  | BinAnd => bool_to_nat (not_zero n1 && not_zero n2)
+  | BinImpl => bool_to_nat (negb (not_zero n1) || not_zero n2)
+  end.
+
+Definition eval_binop_nat_wraparound (o:binop) (n1 n2 : nat) (max_in_domain: nat) : nat :=
   match o with
   | BinPlus => (n1 + n2) mod max_in_domain
   | BinMinus =>
@@ -158,9 +169,6 @@ Notation "f x .. y" := (.. (f x) .. y)
 Open Scope com_scope.
 
 
-
-
-
 Definition to_nat (v:val) : option nat :=
   match v with
   | N n => Some n
@@ -173,9 +181,9 @@ Definition to_fp (v:val) : option cptr :=
   | _ => None
   end.
 
-Definition eval_binop (o:binop) (v1 v2 : val) (max: nat) : val :=
+Definition eval_binop (o:binop) (v1 v2 : val) : val :=
   match v1, v2 with
-  | N n1, N n2 => N (eval_binop_nat o n1 n2 max)
+  | N n1, N n2 => N (eval_binop_nat o n1 n2)
   | FP l1, FP l2 =>
       match o with
       | BinEq => N (bool_to_nat ((fst l1 =? fst l2) && (snd l1 =? snd l2)))
@@ -852,8 +860,8 @@ Notation "m '!' x" := (M.t_apply m x)
     (at level 20, left associativity).
 
 
-Definition reg := M.t val.
-Definition reg_init := M.init UV.
+Definition reg := M.t string val.
+Definition reg_init := @M.init string val UV.
 
 
 Definition no_callee_msf (r: reg) : Prop :=
@@ -862,20 +870,23 @@ Definition no_callee_msf (r: reg) : Prop :=
   | _, _ => False
   end.
 
+Definition spec_mem : Type := M.t nat val.
+Definition spec_mem_init := @M.init nat val UV.
+
 (* The call stack lives in memory, pointed at by the "sp" register, so there is
    no stack component in the configuration. *)
 Definition cfg : Type := ((cptr*reg)*mem).
-Definition spec_cfg : Type := ((cfg * bool) * bool).
-Definition ideal_cfg : Type := cfg * bool.
+Definition spec_cfg : Type := (((cfg * spec_mem)) * bool) * bool.
+Definition ideal_cfg : Type := cfg * spec_mem * bool.
 
-Fixpoint eval (st : reg) (e: exp) (max_in_domain: nat) : val :=
+Fixpoint eval (st : reg) (e: exp) : val :=
   match e with
   | ANum n => N n
   | AId x => M.t_apply st x
-  | ABin b e1 e2 => eval_binop b (eval st e1 max_in_domain) (eval st e2 max_in_domain) max_in_domain
+  | ABin b e1 e2 => eval_binop b (eval st e1) (eval st e2)
   | <{b ? e1 : e2}> =>
-      match to_nat (eval st b max_in_domain) with
-      | Some n1 => if not_zero n1 then eval st e1 max_in_domain else eval st e2 max_in_domain
+      match to_nat (eval st b) with
+      | Some n1 => if not_zero n1 then eval st e1 else eval st e2
       | None => UV
       end
   | <{&l}> => FP l
@@ -907,5 +918,5 @@ Definition ret_addr (r: reg) (m: mem) : option cptr :=
 
 End MiniCETCommon.
 
-Definition rctx := ListTotalMap.t ty.
+Definition rctx := ListTotalMap.t string ty.
 Definition tmem := list ty.

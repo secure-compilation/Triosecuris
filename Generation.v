@@ -22,15 +22,15 @@ Definition label := bool.
 Definition public : label := true.
 Definition secret : label := false.
 
-Definition pub_vars := ListTotalMap.t label.
-Definition pub_arrs := ListTotalMap.t label.
+Definition pub_vars := ListTotalMap.t string label.
+Definition pub_arrs := ListTotalMap.t string label.
 
 Notation t_apply := ListTotalMap.t_apply.
 
-Definition pub_equiv (P : ListTotalMap.t label) {X:Type} (s1 s2 : ListTotalMap.t X) :=
+Definition pub_equiv (P : ListTotalMap.t string label) {X:Type} (s1 s2 : ListTotalMap.t string X) :=
   forall x:string, t_apply P x = true -> t_apply s1 x = t_apply s2 x.
 
-Definition pub_equivb (P : ListTotalMap.t label) {X:Type} `{EqDec X eq} (s1 s2 : ListTotalMap.t X) : bool :=
+Definition pub_equivb (P : ListTotalMap.t string label) {X:Type} `{EqDec X eq} (s1 s2 : ListTotalMap.t string X) : bool :=
   match P, s1, s2 with
   | (dP,mP), (d1,m1), (d2,m2) =>
       if dP
@@ -61,8 +61,8 @@ Fixpoint forallb3 {A B C} (P : A -> B -> C -> bool) (a: list A) (b: list B) (c: 
 Definition pub_equiv_listb (P: list label) {X:Type} `{EqDec X} (m1 m2: list X) :=
   forallb3 (fun (a:label) (b:X) (c:X) => if a then (b ==b c) else true) P m1 m2.
 
-Definition gen_pub_equiv (P : ListTotalMap.t label) {X: Type}
-  `{Gen X} (s: ListTotalMap.t X) : G (ListTotalMap.t X) :=
+Definition gen_pub_equiv (P : ListTotalMap.t string label) {X: Type}
+  `{Gen X} (s: ListTotalMap.t string X) : G (ListTotalMap.t string X) :=
   let '(d, m) := s in
   new_m <- List.fold_left (fun (acc : G (Map string X)) (c : string * X) => let '(k, v) := c in
     new_m <- acc;;
@@ -139,7 +139,7 @@ Proof.
     inversion H. subst. eapply Heqb; auto.
 Defined.
 
-Definition gen_state : G (ListTotalMap.t val) :=
+Definition gen_state : G (ListTotalMap.t string val) :=
   d <- arbitrary;;
   v0 <- arbitrary;;
   v1 <- arbitrary;;
@@ -222,7 +222,7 @@ Notation " 'oneOf' ( x ;;; y ;;; l ) " :=
 
 
 
-#[export] Instance genTotalMap (A:Type) `{Gen A} : Gen (ListTotalMap.t A) :=
+#[export] Instance genTotalMap (A:Type) `{Gen A} : Gen (ListTotalMap.t string A) :=
   {arbitrary := (d <- arbitrary;;
                  v0 <- arbitrary;;
                  v1 <- arbitrary;;
