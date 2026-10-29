@@ -1,6 +1,6 @@
 <p align="center"><img src="triosecuris_logo_v20.svg" width="600"></p>
 
-## Paper draft
+## Paper
 
 - [Triosecuris: Formally Verified Protection Against Speculative Control-Flow Hijacking](https://arxiv.org/abs/2601.22978).
   Jonathan Baumann, Yonghyun Kim, Yan Farba, Catalin Hritcu, and Julay Leatherman-Brooks.
