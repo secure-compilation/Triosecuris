@@ -45,7 +45,7 @@ Definition join_taints t1 t2 := remove_dupes sum_eqb (t1 ++ t2).
 Module TaintTracking (Import ST: Semantics ListTotalMap).
 
 Definition tcptr := taint.
-Definition treg := ListTotalMap.t taint.
+Definition treg := ListTotalMap.t string taint.
 Definition tamem := list taint.
 Definition tstk := list tcptr.
 
@@ -171,7 +171,7 @@ Definition taint_step (i: inst) (c: ST.cfg) (tc: tcfg) (tobs: taint) (tctx: tain
           let ts' := tpc :: ts in
           let tpc' := join_taints te tpc in
           let tc' := (tpc', ("sp"%string !-> tsp ; trs), upd _sp tm tpc, ts') in (* remove tainted call stack ts and ts' *)
-          let tobs' := join_taints (t_apply trs "sp") (join_taints tobs tpc') in
+          let tobs' := join_taints (t_apply trs "sp"%string) (join_taints tobs tpc') in
           Some (tc', tobs')
       | _ => None
       end

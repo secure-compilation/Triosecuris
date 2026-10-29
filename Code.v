@@ -30,9 +30,8 @@ Module Type Code.
   Parameter of_val    : val -> option pc.
   Parameter eval_fptr : cptr -> val.
 
-  (* [None] when the target names no block at all, which the semantics reports
-     as S_Undef; [Some false] is a block that is not a procedure entry, which is
-     S_Fault. *)
+  (* [None] when the target names no block at all, [Some false] when it names a
+     block that is not a procedure entry. *)
   Parameter is_proc_entry : prog -> pc -> option bool.
   Parameter wf_retb       : prog -> pc -> bool.
 

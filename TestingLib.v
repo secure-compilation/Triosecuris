@@ -375,7 +375,7 @@ Definition test_safety_preservation `{Show dir} `{Show ST.pc}
     let harden := harden p' in
     let rs' := spec_rs rs in
     let icfg' := (ipc, rs', m) in
-    let iscfg := (icfg', ismem, true, false) in
+    let iscfg := (icfg', smem_of_mem m, true, false) in
     let h_pst := pst_calc harden in
     forAll (gen_spec_steps_sized 100 harden h_pst iscfg gen_dbr gen_dcall gen_dret) (fun ods =>
     (match ods with
@@ -423,7 +423,7 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
           then (let harden := harden p' in
                 let rs1' := spec_rs rs1 in
                 let icfg1' := (ipc, rs1', m1) in
-                let iscfg1' := (icfg1', ismem, true, false) in
+                let iscfg1' := (icfg1', smem_of_mem m1, true, false) in
                 let h_pst := pst_calc harden in
                 forAll (gen_spec_steps_sized 1000 harden h_pst iscfg1' gen_dbr gen_dcall gen_dret) (fun ods1 =>
                 (match ods1 with
@@ -431,7 +431,7 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
 
                      let rs2' := spec_rs rs2 in
                      let icfg2' := (ipc, rs2', m2) in
-                     let iscfg2' := (icfg2', ismem, true, false) in
+                     let iscfg2' := (icfg2', smem_of_mem m2, true, false) in
                      let sc_r2 := spec_steps_acc 1000 harden iscfg2' ds in
                      match sc_r2 with
                      | SETerm _ os2 _ trace2 =>
@@ -449,7 +449,7 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
                  | SEOutOfFuel _ os1 ds trace1 =>
                      let rs2' := spec_rs rs2 in
                      let icfg2' := (ipc, rs2', m2) in
-                     let iscfg2' := (icfg2', ismem, true, false) in
+                     let iscfg2' := (icfg2', smem_of_mem m2, true, false) in
                      let sc_r2 := spec_steps_acc 1000 harden iscfg2' ds in
                      match sc_r2 with
                      | SETerm _ os2 _ _ => collect "se1 oof but se2 term"%string (checker tt)

@@ -56,6 +56,9 @@ Instance ShowDirection : Show dir := {
 (* Size of the stack region [gen_wt_mem] appends after the typed memory. *)
 Definition stk_alloc := 1000.
 
+Definition with_buffer (c : cfg) (ms : bool) : ideal_cfg :=
+  let '(_, _, m) := c in (c, smem_of_mem m, ms).
+
 Definition lookup_sp (m : mem) (r : reg) : option cptr := ret_addr r m.
 
 Definition ret_target (m : mem) (r : reg) (ms : bool) : option cptr :=
@@ -401,13 +404,19 @@ Definition mem_eqb (m1 m2 : mem) : bool :=
   && (m1.(stack_length) =? m2.(stack_length))
   && (m1.(memory) ==b m2.(memory)).
 
+Definition smem_eqb (sm1 sm2 : spec_mem) : bool :=
+  let '(d1, l1) := sm1 in
+  let '(d2, l2) := sm2 in
+  (d1 ==b d2)
+  && forallb (fun k => (sm1 ! k) ==b (sm2 ! k)) (union (map_dom l1) (map_dom l2)).
+
 Definition spec_cfg_eqb_up_to_callee (st1 st2 : spec_cfg) :=
   let '(pc1, r1, m1, smem1, c1, ms1) := st1 in
   let '(pc2, r2, m2, smem2, c2, ms2) := st2 in
   (pc1 ==b pc2)
   && (c1 ==b c2) && (ms1 ==b ms2)
   && mem_eqb m1 m2
-  && (smem1 ==b smem2)
+  && smem_eqb smem1 smem2
   && pub_equivb (t_empty public) r1 (callee !-> (r1 ! callee) ; r2).
 
 Instance showCfg : Show cfg := {
@@ -430,7 +439,7 @@ Definition single_step_cc := (
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack stk_size p) (fun stk =>
   forAll ( @arbitrary bool _)  (fun ms =>
-  let icfg := (cfg_with_stack pc rs1 m1 stk, ismem, ms) in
+  let icfg := with_buffer (cfg_with_stack pc rs1 m1 stk) ms in
   let '((_, reg, mem), _) := icfg in
   printTestCase ("Reg: " ++ nl ++ show reg ++ nl ++ "Injected mem: " ++ nl ++ show mem ++ nl)%string (
   printTestCase ("Hardened program:" ++ nl ++ show (uslh_prog p))%string (
@@ -506,7 +515,7 @@ Definition single_step_ideal_sf := (
   forAll (gen_pc_from_prog p') (fun pc =>
   forAll (gen_call_stack 3 p') (fun stk =>
   forAll (@arbitrary bool _) (fun ms =>
-  let icfg := (cfg_with_stack pc rs1 m1 stk, ismem, ms) in
+  let icfg := with_buffer (cfg_with_stack pc rs1 m1 stk) ms in
   forAll (gen_directive_from_ideal_cfg p' pst icfg) (fun ds =>
   match ideal_step p' (S_Running icfg) ds with
   | (S_Undef, _, _) => trace ("ideal exec fails sc: "%string ++ (show icfg) ++ ", prog: "%string ++ show p' ++ " prog end!!!"%string) (checker false)
@@ -524,8 +533,8 @@ Definition single_step := (
   let p := transform_load_store_prog c tm m1 max_stack_frame p in
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack 3 p) (fun stk =>
-  let icfg1 := (cfg_with_stack pc rs1 m1 stk, ismem, true) in
-  let icfg2 := (cfg_with_stack pc rs2 m2 stk, ismem, true) in
+  let icfg1 := with_buffer (cfg_with_stack pc rs1 m1 stk) true in
+  let icfg2 := with_buffer (cfg_with_stack pc rs2 m2 stk) true in
   forAll (gen_directive_from_ideal_cfg p pst icfg1) (fun ds =>
   match (ideal_step p (S_Running icfg1) ds) with
   | (S_Running _, _, o1) =>
@@ -563,7 +572,7 @@ Definition single_step_seq_ideal := (
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack 3 p) (fun stk =>
   let cfg := cfg_with_stack pc rs1 m1 stk in
-  let icfg := (cfg, ismem, false) in
+  let icfg := with_buffer cfg false in
   let ds := get_directive_for_seq_behaviour p pst icfg in
   match (step p (S_Running cfg)) with
   | (S_Running _, o1) =>
@@ -601,7 +610,7 @@ Definition single_step_trigger := (
   forAll (gen_pc_from_prog p) (fun pc =>
   forAll (gen_call_stack 3 p) (fun stk =>
   let cfg := cfg_with_stack pc rs1 m1 stk in
-  let icfg := (cfg, ismem, false) in
+  let icfg := with_buffer cfg false in
   forAll (gen_directive_triggering_misspec p pst icfg) (fun ds =>
   (* An empty [ds] here means no mis-speculating directive exists at this pc --
      a [ret] whose return address is the program's only well-formed one, say --
