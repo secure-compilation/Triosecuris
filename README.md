@@ -4,15 +4,16 @@
 
 - [Triosecuris: Formally Verified Protection Against Speculative Control-Flow Hijacking](https://arxiv.org/abs/2601.22978).
   Jonathan Baumann, Yonghyun Kim, Yan Farba, Catalin Hritcu, and Julay Leatherman-Brooks.
-  Draft from April 2026.
+  In 39th IEEE Computer Security Foundations Symposium (CSF), July 2026.
 
-## List of Claims
+## Summary
 
-We claim that the artifact provides a Coq development of the definitions and proofs
-presented in the paper (with minor simplifications for presentation purposes)
-and compiles without any issues.
+The artifact provides a Rocq development of the definitions and proofs
+presented in the paper (which had minor simplifications for presentation purposes)
+and should build without any issues.
 
 ## Building
+
 1. Install opam in your system with the version at least 2.1.5.
 2. In artifact directory, install a local opam switch and install the dependencies:
 
