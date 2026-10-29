@@ -273,18 +273,13 @@ Check <{{store[X + Y]<- (Y + 42)}}>.
 
 
 Record mem := mkMem {
-    heap_length   : nat
-  ; stack_length  : nat
-  ; memory        : list val
+    memory            : list val
+  ; stack_top         : nat
+  ; stack_base        : nat
+  ; stack_top_valid   : stack_top <= Datatypes.length memory
+  ; stack_base_valid  : stack_base <= stack_top
 }.
 
-(* The layout the record describes: the heap occupies [0, heap_length), the
-   stack [heap_length, heap_length + stack_length) and grows upwards.  sp starts
-   at [stack_base] -- the slot below the first frame, which holds no return
-   address.  Every size the generators and the load/store transformation used to
-   take as a separate parameter is one of these. *)
-Definition stack_base (m : mem) : nat := m.(heap_length).
-Definition stack_top (m : mem) : nat := m.(heap_length) + m.(stack_length).
 Definition mem_length (m : mem) : nat := Datatypes.length m.(memory).
 
 Definition get_mem (i : nat) (m : mem) : val := match nth_error m.(memory) i with
@@ -292,18 +287,28 @@ Definition get_mem (i : nat) (m : mem) : val := match nth_error m.(memory) i wit
   | None => UV
   end.
 
-Definition upd_mem (i : nat) (m : mem) (v : val) : mem :=
-  {| heap_length := m.(heap_length)
-   ; stack_length := m.(stack_length)
-   ; memory := upd i m.(memory) v |}.
+Lemma upd_mem_top_valid (i : nat) (m : mem) (v : val) :
+  m.(stack_top) <= Datatypes.length (upd i m.(memory) v).
+Proof. rewrite upd_length. apply stack_top_valid. Qed.
 
-(* Replace the contents, keep the layout: for the places that rebuild the whole
-   cell list (a pub-equivalent memory, a synced one) and must not lose where the
-   heap ends and the stack begins. *)
-Definition with_memory (m : mem) (vals : list val) : mem :=
-  {| heap_length := m.(heap_length)
-   ; stack_length := m.(stack_length)
-   ; memory := vals |}.
+Definition upd_mem (i : nat) (m : mem) (v : val) : mem :=
+  {| memory := upd i m.(memory) v
+   ; stack_top := m.(stack_top)
+   ; stack_base := m.(stack_base)
+   ; stack_top_valid := upd_mem_top_valid i m v
+   ; stack_base_valid := m.(stack_base_valid) |}.
+
+(* Replace the contents, keep the stack bounds: for the places that rebuild the
+   whole cell list (a pub-equivalent memory, a synced one). *)
+Definition with_memory (m : mem) (vals : list val) : option mem :=
+  match le_dec m.(stack_top) (Datatypes.length vals) with
+  | left H => Some {| memory := vals
+                     ; stack_top := m.(stack_top)
+                     ; stack_base := m.(stack_base)
+                     ; stack_top_valid := H
+                     ; stack_base_valid := m.(stack_base_valid) |}
+  | right _ => None
+  end.
 
 
 Inductive observation : Type :=

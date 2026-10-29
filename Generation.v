@@ -507,13 +507,8 @@ Definition stk_slots (base: nat) (n: nat) : list nat := rev (seq (S base) n).
    the contents change: the stack region is whatever [gen_wt_mem] allocated, not
    the number of frames written into it. *)
 Definition inject_stack_to_mem (stk: list cptr) (m: mem): mem :=
-  {|
-    heap_length := m.(heap_length)
-    ; stack_length := m.(stack_length)
-    ; memory :=
-      List.fold_left (fun acc '(i, ptr) => upd i acc (FP ptr))
-        (combine (stk_slots (stack_base m) (Datatypes.length stk)) stk) m.(memory)
-  |}.
+  List.fold_left (fun acc '(i, ptr) => upd_mem i acc (FP ptr))
+    (combine (stk_slots (stack_base m) (Datatypes.length stk)) stk) m.
 
 (* Build a configuration whose call stack lives in the stack region [m]
    describes, keeping sp and memory consistent.  The slot [stack_base] itself is
@@ -960,15 +955,24 @@ Fixpoint mkStk (sz: nat) := match sz with
                             | S n => UV :: mkStk n
                             end.
 
+Lemma layout_base_valid (heap stack : list val) :
+  Datatypes.length heap <= Datatypes.length (heap ++ stack).
+Proof. rewrite length_app. lia. Qed.
+
+Definition layout_mem (heap stack : list val) : mem :=
+  {| memory := heap ++ stack
+   ; stack_top := Datatypes.length (heap ++ stack)
+   ; stack_base := Datatypes.length heap
+   ; stack_top_valid := le_n _
+   ; stack_base_valid := layout_base_valid heap stack |}.
+
 (* NOTE: the order, in which we add stack to memory here, decides how stack grows in our (testing) model *)
 Definition gen_wt_mem (tm: tmem) (pst: list nat) (stsize: nat): G mem :=
   let indices := seq 0 (Datatypes.length tm) in
   let idx_tm := combine indices tm in
   let gen_binds := mapGen (fun '(idx, t) => (v <- gen_val_wt t pst;; ret (idx, v))) idx_tm in
   r <- gen_binds;;
-  ret {| heap_length := Datatypes.length tm
-       ; stack_length := stsize
-       ; memory := snd (split r) ++ mkStk stsize |}.
+  ret (layout_mem (snd (split r)) (mkStk stsize)).
 
 Definition all_possible_vars : list string := (["X0"%string; "X1"%string; "X2"%string; "X3"%string; "X4"%string; "X5"%string]).
 
@@ -1078,7 +1082,7 @@ Definition gen_no_obs_prog : G prog :=
   let bsz := 3 in
   _gen_prog_no_obs bsz pl pst pst.
 
-Definition empty_mem : mem := {| heap_length := 0; stack_length := 0; memory := [] |}.
+Definition empty_mem : mem := layout_mem [] [].
 
 Definition empty_rs : reg := t_empty (FP (0, 0)).
 

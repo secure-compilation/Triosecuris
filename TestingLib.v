@@ -233,7 +233,7 @@ Definition load_store_trans_stuck_free := (
 
 Definition no_obs_prog_no_obs := (
   forAll gen_no_obs_prog (fun p =>
-  let m := {| heap_length := 0; stack_length := 10; memory := mkStk 10 |} in
+  let m := layout_mem [] (mkStk 10) in
   let icfg := (ipc, "sp"%string !-> N (stack_base m); empty_rs, m) in
     match taint_tracking 10 p icfg with
     | Some (_, leaked_vars, leaked_mems) =>
@@ -339,7 +339,13 @@ Definition test_ni (transform : rctx -> tmem -> mem -> nat -> prog -> prog) := (
       forAll (gen_pub_equiv_same_ty P rs) (fun rs' =>
       (* the pub-equivalent run keeps the same layout, only the contents vary *)
       forAll (gen_pub_mem_equiv_same_ty PM m.(memory)) (fun m'vals =>
-      let m' := with_memory m m'vals in
+      match with_memory m m'vals with
+      | None =>
+          printTestCase
+            (report "The public-equivalent memory does not fit the stack bounds"%string
+               [ ("memory"%string, show m) ])
+            (checker false)
+      | Some m' =>
       let icfg' := (ipc, "sp"%string !-> N (stack_base m); rs', m') in
       let r2 := taint_tracking 100 p' icfg' in
       match r2 with
@@ -355,6 +361,7 @@ Definition test_ni (transform : rctx -> tmem -> mem -> nat -> prog -> prog) := (
                [ ("run 1"%string, show_obs os1')
                ; prog_item "guarded program"%string None p' ])
             (checker false)
+      end
       end))
    | None => collect "tt failed"%string (checker tt)
   end))))).
@@ -414,7 +421,13 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
       let rs2 := "sp"%string !-> N (stack_base m1); rs2 in
       (* same layout as [m1], only the contents differ *)
       forAll (gen_pub_mem_equiv_same_ty PM m1.(memory)) (fun m2vals =>
-      let m2 := with_memory m1 m2vals in
+      match with_memory m1 m2vals with
+      | None =>
+          printTestCase
+            (report "The public-equivalent memory does not fit the stack bounds"%string
+               [ ("memory"%string, show m1) ])
+            (checker false)
+      | Some m2 =>
       let icfg2 := (ipc, rs2, m2) in
       let r2 := taint_tracking 1000 p' icfg2 in
       match r2 with
@@ -468,6 +481,7 @@ Definition test_relative_security `{Show dir} `{Show ST.pc}
                )
           else collect "seq obs differ"%string (checker tt)
       | None => collect "tt2 failed"%string (checker tt)
+      end
       end))
    | None => collect "tt1 failed"%string (checker tt)
   end))))).

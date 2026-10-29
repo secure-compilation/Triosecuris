@@ -23,12 +23,10 @@ Derive Show for observation.
    usually hinges on.  The cell list says nothing on its own: an address only
    means something relative to these two bounds. *)
 Definition show_layout (m : mem) : string :=
-  ("heap[0.." ++ show m.(heap_length) ++ ") stack[" ++ show (stack_base m)
+  ("heap[0.." ++ show (stack_base m) ++ ") stack[" ++ show (stack_base m)
     ++ ".." ++ show (stack_top m) ++ ")"
-   (* The record carries the lengths and the cells separately, so they can
-      disagree; when they do, every address in the report is suspect. *)
     ++ (if Nat.eqb (mem_length m) (stack_top m) then ""
-        else " (!! " ++ show (mem_length m) ++ " cells, layout broken)"))%string.
+        else " (+ " ++ show (mem_length m - stack_top m) ++ " cells above the stack)"))%string.
 
 (* The layout first, then the cells. *)
 #[export] Instance showMem : Show mem :=
@@ -371,7 +369,7 @@ Definition show_stack (m : mem) (sp_val : val) (sb : val * list (nat * val))
   let base := stack_base m in
   let top := stack_top m in
   let live := buffer_live [] (snd sb) in
-  let cells := firstn m.(stack_length) (skipn base m.(memory)) in
+  let cells := firstn (top - base) (skipn base m.(memory)) in
   let written := fold_left (fun acc '(i, v) =>
       match v with UV => acc | _ => Nat.max acc (S i) end) (add_index cells) 0 in
   let hi_mem := base + Nat.max written
@@ -438,7 +436,7 @@ Definition mem_items (m : mem) (sp_val : val) (sb : val * list (nat * val))
   : list (string * string) :=
   [ ("memory"%string, show_layout m)
   ; ("sp"%string, show_sp sp_val m)
-  ; ("heap"%string, show (firstn m.(heap_length) m.(memory)))
+  ; ("heap"%string, show (firstn (stack_base m) m.(memory)))
   ; ("stack"%string, show_stack m sp_val sb) ].
 
 (* ----------------------------------------------------------------- *)

@@ -122,7 +122,7 @@ Example implicit_flow_test p rs (icfg: cfg)
   (RS: rs = (N 0, [("x"%string, N 10); ("y"%string, N 0)]))
   (* one memory cell, and sp = 0 (the register default) points at it: it holds
      no return address, so the final [ret] terminates *)
-  (ICFG: icfg = (ipc, rs, {| heap_length := 1; stack_length := 0; memory := [UV] |})):
+  (ICFG: icfg = (ipc, rs, layout_mem [UV] [])):
   match taint_tracking 10 p icfg with
   | Some (obs, leaked_vars, _) =>
       existsb (String.eqb "x") leaked_vars

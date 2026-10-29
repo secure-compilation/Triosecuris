@@ -181,7 +181,7 @@ Definition spec_cfg_sync (p: prog) (ic: ideal_cfg): option spec_cfg :=
   pc' <- pc_sync p pc;;
   r' <- r_sync p r ms;;
   (*! *)
-  m' <- (vals <- map_opt (val_sync p) m.(memory);; Some (with_memory m vals));;
+  m' <- (vals <- map_opt (val_sync p) m.(memory);; with_memory m vals);;
   (*!! spec_cfg_sync-no-stack *)
   (*! let m' := m in *)
   smem' <- smem_sync p smem;;
@@ -400,8 +400,8 @@ Compute ([] <>b [DBranch true]). *)
 
 (* Same layout and same contents. *)
 Definition mem_eqb (m1 m2 : mem) : bool :=
-  (m1.(heap_length) =? m2.(heap_length))
-  && (m1.(stack_length) =? m2.(stack_length))
+  (m1.(stack_top) =? m2.(stack_top))
+  && (m1.(stack_base) =? m2.(stack_base))
   && (m1.(memory) ==b m2.(memory)).
 
 Definition smem_eqb (sm1 sm2 : spec_mem) : bool :=
