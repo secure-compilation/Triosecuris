@@ -178,7 +178,7 @@ Inductive spec_eval_small_step (p:prog):
   | SpecSMI_Load_Misspec : forall pc r m x e n v' sbuffer,
       p[[pc]] = Some <{{ x <- load[e] }}> ->
       to_nat (eval r e) = Some n ->
-      (* If we are misspeculating, we can use speculative buffer and fallback to the memory if the value is not specified in it *)
+      (* If we are misspeculating, we can use speculative buffer *)
       v' = sbuffer ! n ->
       (* nth_error m.(memory) n = None -> *)
       p |- <(( S_Running ((pc, r, m), sbuffer, false, true) ))> -->_[]^^[OLoad n] <(( S_Running ((pc+1, (x !-> v'; r), m), sbuffer, false, true) ))>
@@ -205,26 +205,41 @@ Inductive spec_eval_small_step (p:prog):
       (* YF: test if we can require this step only under known speculation *)
       (* ms' = ms || negb ((fst pc' =? fst l)%nat && (snd pc' =? snd l)%nat) -> *)
       p |- <(( S_Running ((pc, r, m), sbuffer, false, true) ))> -->_[DCall pc']^^[OCall l sp_val] <(( S_Running ((pc', sp !-> N (S sp_val) ; r, m), S sp_val !-> FP (pc + 1) ; sbuffer, true, true) ))>
-  | SpecSMI_Ret : forall pc r m pc' pc'' (dir : option cptr) ms' sp_val sbuffer,
+  | SpecSMI_Ret_Dir : forall pc r m pc' pc'' ms' sp_val sbuffer,
       p[[pc]] = Some <{{ ret }}> ->
       wf_ret p pc'' ->
       r ! sp = N sp_val ->
       (* sp_val < stack_top m -> *)
-      (* "DRet None" means "follow sequential ret" *)
-      pc'' = match dir with Some pc'' => pc'' | None => pc' end ->
       ms' = negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat)->
       nth_error m.(memory) sp_val = Some (FP pc') ->
-      p |- <(( S_Running ((pc, r, m), sbuffer, false, false) ))> -->_[DRet dir]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, false, ms') ))>
-  | SpecSMI_Ret_Misspec : forall pc r m pc' pc'' (dir : option cptr) sp_val sbuffer,
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, false) ))> -->_[DRet (Some pc'')]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, false, ms') ))>
+  (* "DRet None" means "follow sequential ret" *)
+  | SpecSMI_Ret_Step : forall pc r m pc' sp_val sbuffer,
+      p[[pc]] = Some <{{ ret }}> ->
+      r ! sp = N sp_val ->
+      (* sp_val < stack_top m -> *)
+      (* ms' = negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat)-> *)
+      (*** ***)
+      (* wf_ret p pc' -> *) (* YF: do we need this? *)
+      nth_error m.(memory) sp_val = Some (FP pc') ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, false) ))> -->_[DRet None]^^[ORet pc' sp_val] <(( S_Running ((pc', sp !-> N (sp_val - 1) ; r, m), sbuffer, false, false) ))>
+  (* "DRet None" means "follow sequential ret" *)
+  | SpecSMI_Ret_Misspec_Dir : forall pc r m pc' pc'' sp_val sbuffer,
       p[[pc]] = Some <{{ ret }}> ->
       wf_ret p pc'' ->
       r ! sp = N sp_val ->
       sbuffer ! sp_val = FP pc' ->
-      (* "DRet None" means "follow sequential ret" *)
-      pc'' = match dir with Some pc'' => pc'' | None => pc' end ->
       (* sp_val >= stack_top m -> *)
       (* ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) -> *)
-      p |- <(( S_Running ((pc, r, m), sbuffer, false, true) ))> -->_[DRet dir]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, false, true) ))>
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, true) ))> -->_[DRet (Some pc'')]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, false, true) ))>
+  (* "DRet None" means "follow sequential ret" *)
+  | SpecSMI_Ret_Misspec_Step : forall pc r m pc' sp_val sbuffer,
+      p[[pc]] = Some <{{ ret }}> ->
+      r ! sp = N sp_val ->
+      sbuffer ! sp_val = FP pc' ->
+      (* sp_val >= stack_top m -> *)
+      (* ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) -> *)
+      p |- <(( S_Running ((pc, r, m), sbuffer, false, true) ))> -->_[DRet None]^^[ORet pc' sp_val] <(( S_Running ((pc', sp !-> N (sp_val - 1) ; r, m), sbuffer, false, true) ))>
   | SpecSMI_Term : forall pc r m ms sbuffer,
       p[[pc]] = Some <{{ exit }}> ->
       p |- <(( S_Running ((pc, r, m), sbuffer, false, ms) ))> -->_[]^^[] <(( S_Term ))>
@@ -253,10 +268,13 @@ Inductive multi_spec_inst (p:prog) :
   where "p |- <(( sc ))> -->*_ ds ^^ os ^^ n <(( sct ))>" :=
     (multi_spec_inst p sc sct ds os n).
 
+Definition mirrors (m : mem) (sb : spec_mem) : Prop :=
+  forall n v, nth_error m.(memory) n = Some v -> sb ! n = v.
+
 Theorem mem_is_subset_of_sbuffer_while_no_misspec : forall p m m' (sb sb' : spec_mem) pc pc' r r' os ds ct ct' ms',
-  (forall n v, nth_error m.(memory) n = Some v -> sb ! n = v) ->
+  mirrors m sb ->
   p |- <(( (S_Running ((pc, r, m), sb, ct, false))))> -->_ ds ^^ os <(( S_Running ((pc', r', m'), sb', ct', ms') ))> ->
-  forall n v, nth_error m'.(memory) n = Some v -> sb' ! n = v.
+  mirrors m' sb'.
 Proof.
   intros p m m' sb sb' pc pc' r r' os ds ct ct' ms' Hsubset Htrace n v.
   inv Htrace; intros Hmem; eauto; unfold upd_mem in *; cbn [memory] in *.
@@ -351,23 +369,32 @@ Inductive ideal_eval_small_step_inst (p:prog) :
       r ! sp = N sp_val ->
       (forall blk, nth_error p (fst pc') = Some blk -> snd blk = false \/ snd pc' <> 0) ->
       p |- <(( S_Running ((pc, r, m), sbuffer, ms) ))> -->i_[DCall pc']^^[OCall l sp_val] <(( S_Fault ))>
-  | ISMI_Ret : forall pc r m pc' pc'' (dir : option cptr) ms' sp_val sbuffer,
+  | ISMI_Ret_Dir : forall pc r m pc' pc'' ms' sp_val sbuffer,
       p[[pc]] = Some <{{ ret }}> ->
       wf_ret p pc'' ->
       r ! sp = N sp_val ->
       nth_error m.(memory) sp_val = Some (FP pc') ->
-      (* "DRet None" means "follow sequential ret" *)
-      pc'' = match dir with Some pc'' => pc'' | None => pc' end ->
       ms' = negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) ->
-      p |- <(( S_Running ((pc, r, m), sbuffer, false) ))> -->i_[DRet dir]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, ms') ))>
-  | ISMI_Ret_Misspec : forall pc r m (pc' pc'' : cptr) (dir : option cptr) sp_val sbuffer,
+      p |- <(( S_Running ((pc, r, m), sbuffer, false) ))> -->i_[DRet (Some pc'')]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, ms') ))>
+  (* "DRet None" means "follow sequential ret" *)
+  | ISMI_Ret_Step : forall pc r m pc' sp_val sbuffer,
       p[[pc]] = Some <{{ ret }}> ->
       r ! sp = N sp_val ->
-      sbuffer ! sp_val = FP pc' ->
-      pc'' = match dir with Some pc'' => pc'' | None => pc' end ->
+      nth_error m.(memory) sp_val = Some (FP pc') ->
+      p |- <(( S_Running ((pc, r, m), sbuffer, false) ))> -->i_[DRet None]^^[ORet pc' sp_val] <(( S_Running ((pc', sp !-> N (sp_val - 1) ; r, m), sbuffer, false) ))>
+  | ISMI_Ret_Misspec_Dir : forall pc r m (pc'' : cptr) sp_val sbuffer,
+      p[[pc]] = Some <{{ ret }}> ->
+      r ! sp = N sp_val ->
+      (* sbuffer ! sp_val = FP (0, 0) -> *) (* YF: I think we cannot assume it here, since it happens only after masking *)
       wf_ret p pc'' ->
       (* ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) -> *)
-      p |- <(( S_Running ((pc, r, m), sbuffer, true) ))> -->i_[DRet dir]^^[ORet (0, 0) sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sp_val !-> FP (0, 0) ; sbuffer, true) ))>
+      p |- <(( S_Running ((pc, r, m), sbuffer, true) ))> -->i_[DRet (Some pc'')]^^[ORet (0, 0) sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sp_val !-> FP (0, 0) ; sbuffer, true) ))>
+  | ISMI_Ret_Misspec_Step : forall pc r m sp_val sbuffer,
+      p[[pc]] = Some <{{ ret }}> ->
+      r ! sp = N sp_val ->
+      (* sbuffer ! sp_val = FP (0, 0) -> *) (* YF: I think we cannot assume it here, since it happens only after masking *)
+      (* ms' = ms || negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) -> *)
+      p |- <(( S_Running ((pc, r, m), sbuffer, true) ))> -->i_[DRet None]^^[ORet (0, 0) sp_val] <(( S_Running (((0, 0), sp !-> N (sp_val - 1) ; r, m), sp_val !-> FP (0, 0) ; sbuffer, true) ))>
   | ISMI_Term : forall pc r m ms sbuffer,
       p[[pc]] = Some <{{ exit }}> ->
       p |- <(( S_Running ((pc, r, m), sbuffer, ms) ))> -->i_[]^^[] <(( S_Term ))>
@@ -377,9 +404,9 @@ Inductive ideal_eval_small_step_inst (p:prog) :
 
 
 Theorem mem_is_subset_of_sbuffer_while_no_misspec_ideal : forall p m m' (sb sb' : spec_mem) pc pc' r r' os ds ms',
-  (forall n v, nth_error m.(memory) n = Some v -> sb ! n = v) ->
+  mirrors m sb ->
   p |- <(( (S_Running ((pc, r, m), sb, false))))> -->i_ ds ^^ os <(( S_Running ((pc', r', m'), sb', ms') ))> ->
-  forall n v, nth_error m'.(memory) n = Some v -> sb' ! n = v.
+  mirrors m' sb'.
 Proof.
   intros p m m' sb sb' pc pc' r r' os ds ms' Hsubset Htrace n v.
   inv Htrace; intros Hmem; eauto; unfold upd_mem in *; cbn [memory] in *.
