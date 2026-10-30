@@ -971,17 +971,20 @@ Variant match_inst_uslh (p: prog) (pc: cptr) : inst -> inst -> Prop :=
   match_inst_uslh p pc (ICall e) (IAsgn callee e')
 | uslh_ret tpc
   (SYNC: pc_sync p pc = Some tpc)
-  (NXT: (uslh_prog p)[[tpc + 1]] = Some IRet) :
-  match_inst_uslh p pc IRet (<{{ callee <- load[AId "sp"%string] }}>)
+  (NXT1: (uslh_prog p)[[tpc + 1]] = Some <{{ store[sp] <- (msf=1) ? &(0,0) : callee }}>)
+  (NXT2: (uslh_prog p)[[(tpc + 1) + 1]] = Some <{{ callee <- load[sp] }}>)
+  (NXT3: (uslh_prog p)[[((tpc + 1) + 1) + 1]] = Some IRet) :
+  match_inst_uslh p pc IRet (<{{ callee <- load[sp] }}>)
 .
 
 Lemma uslh_inst_simple i l o c iss np
   (SIMP: simple_inst i)
+  (UNUSED: i_unused sp i)
   (USLH: uslh_inst i l o c = (iss, np)) :
   exists i', iss = [i'] /\ match_simple_inst_uslh i i' /\ np = [].
 Proof.
-  ii. unfold uslh_inst in USLH. ss.
-  des_ifs; ss; unfold MiniCET.uslh_ret in *; clarify; esplits; econs; eauto.
+  ii. destruct i; ss; des;
+  unfold MiniCET.uslh_ret in *; clarify; esplits; econs; eauto.
 Qed.
 
 Lemma mapM_nth_error {A B} (f: A -> M B) l c l' np o blk
@@ -1288,13 +1291,27 @@ Proof.
   eapply nth_error_add_index. eauto.
 Qed.
 
+Lemma unused_prog_lookup x p pc i
+  (UNUSED: unused_prog x p)
+  (INST: p [[pc]] = Some i) :
+  i_unused x i.
+Proof.
+  unfold unused_prog in *. destruct pc; ss. des_ifs_safe.
+  rewrite Forall_forall in UNUSED. eapply nth_error_In in Heq.
+  exploit in_split_l; eauto. i. rewrite Heq0 in x1. ss.
+  exploit UNUSED; eauto. i. unfold b_unused in x2.
+  rewrite Forall_forall in x2. eapply nth_error_In in INST. eauto.
+Qed.
+
 Lemma src_simple_inv p tp pc tpc i
+  (UNUSED: unused_prog sp p)
   (SIMP: simple_inst i)
   (TRP: uslh_prog p = tp)
   (PS: pc_sync p pc = Some tpc)
   (INST: p[[pc]] = Some <{{ i }}>) :
   exists i', tp[[tpc]] = Some <{{ i' }}> /\ match_simple_inst_uslh i i'.
 Proof.
+  exploit unused_prog_lookup; eauto. intros UNUSEDI.
   destruct pc as [l o]. destruct tpc as [l' o'].
   assert (l' = l).
   { clear -PS. unfold pc_sync in *. des_ifs. }
@@ -1323,13 +1340,16 @@ Proof.
   - unfold prefix_offset. rewrite fold_left_init_0.
     replace 2 with (add 1 1) by lia.
     rewrite add_assoc. do 2 rewrite add_1_r. simpl.
-    destruct i; ss; unfold MiniCET.uslh_ret in *; clarify.
+    destruct i; ss; des;
+    unfold MiniCET.uslh_ret in *; clarify.
     + exists ISkip; split; [|econs]. rewrite plus_n_O at 1.
       eapply concat_nth_error; eauto.
     + exists (IAsgn x e); split; [|econs]. rewrite plus_n_O at 1.
       eapply concat_nth_error; eauto.
     + esplits; [|econs]; eauto. rewrite plus_n_O at 1.
       eapply concat_nth_error; eauto.
+    + esplits; [|econs]; eauto. rewrite plus_n_O at 1.
+      exploit concat_nth_error; ss; eauto. ss.
     + esplits; [|econs]; eauto. rewrite plus_n_O at 1.
       exploit concat_nth_error; ss; eauto. ss.
     + esplits; [|econs]; eauto. rewrite plus_n_O at 1.
@@ -1342,6 +1362,8 @@ Proof.
     + exists ISkip; split; [|econs]. rewrite plus_n_O at 1.
       exploit concat_nth_error; ss; eauto. ss.
     + exists (IAsgn x e); split; [|econs]. rewrite plus_n_O at 1.
+      exploit concat_nth_error; ss; eauto. ss.
+    + esplits; [|econs]; eauto. rewrite plus_n_O at 1.
       exploit concat_nth_error; ss; eauto. ss.
     + esplits; [|econs]; eauto. rewrite plus_n_O at 1.
       exploit concat_nth_error; ss; eauto. ss.
@@ -1584,6 +1606,7 @@ Qed.
 
 Lemma src_inv p tp pc tpc i
   (NCT: no_ct_prog p)
+  (UNUSED: unused_prog sp p)
   (TRP: uslh_prog p = tp)
   (PS: pc_sync p pc = Some tpc)
   (INST: p[[pc]] = Some <{{ i }}>) :
@@ -1701,14 +1724,10 @@ Proof.
         exploit (concat_nth_error a0 _ _ 0); eauto; [ss|]. i.
         esplits; eauto.
         econs 4; eauto.
-        { ss. rewrite TRNTH. unfold offset_uslh. ss. rewrite Heq1. eauto. } 
-        {
-            simpl. rewrite H. simpl. des_ifs.
-            - replace (prefix_offset a0 o 2) with (S (S (prefix_offset a0 o 0))); simpl.
-              2:{ unfold prefix_offset at 2. rewrite fold_left_init_0 at 1. unfold prefix_offset. lia. }
-              eapply concat_nth_error; eauto.
-            - eapply concat_nth_error; eauto. 
-        }
+        { ss. rewrite TRNTH. unfold offset_uslh. ss. rewrite Heq1. eauto. }
+        all: simpl; rewrite H; simpl; des_ifs; [replace (prefix_offset a0 o 2) with (S (S (prefix_offset a0 o 0)));
+               [|unfold prefix_offset at 2; rewrite fold_left_init_0 at 1; unfold prefix_offset; lia]|];
+          simpl; rewrite <- ?add_assoc; simpl; eapply concat_nth_error; eauto.
     }
     des_ifs; eauto.
     replace (prefix_offset a0 o 2) with (S (S (prefix_offset a0 o 0))); simpl; eauto.
@@ -1792,6 +1811,27 @@ Proof.
         constructor. 1: auto.
         eapply Forall_impl. 2: eassumption.
         ss. lia.
+Qed.
+
+Lemma val_match_fp_inj p l1 l2 l':
+    val_match p (FP l1) (FP l') ->
+    val_match p (FP l2) (FP l') ->
+    l1 = l2.
+Proof.
+    destruct l1 as [a1 b1], l2 as [a2 b2], l' as [c d]. unfold val_match.
+    destruct b1, b2; cbn [Nat.eqb]; i; des; subst; auto.
+    - eapply ret_sync_nonzero in H0. clarify.
+    - eapply ret_sync_nonzero in H. clarify.
+    - exploit ret_sync_inj; [exact H | exact H0 |]. i. des. subst. auto.
+Qed.
+
+Lemma val_match_fp_functional p l l1' l2':
+    val_match p (FP l) (FP l1') ->
+    val_match p (FP l) (FP l2') ->
+    l1' = l2'.
+Proof.
+    destruct l as [a b], l1' as [c1 d1], l2' as [c2 d2]. unfold val_match.
+    destruct b; cbn [Nat.eqb]; i; des; subst; congruence.
 Qed.
 
 Lemma match_dir_inj p d1 d2 d':
