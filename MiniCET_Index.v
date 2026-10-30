@@ -558,29 +558,28 @@ Definition val_match (p: prog) (v1 v2: val) : Prop :=
   end.
 
 Definition Rsync (p: prog) (sr tr: reg) (ms: bool) : Prop :=
-   (forall x, x <> msf /\ x <> callee -> val_match p (sr ! x) (tr ! x)) /\
+   (forall x, x <> msf /\ x <> callee -> (ms = false \/ x = sp) -> val_match p (sr ! x) (tr ! x)) /\
    (tr ! msf = N (if ms then 1 else 0)).
 
 Definition Msync (p: prog) (sm tm: mem) : Prop :=
-  forall i, match nth_error sm i, nth_error tm i with
+  forall i, match nth_error sm.(memory) i, nth_error tm.(memory) i with
        | Some sv, Some tv => val_match p sv tv
        | None, None => True
        | _, _ => False
        end.
 
-Definition Rsync1 (p: prog) (sr tr: reg) : Prop :=
-  (forall x, x <> msf /\ x <> callee -> val_match p (sr ! x) (tr ! x)).
+Definition Rsync1 (p: prog) (sr tr: reg) (ms: bool) : Prop :=
+  (forall x, x <> msf /\ x <> callee -> (ms = false \/ x = sp) -> val_match p (sr ! x) (tr ! x)).
 
 Definition ms_msf_match (tr: reg) (ms: bool) : Prop :=
   (tr ! msf = N (if ms then 1 else 0)).
 
 Variant match_cfgs (p: prog) : ideal_cfg -> spec_cfg -> Prop :=
-| match_cfgs_intro pc r m stk ms pc' r' m' stk'
+| match_cfgs_intro pc r m sb ms pc' r' m' sb'
   (PC: pc_sync p pc = Some pc')
   (REG: Rsync p r r' ms)
-  (MSC: Msync p m m')
-  (STK: map_opt (ret_sync p) stk = Some stk') :
-  match_cfgs p ((pc, r, m, stk), ms) ((pc', r', m', stk'), false, ms)
+  (MSC: Msync p m m') :
+  match_cfgs p ((pc, r, m), sb, ms) ((pc', r', m'), sb', false, ms)
 .
 
 (* Definition steps_to_sync_point' (p: prog) (ic: ideal_cfg) (ds: dirs) : option nat := *)
@@ -634,22 +633,37 @@ Definition wf_ds' (p: prog) (ds: dirs) : Prop :=
 Definition match_ob (p: prog) (o1 o2: observation) : Prop :=
   match o1, o2 with
   | ODiv _ _, ODiv _ _ | OBranch _, OBranch _ | OLoad _, OLoad _ | OStore _, OStore _ => o1 = o2
-  | OCall (l1, 0), OCall (l2, 0) => l1 = l2
-  | OCall (l1, S o1), OCall (l2, S o2) => ret_sync p (l1, S o1) = Some (l2, S o2)
-                                         (* if (wf_retb (uslh_prog p) (l2, S o2)) *)
-                                         (* then ret_sync p (l1, S o1) = Some (l2, S o2) *)
-                                         (* else o1 = o2 *)
+  | OCall l1 n1, OCall l2 n2 | ORet l1 n1, ORet l2 n2 => n1 = n2 /\ val_match p (FP l1) (FP l2)
   | _, _ => False
   end.
 
 Definition match_obs (p: prog) (os1 os2: obs) : Prop :=
   Forall2 (match_ob p) os1 os2.
 
+Definition exp_ob (o: observation) : obs :=
+  match o with
+  | ORet l n => [OLoad n; OStore n; OLoad n; ORet l n]
+  | _ => [o]
+  end.
+
+Definition exp_obs (os: obs) : obs := flat_map exp_ob os.
+
+Definition pending_obs (p: prog) (ic: state ideal_cfg) : obs :=
+  match ic with
+  | S_Running ((pc, r, m), sb, ms) =>
+      match p[[pc]], r ! sp with
+      | Some <{{ ret }}>, N n => [OLoad n; OStore n; OLoad n]
+      | _, _ => []
+      end
+  | _ => []
+  end.
+
 Definition match_dir (p: prog) (d1 d2: direction) : Prop :=
   match d1, d2 with
   | DBranch b1, DBranch b2 => b1 = b2
   | DCall pc1, DCall pc2 => pc1 = pc2
-  | DRet pc1, DRet pc2 => ret_sync p pc1 = Some pc2
+  | DRet None, DRet None => True
+  | DRet (Some pc1), DRet (Some pc2) => ret_sync p pc1 = Some pc2
   | _, _ => False
   end.
 
@@ -661,7 +675,7 @@ Definition nonempty_block (blk : (list inst * bool)) : Prop :=
 
 Definition is_terminator (i: inst) : Prop :=
   match i with
-  | <{{ ret }}> | <{{ jump _}}> => True
+  | <{{ ret }}> | <{{ jump _}}> | <{{ exit }}> => True
   | _ => False
   end.
 
@@ -698,7 +712,7 @@ Qed.
 
 Definition wf_instr (p: prog) (i: inst) : Prop :=
   match i with
-  | <{{skip}}> | <{{ctarget}}> | <{{ret}}> => True
+  | <{{skip}}> | <{{ctarget}}> | <{{ret}}> | <{{exit}}> => True
   | <{{_:=e}}> | ILoad _ e | <{{call e}}> => wf_expr p e
   | <{{store[e]<-e'}}> => wf_expr p e /\ wf_expr p e'
   | <{{_<-div e1, e2}}> => wf_expr p e1 /\ wf_expr p e2
@@ -879,7 +893,7 @@ Open Scope monad_scope.
 
 Definition simple_inst (i: inst) : Prop :=
   match i with
-  | ISkip | IJump _ | ILoad _ _ | IStore _ _ | IAsgn _ _ | IDiv _ _ _ => True
+  | ISkip | IJump _ | ILoad _ _ | IStore _ _ | IAsgn _ _ | IDiv _ _ _ | IExit => True
   | _ => False
   end.
 
@@ -901,6 +915,8 @@ Variant match_simple_inst_uslh : inst -> inst -> Prop :=
   (IDe1: e1' = <{{ (msf = 1) ? 0 : e1}}>)
   (IDe2: e2' = <{{ (msf = 1) ? 0 : e2}}>):
   match_simple_inst_uslh (IDiv x e1 e2) (IDiv x e1' e2')
+| uslh_exit :
+  match_simple_inst_uslh IExit IExit
 (*| uslh_peek x:*)
   (*match_simple_inst_uslh (IPeek x) (IPeek x)*)
 .
