@@ -570,12 +570,12 @@ Definition uslh_inst (i: inst) (l: nat) (o: nat) : M (list inst) :=
       ret [<{{x<-div e1', e2'}}>]
   | <{{x<-load[e]}}> =>
       (* Don't mask reads from sp *)
-      if unmasked_addr e then ret [<{{x<-load[e]}}>] else
+      (* if unmasked_addr e then ret [<{{x<-load[e]}}>] else *)
       let e' := <{ (msf=1) ? 0 : e }> in
       ret [<{{x<-load[e']}}>]
   | <{{store[e] <- e1}}> =>
       (* Don't mask writes to sp *)
-      if unmasked_addr e then ret [<{{store[e] <- e1}}>] else
+      (* if unmasked_addr e then ret [<{{store[e] <- e1}}>] else *)
       let e' := <{ (msf=1) ? 0 : e }> in
       ret [<{{store[e'] <- e1}}>]
   | <{{branch e to l}}> =>
