@@ -13,7 +13,6 @@ Class Language (input : Type) :=
     prog : Type;
     directive : Type;
     observation : Type;
-    dummy_observation : observation;
     machine : Type;
     initial_machine : prog -> input -> machine;
     step :
@@ -21,7 +20,7 @@ Class Language (input : Type) :=
       machine ->
       directive ->
       observation ->
-      option machine ->
+      machine ->
       Prop;
     sequential_safe1 : prog -> machine -> Prop;
   }.
@@ -42,18 +41,13 @@ Context
 .
 
 Inductive sem (p : prog) :
-  machine -> list directive -> list observation -> option machine -> Prop :=
+  machine -> list directive -> list observation -> machine -> Prop :=
 | sem_done :
-    forall m, sem p m [] [] (Some m)
-
-| sem_step_error :
-    forall m d o,
-      step p m d o None ->
-      sem p m [d] [o] None
+    forall m, sem p m [] [] m
 
 | sem_step :
     forall m m' m'' d o ds os,
-      step p m d o (Some m') ->
+      step p m d o m' ->
       sem p m' ds os m'' ->
       sem p m (d :: ds) (o :: os) m''
 .
@@ -63,7 +57,7 @@ Definition sem_p
   (inp : input)
   (ds : list directive)
   (os : list observation)
-  (m' : option machine) :
+  (m' : machine) :
   Prop :=
   sem p (initial_machine p inp) ds os m'.
 
@@ -79,35 +73,28 @@ Context
 Lemma semI p m ds os m' :
   sem p m ds os m' <->
   match ds with
-  | [] => os = [] /\ m' = Some m
+  | [] => os = [] /\ m' = m
   | d :: ds' =>
-      exists o os',
-        os = o :: os' /\
-        ((exists2 mi, step p m d o (Some mi) & sem p mi ds' os' m')
-         \/ (step p m d o m' /\ m' = None /\ ds' = [] /\ os' = []))
+      exists o os' mi,
+        os = o :: os' /\ step p m d o mi /\ sem p mi ds' os' m'
     end.
 Proof.
   split.
-  - intros H. destruct H as [m0 | m0 d o Hstep | m0 mi m0' d o ds0 os0 Hstep Hsem].
+  - intros H. destruct H as [m0 | m0 mi m0' d o ds0 os0 Hstep Hsem].
     + split; reflexivity.
-    + exists o, []. split; [reflexivity|].
-      right. split; [exact Hstep|]. repeat split.
-    + exists o, os0. split; [reflexivity|].
-      left. exists mi; assumption.
+    + exists o, os0, mi. split; [reflexivity|]. split; assumption.
   - destruct ds as [|d ds].
     + intros [-> ->]. apply sem_done.
-    + intros [o [os' [-> [[mi Hstep Hsem] | [Hstep [-> [-> ->]]]]]]].
-      * eapply sem_step; eassumption.
-      * apply sem_step_error. exact Hstep.
+    + intros [o [os' [mi [-> [Hstep Hsem]]]]].
+      eapply sem_step; eassumption.
 Qed.
 
 Lemma sem_step1 p m d o m' :
   step p m d o m' ->
   sem p m [d] [o] m'.
 Proof.
-  destruct m' as [m'|]; intros h.
-  - eapply sem_step; [exact h | apply sem_done].
-  - apply sem_step_error. exact h.
+  intros h.
+  eapply sem_step; [exact h | apply sem_done].
 Qed.
 
 Lemma sem_step1I p m m' d os :
@@ -115,23 +102,20 @@ Lemma sem_step1I p m m' d os :
   exists2 o, os = [o] & step p m d o m'.
 Proof.
   intros H. apply semI in H.
-  destruct H as [o [os' [-> [[mi Hstep Hsem] | [Hstep [_ [_ ->]]]]]]].
-  - apply semI in Hsem. destruct Hsem as [-> ->].
-    exists o; [reflexivity | exact Hstep].
-  - exists o; [reflexivity | exact Hstep].
+  destruct H as [o [os' [mi [-> [Hstep Hsem]]]]].
+  apply semI in Hsem. destruct Hsem as [-> ->].
+  exists o; [reflexivity | exact Hstep].
 Qed.
 
 Lemma sem_cat p m m' m'' D D' O O' :
-  sem p m D O (Some m') ->
+  sem p m D O m' ->
   sem p m' D' O' m'' ->
   sem p m (D ++ D') (O ++ O') m''.
 Proof.
   intros H1 H2.
-  remember (Some m') as m1 eqn:Heq.
-  revert Heq H2.
-  induction H1; intros Heq H2; simpl.
-  - injection Heq as ->. exact H2.
-  - discriminate.
+  revert H2.
+  induction H1; intros H2; simpl.
+  - exact H2.
   - eapply sem_step; [eassumption|].
     apply IHsem; assumption.
 Qed.
@@ -151,11 +135,11 @@ Section SAFETY.
   .
 
   Definition sequential_safe (p : prog) (m : machine) : Prop :=
-    forall ds os m', sem p m ds os (Some m') -> sequential_safe1 p m'.
+    forall ds os m', sem p m ds os m' -> sequential_safe1 p m'.
 
   Lemma sequential_safe_sem p m m' ds os :
     sequential_safe p m ->
-    sem p m ds os (Some m') ->
+    sem p m ds os m' ->
     sequential_safe p m'.
   Proof.
     intros hsafe hsem ds' os' m'' hsem'.
@@ -165,7 +149,7 @@ Section SAFETY.
 
   Lemma sequential_safe_step p m m' d o :
     sequential_safe p m ->
-    step p m d o (Some m') ->
+    step p m d o m' ->
     sequential_safe p m'.
   Proof.
     intros hsafe hstep.
@@ -195,23 +179,6 @@ Section HISTORY.
     machine (L := Lt) ->
     Prop.
 
-  Definition sim_opt
-    (sim : machine (L := Ls) -> machine (L := Lt) -> Prop)
-    (s : option (machine (L := Ls)))
-    (t : option (machine (L := Lt))) :
-    Prop :=
-    match s, t with
-    | Some s, Some t => sim s t
-    | _, None => True
-    | None, Some _ => False
-    end.
-
-  Definition sim_opt_h0
-    (sim : sim_t0)
-    (h : history) :
-    option (machine (L := Ls)) -> option (machine (L := Lt)) -> Prop :=
-    sim_opt (sim h).
-
   Definition Tdir_t0 : Type :=
     history ->
     directive (L := Lt) ->
@@ -221,7 +188,7 @@ Section HISTORY.
     history ->
     directive (L := Lt) ->
     list (observation (L := Ls)) ->
-    observation (L := Lt).
+    list (observation (L := Lt)).
 
 End HISTORY.
 
@@ -235,7 +202,6 @@ Class History :=
 Definition sim_t {hist : History} := Eval hnf in sim_t0 history.
 Definition Tdir_t {hist : History} := Eval hnf in Tdir_t0 history.
 Definition Tobs_t {hist : History} := Eval hnf in Tobs_t0 history.
-Definition sim_opt_h {hist : History} (sim : sim_t) h := sim_opt (sim h).
 
 Definition safe_step_preserves_sim
   (p_s : prog (L := Ls))
@@ -251,8 +217,8 @@ Definition safe_step_preserves_sim
     step p_t t d o_t t' ->
     exists s' os_s,
       sem p_s s (Tdir h d) os_s s'
-      /\ o_t = Tobs h d os_s
-      /\ sim_opt_h sim (This h d) s' t'.
+      /\ [o_t] = Tobs h d os_s
+      /\ sim (This h d) s' t'.
 
 Definition initial_sim
   (p_s : prog (L := Ls))
@@ -287,8 +253,8 @@ Definition step_preserves_sim
     step p_t t d o_t t' ->
     exists s' os_s,
       sem p_s s (Tdir h d) os_s s'
-      /\ o_t = Tobs h d os_s
-      /\ sim_opt_h sim (This h d) s' t'.
+      /\ [o_t] = Tobs h d os_s
+      /\ sim (This h d) s' t'.
 
 Definition has_bw_simulation (compile : compiler) :=
   forall p_s p_t,
@@ -339,8 +305,7 @@ Section TRANSFORMERS.
     | [] => []
     | d :: ds =>
         let n := length (Tdir h d) in
-        let os0 := Tobs h d (firstn n os_s) in
-        os0 :: Tobs_sem (This h d) ds (skipn n os_s)
+        Tobs h d (firstn n os_s) ++ Tobs_sem (This h d) ds (skipn n os_s)
     end.
 
 End TRANSFORMERS.
@@ -369,22 +334,17 @@ Proof.
   intros hbw ds.
   induction ds as [|d ds hind]; intros h os_t s t t' hsim hsafe hsem; apply semI in hsem.
   - destruct hsem as [-> ->].
-    exists (Some s), [].
+    exists s, [].
     split; [apply sem_done | reflexivity].
-  - destruct hsem as [o_t [os_t' [-> [[mi hstep hsem] | [hstep [-> [-> ->]]]]]]].
-    + destruct (hbw _ _ _ _ _ _ hsim hsafe hstep) as [s' [os_s [hsem_s [-> hsim']]]].
-      destruct s' as [s'|]; unfold sim_opt_h, sim_opt in hsim'; [|contradiction].
-      pose proof (sequential_safe_sem hsafe hsem_s) as hsafe'.
-      destruct (hind _ _ _ _ _ hsim' hsafe' hsem) as [s'' [os_s' [hsem_s' ->]]].
-      exists s'', (os_s ++ os_s'). simpl. split.
-      * eapply sem_cat; eassumption.
-      * rewrite (size_obs hsem_s), firstn_app, skipn_app, Nat.sub_diag,
-          firstn_O, skipn_O, app_nil_r, firstn_all, skipn_all.
-        reflexivity.
-    + destruct (hbw _ _ _ _ _ _ hsim hsafe hstep) as [s' [os_s [hsem_s [-> hsim']]]].
-      exists s', os_s. simpl. split.
-      * rewrite app_nil_r. exact hsem_s.
-      * rewrite (size_obs hsem_s), firstn_all. reflexivity.
+  - destruct hsem as [o_t [os_t' [ti [-> [hstep hsem]]]]].
+    destruct (hbw _ _ _ _ _ _ hsim hsafe hstep) as [s' [os_s [hsem_s [hobs hsim']]]].
+    pose proof (sequential_safe_sem hsafe hsem_s) as hsafe'.
+    destruct (hind _ _ _ _ _ hsim' hsafe' hsem) as [s'' [os_s' [hsem_s' ->]]].
+    exists s'', (os_s ++ os_s'). simpl. split.
+    + eapply sem_cat; eassumption.
+    + rewrite (size_obs hsem_s), firstn_app, skipn_app, Nat.sub_diag,
+        firstn_O, skipn_O, app_nil_r, firstn_all, skipn_all, <- hobs.
+      reflexivity.
 Qed.
 
 
@@ -419,11 +379,11 @@ Proof.
   exists (sim_hist sim), (Tdir_hist Tdir), (Tobs_hist Tobs).
   split; [exact hinit|].
   intros d h o_t s t t' hsim hstep_t.
-  destruct (hbw' _ _ _ _ _ _ hsim hstep_t) as [s' [os_s [hsem_s [-> hsim']]]].
+  destruct (hbw' _ _ _ _ _ _ hsim hstep_t) as [s' [os_s [hsem_s [hobs hsim']]]].
   exists s', os_s.
   split; [exact hsem_s|].
-  split; [reflexivity|].
-  unfold sim_opt_h, sim_hist, current_hist. simpl.
+  split; [exact hobs|].
+  unfold sim_hist, current_hist. simpl.
   rewrite fold_left_app. exact hsim'.
 Qed.
 
@@ -452,7 +412,7 @@ Definition safe_step_preserves_sim_lockstep_h
     exists s' o_s,
       step p_s s (Tdir h d) o_s s'
       /\ o_t = Tobs h d o_s
-      /\ sim_opt_h sim (This h d) s' t'.
+      /\ sim (This h d) s' t'.
 
 Definition has_safe_lockstep_h_bw_simulation (compile : compiler) :=
   forall p_s p_t,
@@ -471,7 +431,7 @@ Proof.
     hist,
     sim,
     (fun h d => [Tdir h d]),
-    (fun h d os => Tobs h d (hd dummy_observation os)).
+    (fun h d os => map (Tobs h d) os).
   split; [exact hinit|].
   intros d h o_t s t t' hsim hsafe hstep_t.
   destruct (hbw' _ _ _ _ _ _ hsim hsafe hstep_t) as [s' [o_s [hstep_s [-> hsim']]]].
@@ -497,7 +457,7 @@ Definition step_preserves_sim_lockstep
     exists s' o_s,
       step p_s s (Tdir d) o_s s'
       /\ o_t = Tobs o_s
-      /\ sim_opt sim s' t'.
+      /\ sim s' t'.
 
 Definition has_lockstep_bw_simulation (compile : compiler) :=
   forall p_s p_t,
@@ -516,40 +476,13 @@ Proof.
     DirectivesHist,
     (fun _ => sim),
     (fun _ d => [Tdir d]),
-    (fun _ _ os => Tobs (hd dummy_observation os)).
+    (fun _ _ os => map Tobs os).
   split; [exact hinit|].
   intros d h o_t s t t' hsim hstep_t.
   destruct (hbw' _ _ _ _ _ hsim hstep_t) as [s' [o_s [hstep_s [-> hsim']]]].
   exists s', [o_s].
   split; [apply sem_step1; exact hstep_s|].
   split; [reflexivity | exact hsim'].
-Qed.
-
-
-(* -------------------------------------------------------------------------- *)
-(* Utils. *)
-
-Lemma sim_opt_weak sim sim' os ot :
-  (forall s t, os = Some s -> ot = Some t -> sim s t -> sim' s t) ->
-  sim_opt sim os ot ->
-  sim_opt sim' os ot.
-Proof.
-  intros H.
-  destruct os as [s|], ot as [t|]; simpl.
-  - exact (H s t eq_refl eq_refl).
-  - auto.
-  - auto.
-  - auto.
-Qed.
-
-Lemma sim_opt_h_weak {_ : History} (sim sim' : sim_t) h os ot :
-  (forall s t, os = Some s -> ot = Some t -> sim h s t -> sim' h s t) ->
-  sim_opt_h sim h os ot ->
-  sim_opt_h sim' h os ot.
-Proof.
-  intros H Hs.
-  unfold sim_opt_h in *.
-  exact (sim_opt_weak H Hs).
 Qed.
 
 End BACKWARD.
@@ -565,13 +498,6 @@ Context
   (Tdir : directive (L := Lt) -> directive (L := Ls))
   (Tobs : observation (L := Ls) -> observation (L := Lt)).
 
-Definition sim_opt_fw s t : Prop :=
-  match s, t with
-  | Some p, Some q => R p q
-  | Some _, None => False
-  | None, _ => True
-  end.
-
 Record forward_lock_step_simulation_diagram : Prop :=
   { fls_init :
     forall inp, R (initial_machine p_s inp) (initial_machine p_t inp)
@@ -579,7 +505,7 @@ Record forward_lock_step_simulation_diagram : Prop :=
     forall d s o s' t,
       R s t ->
       step p_s s (Tdir d) o s' ->
-      exists2 t', step p_t t d (Tobs o) t' & sim_opt_fw s' t'
+      exists2 t', step p_t t d (Tobs o) t' & R s' t'
   }.
 
 Context (diag: forward_lock_step_simulation_diagram).
@@ -600,17 +526,11 @@ Proof.
   clear inp.
   induction ds as [|d ds ih]; intros s t r os s' H; apply semI in H.
   - destruct H as [-> _].
-    exists (Some t). apply sem_done.
-  - destruct H as [o [os' [-> [[mi step_s sem_s] | [stuck_s [-> [Hds ->]]]]]]].
-    + destruct (fls_step diag r step_s) as [[t'|] step_t r']; simpl in r'; [|contradiction].
-      destruct (ih _ _ r' _ _ sem_s) as [tf exec_t].
-      exists tf. simpl. eapply sem_step; eassumption.
-    + destruct ds as [|? ?]; [|discriminate Hds].
-      destruct (fls_step diag r stuck_s) as [[t'|] step_t r'].
-      * exists (Some t'). simpl.
-        eapply sem_step; [exact step_t | apply sem_done].
-      * exists None. simpl.
-        apply sem_step_error. exact step_t.
+    exists t. apply sem_done.
+  - destruct H as [o [os' [mi [-> [step_s sem_s]]]]].
+    destruct (fls_step diag r step_s) as [t' step_t r'].
+    destruct (ih _ _ r' _ _ sem_s) as [tf exec_t].
+    exists tf. simpl. eapply sem_step; eassumption.
 Qed.
 
 End FORWARD.
