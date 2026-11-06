@@ -1,7 +1,7 @@
 (*** The initial framework taken from the artifact of Arranz-Olmos et. al., "Preservation of Speculative Constant-Time by Compilation" ***)
 (*** See: https://dl.acm.org/doi/10.1145/3704880 and https://artifacts.formosa-crypto.org/data/sct-preservation.tbz ***)
 
-From Stdlib Require Import List PeanoNat.
+From Stdlib Require Import List PeanoNat Relation_Definitions.
 Import ListNotations.
 
 Set Implicit Arguments.
@@ -546,5 +546,106 @@ Context
 
 Definition compose : compiler (Ls := L0) (Lt := L2) :=
   fun p_s p_t => exists2 p_i, compile1 p_s p_i & compile2 p_i p_t.
+
+End COMPOSITION.
+
+(* -------------------------------------------------------------------------- *)
+(* Speculative constant time (phi-SCT). *)
+
+Section DEFINITION.
+
+Context
+  {input : Type}
+  {L : Language input}
+.
+
+Definition is_sct (phi : relation input) (p : prog) : Prop :=
+  forall ds os1 os2 inp1 inp2 out1 out2,
+    phi inp1 inp2 ->
+    sem_p p inp1 ds os1 out1 ->
+    sem_p p inp2 ds os2 out2 ->
+    os1 = os2.
+
+End DEFINITION.
+
+Definition sequential_safe_phi
+  {input : Type}
+  {L : Language input}
+  (p : prog)
+  (phi : relation input) :
+  Prop :=
+  forall inp1 inp2,
+    phi inp1 inp2 ->
+    sequential_safe p (initial_machine p inp1)
+    /\ sequential_safe p (initial_machine p inp2).
+
+Section PRESERVATION.
+
+Context
+  {input history : Type}
+  {Ls Lt : Language input}
+  (compile : compiler (Ls := Ls) (Lt := Lt))
+.
+
+Definition preserves_safety (phi : relation input) : Prop :=
+  forall p_s p_t,
+    compile p_s p_t ->
+    sequential_safe_phi p_s phi ->
+    sequential_safe_phi p_t phi.
+
+Definition preserves_sct (phi : relation input) : Prop :=
+  forall p_s p_t,
+    compile p_s p_t ->
+    sequential_safe_phi p_s phi ->
+    is_sct phi p_s ->
+    is_sct phi p_t.
+
+Lemma has_safe_bw_simulation_preserves_sct phi :
+  has_safe_bw_simulation compile ->
+  preserves_sct phi.
+Proof.
+  intros hbw p_s p_t hcomp hsafe hsct ds os1 os2 inp1 inp2 out1 out2 hphi
+    hsem_t1 hsem_t2.
+  destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [hinit hbw']]]]].
+  pose proof (lift_step_preserves_sim hbw') as hsem.
+  destruct (hsafe _ _ hphi) as [hsafe1 hsafe2].
+  destruct (hsem _ _ _ _ _ _ (hinit inp1) hsafe1 hsem_t1) as [s1' [os_s1 [hsem_s1 ->]]].
+  destruct (hsem _ _ _ _ _ _ (hinit inp2) hsafe2 hsem_t2) as [s2' [os_s2 [hsem_s2 ->]]].
+  rewrite (hsct _ _ _ _ _ _ _ hphi hsem_s1 hsem_s2).
+  reflexivity.
+Qed.
+
+End PRESERVATION.
+
+Section COMPOSITION.
+
+Context
+  {input : Type}
+  {L0 L1 L2 : Language input}
+  (compile2 : compiler (Ls := L1) (Lt := L2))
+  (compile1 : compiler (Ls := L0) (Lt := L1))
+.
+
+Lemma compose_safety phi :
+  preserves_safety compile2 phi ->
+  preserves_safety compile1 phi ->
+  preserves_safety (compose compile2 compile1) phi.
+Proof.
+  intros hpsafe2 hpsafe1 p_s p_t [p_i h1 h2] hsafe.
+  apply (hpsafe2 _ _ h2).
+  exact (hpsafe1 _ _ h1 hsafe).
+Qed.
+
+Lemma compose_sct phi :
+  preserves_safety compile1 phi ->
+  preserves_sct compile2 phi ->
+  preserves_sct compile1 phi ->
+  preserves_sct (compose compile2 compile1) phi.
+Proof.
+  intros hpsafe hpres2 hpres1 p_s p_t [p_i h1 h2] hsafe hsct.
+  apply (hpres2 _ _ h2).
+  - exact (hpsafe _ _ h1 hsafe).
+  - exact (hpres1 _ _ h1 hsafe hsct).
+Qed.
 
 End COMPOSITION.
