@@ -2,7 +2,10 @@
 (*** See: https://dl.acm.org/doi/10.1145/3704880 and https://artifacts.formosa-crypto.org/data/sct-preservation.tbz ***)
 
 From Stdlib Require Import List PeanoNat Relation_Definitions.
+From SECF Require Import Utils.
 Import ListNotations.
+#[local, warning="-notation-overridden"]
+Notation "x ++ y" := (List.app x y) (right associativity, at level 60).
 
 Set Implicit Arguments.
 Unset Strict Implicit.
@@ -169,6 +172,8 @@ Context
 
 Definition compiler : Type := prog (L := Ls) -> prog (L := Lt) -> Prop.
 
+Definition input_sync : Type := prog (L := Ls) -> input -> input -> Prop.
+
 Section HISTORY.
 
   Context (history : Type).
@@ -223,17 +228,19 @@ Definition safe_step_preserves_sim
 Definition initial_sim
   (p_s : prog (L := Ls))
   (p_t : prog (L := Lt))
+  (sync : input_sync)
   {hist : History}
   (sim : sim_t) :
   Prop :=
-  forall inp,
-    sim init_hist (initial_machine p_s inp) (initial_machine p_t inp).
+  forall inp inp',
+    sync p_s inp inp' ->
+    sim init_hist (initial_machine p_s inp) (initial_machine p_t inp').
 
-Definition has_safe_bw_simulation (compile : compiler) :=
+Definition has_safe_bw_simulation (compile : compiler) (sync : input_sync) :=
   forall p_s p_t,
     compile p_s p_t ->
     exists (_ : History) sim Tdir Tobs,
-      initial_sim p_s p_t sim
+      initial_sim p_s p_t sync sim
       /\ safe_step_preserves_sim p_s p_t sim Tdir Tobs.
 
 
@@ -256,16 +263,16 @@ Definition step_preserves_sim
       /\ [o_t] = Tobs h d os_s
       /\ sim (This h d) s' t'.
 
-Definition has_bw_simulation (compile : compiler) :=
+Definition has_bw_simulation (compile : compiler) (sync : input_sync) :=
   forall p_s p_t,
     compile p_s p_t ->
     exists (_ : History) sim Tdir Tobs,
-      initial_sim p_s p_t sim
+      initial_sim p_s p_t sync sim
       /\ step_preserves_sim p_s p_t sim Tdir Tobs.
 
-Lemma lift_bw_simulation compile :
-  has_bw_simulation compile ->
-  has_safe_bw_simulation compile.
+Lemma lift_bw_simulation compile sync :
+  has_bw_simulation compile sync ->
+  has_safe_bw_simulation compile sync.
 Proof.
   intros hbw p_s p_t hcomp.
   destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [hinit hbw']]]]].
@@ -366,12 +373,12 @@ Instance DirectivesHist : History :=
     This := fun h d => h ++ [d];
   |}.
 
-Lemma directives_as_history compile :
-  has_bw_simulation compile ->
+Lemma directives_as_history compile sync :
+  has_bw_simulation compile sync ->
   forall p_s p_t,
     compile p_s p_t ->
     exists sim Tdir Tobs,
-      initial_sim (hist := DirectivesHist) p_s p_t sim
+      initial_sim (hist := DirectivesHist) p_s p_t sync sim
       /\ step_preserves_sim (hist := DirectivesHist) p_s p_t sim Tdir Tobs.
 Proof.
   intros hbw p_s p_t hcomp.
@@ -414,16 +421,16 @@ Definition safe_step_preserves_sim_lockstep_h
       /\ o_t = Tobs h d o_s
       /\ sim (This h d) s' t'.
 
-Definition has_safe_lockstep_h_bw_simulation (compile : compiler) :=
+Definition has_safe_lockstep_h_bw_simulation (compile : compiler) (sync : input_sync) :=
   forall p_s p_t,
     compile p_s p_t ->
     exists (_ : History) sim Tdir Tobs,
-      initial_sim p_s p_t sim
+      initial_sim p_s p_t sync sim
       /\ safe_step_preserves_sim_lockstep_h p_s p_t sim Tdir Tobs.
 
-Lemma lift_safe_lockstep_h compile :
-  has_safe_lockstep_h_bw_simulation compile ->
-  has_safe_bw_simulation compile.
+Lemma lift_safe_lockstep_h compile sync :
+  has_safe_lockstep_h_bw_simulation compile sync ->
+  has_safe_bw_simulation compile sync.
 Proof.
   intros hbw p_s p_t hcomp.
   destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [hinit hbw']]]]].
@@ -459,16 +466,18 @@ Definition step_preserves_sim_lockstep
       /\ o_t = Tobs o_s
       /\ sim s' t'.
 
-Definition has_lockstep_bw_simulation (compile : compiler) :=
+Definition has_lockstep_bw_simulation (compile : compiler) (sync : input_sync) :=
   forall p_s p_t,
     compile p_s p_t ->
     exists sim Tdir Tobs,
-      (forall inp, sim (initial_machine p_s inp) (initial_machine p_t inp))
+      (forall inp inp',
+          sync p_s inp inp' ->
+          sim (initial_machine p_s inp) (initial_machine p_t inp'))
       /\ step_preserves_sim_lockstep p_s p_t sim Tdir Tobs.
 
-Lemma lift_lockstep compile :
-  has_lockstep_bw_simulation compile ->
-  has_bw_simulation compile.
+Lemma lift_lockstep compile sync :
+  has_lockstep_bw_simulation compile sync ->
+  has_bw_simulation compile sync.
 Proof.
   intros hbw p_s p_t hcomp.
   destruct (hbw p_s p_t hcomp) as [sim [Tdir [Tobs [hinit hbw']]]].
@@ -579,38 +588,69 @@ Definition sequential_safe_phi
     sequential_safe p (initial_machine p inp1)
     /\ sequential_safe p (initial_machine p inp2).
 
+Section ANTITONE.
+
+Context
+  {input : Type}
+  {L : Language input}
+  (phi phi' : relation input)
+  (hsub : forall inp1 inp2, phi' inp1 inp2 -> phi inp1 inp2)
+.
+
+Lemma is_sct_antitone p :
+  is_sct phi p -> is_sct phi' p.
+Proof.
+  intros hsct ds os1 os2 inp1 inp2 out1 out2 hphi'.
+  exact (hsct ds os1 os2 inp1 inp2 out1 out2 (hsub hphi')).
+Qed.
+
+Lemma sequential_safe_phi_antitone p :
+  sequential_safe_phi p phi -> sequential_safe_phi p phi'.
+Proof.
+  intros hsafe inp1 inp2 hphi'.
+  exact (hsafe inp1 inp2 (hsub hphi')).
+Qed.
+
+End ANTITONE.
+
 Section PRESERVATION.
 
 Context
-  {input history : Type}
+  {input : Type}
   {Ls Lt : Language input}
   (compile : compiler (Ls := Ls) (Lt := Lt))
+  (sync : input_sync (Ls := Ls))
 .
+
+Definition sync_rel (p_s : prog (L := Ls)) (phi : relation input) : relation input :=
+  fun inp1' inp2' =>
+    exists inp1 inp2,
+      phi inp1 inp2 /\ sync p_s inp1 inp1' /\ sync p_s inp2 inp2'.
 
 Definition preserves_safety (phi : relation input) : Prop :=
   forall p_s p_t,
     compile p_s p_t ->
     sequential_safe_phi p_s phi ->
-    sequential_safe_phi p_t phi.
+    sequential_safe_phi p_t (sync_rel p_s phi).
 
 Definition preserves_sct (phi : relation input) : Prop :=
   forall p_s p_t,
     compile p_s p_t ->
     sequential_safe_phi p_s phi ->
     is_sct phi p_s ->
-    is_sct phi p_t.
+    is_sct (sync_rel p_s phi) p_t.
 
 Lemma has_safe_bw_simulation_preserves_sct phi :
-  has_safe_bw_simulation compile ->
+  has_safe_bw_simulation compile sync ->
   preserves_sct phi.
 Proof.
-  intros hbw p_s p_t hcomp hsafe hsct ds os1 os2 inp1 inp2 out1 out2 hphi
-    hsem_t1 hsem_t2.
+  intros hbw p_s p_t hcomp hsafe hsct ds os1 os2 inp1' inp2' out1 out2
+    [inp1 [inp2 [hphi [hsync1 hsync2]]]] hsem_t1 hsem_t2.
   destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [hinit hbw']]]]].
   pose proof (lift_step_preserves_sim hbw') as hsem.
   destruct (hsafe _ _ hphi) as [hsafe1 hsafe2].
-  destruct (hsem _ _ _ _ _ _ (hinit inp1) hsafe1 hsem_t1) as [s1' [os_s1 [hsem_s1 ->]]].
-  destruct (hsem _ _ _ _ _ _ (hinit inp2) hsafe2 hsem_t2) as [s2' [os_s2 [hsem_s2 ->]]].
+  destruct (hsem _ _ _ _ _ _ (hinit _ _ hsync1) hsafe1 hsem_t1) as [s1' [os_s1 [hsem_s1 ->]]].
+  destruct (hsem _ _ _ _ _ _ (hinit _ _ hsync2) hsafe2 hsem_t2) as [s2' [os_s2 [hsem_s2 ->]]].
   rewrite (hsct _ _ _ _ _ _ _ hphi hsem_s1 hsem_s2).
   reflexivity.
 Qed.
@@ -624,28 +664,140 @@ Context
   {L0 L1 L2 : Language input}
   (compile2 : compiler (Ls := L1) (Lt := L2))
   (compile1 : compiler (Ls := L0) (Lt := L1))
+  (sync2 : input_sync (Ls := L1))
+  (sync1 : input_sync (Ls := L0))
 .
 
+Definition compose_sync : input_sync (Ls := L0) :=
+  fun p_s inp inp'' =>
+    forall p_i,
+      compile1 p_s p_i ->
+      exists2 inp', sync1 p_s inp inp' & sync2 p_i inp' inp''.
+
+Lemma sync_rel_compose p_s p_i phi :
+  compile1 p_s p_i ->
+  forall inp1'' inp2'',
+    sync_rel compose_sync p_s phi inp1'' inp2'' ->
+    sync_rel sync2 p_i (sync_rel sync1 p_s phi) inp1'' inp2''.
+Proof.
+  intros h1 inp1'' inp2'' [inp1 [inp2 [hphi [hsync1 hsync2]]]].
+  destruct (hsync1 _ h1) as [inp1' hs1 hs1'].
+  destruct (hsync2 _ h1) as [inp2' hs2 hs2'].
+  exists inp1', inp2'.
+  split; [|split; assumption].
+  exists inp1, inp2.
+  split; [assumption | split; assumption].
+Qed.
+
 Lemma compose_safety phi :
-  preserves_safety compile2 phi ->
-  preserves_safety compile1 phi ->
-  preserves_safety (compose compile2 compile1) phi.
+  (forall phi', preserves_safety compile2 sync2 phi') ->
+  preserves_safety compile1 sync1 phi ->
+  preserves_safety (compose compile2 compile1) compose_sync phi.
 Proof.
   intros hpsafe2 hpsafe1 p_s p_t [p_i h1 h2] hsafe.
-  apply (hpsafe2 _ _ h2).
+  apply (sequential_safe_phi_antitone (sync_rel_compose h1)).
+  apply (hpsafe2 _ _ _ h2).
   exact (hpsafe1 _ _ h1 hsafe).
 Qed.
 
 Lemma compose_sct phi :
-  preserves_safety compile1 phi ->
-  preserves_sct compile2 phi ->
-  preserves_sct compile1 phi ->
-  preserves_sct (compose compile2 compile1) phi.
+  preserves_safety compile1 sync1 phi ->
+  (forall phi', preserves_sct compile2 sync2 phi') ->
+  preserves_sct compile1 sync1 phi ->
+  preserves_sct (compose compile2 compile1) compose_sync phi.
 Proof.
   intros hpsafe hpres2 hpres1 p_s p_t [p_i h1 h2] hsafe hsct.
-  apply (hpres2 _ _ h2).
+  apply (is_sct_antitone (sync_rel_compose h1)).
+  apply (hpres2 _ _ _ h2).
   - exact (hpsafe _ _ h1 hsafe).
   - exact (hpres1 _ _ h1 hsafe hsct).
 Qed.
 
 End COMPOSITION.
+
+(* --- Triosecuris: parametrized observational equivalence (applicable to all semantics, with directions in sequential being unit) *)
+Section OBSERVATIONAL_EQUIVALENCE.
+  Context
+    {input : Type}
+    {L : Language input}
+  .
+
+  Definition same_obs (p : prog) (inp1 inp2 : input) :=
+    forall ds os1 os2 out1 out2,
+      sem_p p inp1 ds os1 out1 ->
+      sem_p p inp2 ds os2 out2 ->
+      (Utils.prefix os1 os2) \/ (Utils.prefix os2 os1).
+
+End OBSERVATIONAL_EQUIVALENCE.
+
+(* --- phi-SCT inputs imply same observations, easy *)
+Lemma is_sct_same_obs {input : Type} {L : Language input} (phi : relation input) (p : prog (L := L)) (inp1 inp2 : input):
+  is_sct phi p -> phi inp1 inp2 -> same_obs p inp1 inp2.
+Proof.
+  intros Hsct Hphi.
+  unfold is_sct in Hsct.
+  unfold same_obs.
+  intros ds os1 os2 out1 out2 Hsem1 Hsem2.
+  specialize (Hsct ds os1 os2 inp1 inp2 out1 out2 Hphi Hsem1 Hsem2).
+  left.
+  rewrite Hsct.
+  apply prefix_refl.
+Qed.
+
+(* --- same observations on inp1 and inp2 imply phi-SCT on exactly this inputs, hacky but ok *)
+Lemma same_obs_is_sct {input : Type} {L : Language input} (p : prog (L := L)) inp1 inp2 :
+  same_obs p inp1 inp2 ->
+  is_sct (fun a b => a = inp1 /\ b = inp2) p.
+Proof.
+  intros Hso ds os1 os2 a b out1 out2 Hsameobs Hsem1 Hsem2.
+  pose proof (size_obs Hsem1) as Hlen1.
+  pose proof (size_obs Hsem2) as Hlen2.
+  rewrite Hlen1 in Hlen2.
+  destruct Hsameobs as [Ha Hb]; subst.
+  destruct (Hso _ _ _ _ _ Hsem1 Hsem2) as [Hpre | Hpre].
+  - apply prefix_same_length; [exact Hpre | congruence].
+  - symmetry. apply prefix_same_length; [exact Hpre | congruence].
+Qed.
+
+Section RELATIVE_SECURITY.
+  Context
+    {input : Type}
+    {Ls Lt : Language input}
+    (compile : compiler (Ls := Ls) (Lt := Lt))
+    (sync : prog (L := Ls) -> input -> input -> Prop)
+  .
+
+  Definition relative_secure p_s p_t inp1 inp2 :=
+      forall inp1' inp2',
+      same_obs p_s inp1 inp2 ->
+      sync p_s inp1 inp1' ->
+      sync p_s inp2 inp2' ->
+      compile p_s p_t ->
+      same_obs p_t inp1' inp2'.
+End RELATIVE_SECURITY.
+
+Section SCT_PRESERVATION_RELSEC.
+  Context
+    {input : Type}
+    {Ls Lt : Language input}
+    (compile : compiler (Ls := Ls) (Lt := Lt))
+    (sync : input_sync (Ls := Ls))
+  .
+
+  Lemma preserves_sct_relsec p_s p_t inp1 inp2 :
+    (forall phi, preserves_sct compile sync phi) ->
+    sequential_safe p_s (initial_machine p_s inp1) ->
+    sequential_safe p_s (initial_machine p_s inp2) ->
+    relative_secure compile sync p_s p_t inp1 inp2.
+  Proof.
+    intros Hphisct Hsafe1 Hsafe2 inp1' inp2' Hsameobs Hsync1 Hsync2 Hcompile.
+    apply (is_sct_same_obs 
+            (phi := sync_rel sync p_s (fun a b => a = inp1 /\ b = inp2))).
+    - apply (Hphisct _ p_s p_t Hcompile).
+      + intros a b [-> ->]. split.
+        -- apply Hsafe1.
+        -- apply Hsafe2.
+      + exact (same_obs_is_sct Hsameobs).
+    - exists inp1, inp2. auto.
+  Qed.
+End SCT_PRESERVATION_RELSEC.

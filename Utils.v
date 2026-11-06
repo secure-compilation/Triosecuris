@@ -144,6 +144,17 @@ Lemma prefix_nil : forall {X:Type} (ds : list X),
   prefix [] ds.
 Proof. intros X ds. unfold prefix. eexists. simpl. reflexivity. Qed.
 
+Lemma prefix_same_length {X : Type} (xs ys : list X) :
+  prefix xs ys -> length xs = length ys -> xs = ys.
+Proof.
+  intros [zs <-] hlen.
+  rewrite length_app in hlen.
+  destruct zs as [|z zs].
+  - symmetry. apply app_nil_r.
+  - simpl in hlen. exfalso. apply (Nat.lt_irrefl (length xs)).
+    rewrite hlen at 2. apply Nat.lt_add_pos_r, Nat.lt_0_succ.
+Qed.
+
 Lemma prefix_heads_and_tails : forall {X:Type} (h1 h2 : X) (t1 t2 : list X),
   prefix (h1::t1) (h2::t2) -> h1 = h2 /\ prefix t1 t2.
 Proof.
