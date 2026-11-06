@@ -45,7 +45,7 @@ Context
 
 Inductive sem (p : prog) :
   machine -> list directive -> list observation -> machine -> Prop :=
-| sem_done :
+| sem_refl :
     forall m, sem p m [] [] m
 
 | sem_step :
@@ -87,7 +87,7 @@ Proof.
     + split; reflexivity.
     + exists o, os0, mi. split; [reflexivity|]. split; assumption.
   - destruct ds as [|d ds].
-    + intros [-> ->]. apply sem_done.
+    + intros [-> ->]. apply sem_refl.
     + intros [o [os' [mi [-> [Hstep Hsem]]]]].
       eapply sem_step; eassumption.
 Qed.
@@ -97,7 +97,7 @@ Lemma sem_step1 p m d o m' :
   sem p m [d] [o] m'.
 Proof.
   intros h.
-  eapply sem_step; [exact h | apply sem_done].
+  eapply sem_step; [exact h | apply sem_refl].
 Qed.
 
 Lemma sem_step1I p m m' d os :
@@ -342,7 +342,7 @@ Proof.
   induction ds as [|d ds hind]; intros h os_t s t t' hsim hsafe hsem; apply semI in hsem.
   - destruct hsem as [-> ->].
     exists s, [].
-    split; [apply sem_done | reflexivity].
+    split; [apply sem_refl | reflexivity].
   - destruct hsem as [o_t [os_t' [ti [-> [hstep hsem]]]]].
     destruct (hbw _ _ _ _ _ _ hsim hsafe hstep) as [s' [os_s [hsem_s [hobs hsim']]]].
     pose proof (sequential_safe_sem hsafe hsem_s) as hsafe'.
@@ -535,7 +535,7 @@ Proof.
   clear inp.
   induction ds as [|d ds ih]; intros s t r os s' H; apply semI in H.
   - destruct H as [-> _].
-    exists t. apply sem_done.
+    exists t. apply sem_refl.
   - destruct H as [o [os' [mi [-> [step_s sem_s]]]]].
     destruct (fls_step diag r step_s) as [t' step_t r'].
     destruct (ih _ _ r' _ _ sem_s) as [tf exec_t].
