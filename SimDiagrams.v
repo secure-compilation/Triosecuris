@@ -21,8 +21,8 @@ Class Language (input : Type) :=
     step :
       prog ->
       machine ->
-      directive ->
-      observation ->
+      list directive ->
+      list observation ->
       machine ->
       Prop;
     sequential_safe1 : prog -> machine -> Prop;
@@ -49,10 +49,10 @@ Inductive sem (p : prog) :
     forall m, sem p m [] [] m
 
 | sem_step :
-    forall m m' m'' d o ds os,
-      step p m d o m' ->
-      sem p m' ds os m'' ->
-      sem p m (d :: ds) (o :: os) m''
+    forall m m' m'' ds1 os1 ds2 os2,
+      step p m ds1 os1 m' ->
+      sem p m' ds2 os2 m'' ->
+      sem p m (ds1 ++ ds2) (os1 ++ os2) m''
 .
 
 Definition sem_p
@@ -74,40 +74,25 @@ Context
 .
 
 Lemma semI p m ds os m' :
-  sem p m ds os m' <->
-  match ds with
-  | [] => os = [] /\ m' = m
-  | d :: ds' =>
-      exists o os' mi,
-        os = o :: os' /\ step p m d o mi /\ sem p mi ds' os' m'
-    end.
+  sem p m ds os m' ->
+  (ds = [] /\ os = [] /\ m' = m)
+  \/ exists ds1 os1 mi ds2 os2,
+       ds = ds1 ++ ds2 /\ os = os1 ++ os2
+       /\ step p m ds1 os1 mi /\ sem p mi ds2 os2 m'.
 Proof.
-  split.
-  - intros H. destruct H as [m0 | m0 mi m0' d o ds0 os0 Hstep Hsem].
-    + split; reflexivity.
-    + exists o, os0, mi. split; [reflexivity|]. split; assumption.
-  - destruct ds as [|d ds].
-    + intros [-> ->]. apply sem_refl.
-    + intros [o [os' [mi [-> [Hstep Hsem]]]]].
-      eapply sem_step; eassumption.
+  intros H. destruct H as [m0 | m0 mi m0' ds1 os1 ds2 os2 Hstep Hsem].
+  - left. repeat split.
+  - right. exists ds1, os1, mi, ds2, os2. repeat split; assumption.
 Qed.
 
-Lemma sem_step1 p m d o m' :
-  step p m d o m' ->
-  sem p m [d] [o] m'.
+Lemma sem_step1 p m ds os m' :
+  step p m ds os m' ->
+  sem p m ds os m'.
 Proof.
   intros h.
-  eapply sem_step; [exact h | apply sem_refl].
-Qed.
-
-Lemma sem_step1I p m m' d os :
-  sem p m [d] os m' ->
-  exists2 o, os = [o] & step p m d o m'.
-Proof.
-  intros H. apply semI in H.
-  destruct H as [o [os' [mi [-> [Hstep Hsem]]]]].
-  apply semI in Hsem. destruct Hsem as [-> ->].
-  exists o; [reflexivity | exact Hstep].
+  pose proof (sem_step h (sem_refl p m')) as H.
+  rewrite !app_nil_r in H.
+  exact H.
 Qed.
 
 Lemma sem_cat p m m' m'' D D' O O' :
@@ -119,16 +104,15 @@ Proof.
   revert H2.
   induction H1; intros H2; simpl.
   - exact H2.
-  - eapply sem_step; [eassumption|].
+  - rewrite <- !app_assoc.
+    eapply sem_step; [eassumption|].
     apply IHsem; assumption.
 Qed.
 
-Lemma size_obs p m ds os m' :
-  sem p m ds os m' ->
-  length ds = length os.
-Proof. induction 1; simpl; congruence. Qed.
-
 End FACTS.
+
+Definition comparable {A : Type} (l1 l2 : list A) : Prop :=
+  prefix l1 l2 \/ prefix l2 l1.
 
 Section SAFETY.
 
@@ -150,9 +134,9 @@ Section SAFETY.
     eapply sem_cat; eassumption.
   Qed.
 
-  Lemma sequential_safe_step p m m' d o :
+  Lemma sequential_safe_step p m m' ds os :
     sequential_safe p m ->
-    step p m d o m' ->
+    step p m ds os m' ->
     sequential_safe p m'.
   Proof.
     intros hsafe hstep.
@@ -186,14 +170,23 @@ Section HISTORY.
 
   Definition Tdir_t0 : Type :=
     history ->
-    directive (L := Lt) ->
+    list (directive (L := Lt)) ->
     list (directive (L := Ls)).
 
   Definition Tobs_t0 : Type :=
     history ->
-    directive (L := Lt) ->
+    list (directive (L := Lt)) ->
     list (observation (L := Ls)) ->
     list (observation (L := Lt)).
+
+  Definition arity_t0 : Type :=
+    history ->
+    nat.
+
+  Definition oarity_t0 : Type :=
+    history ->
+    list (directive (L := Lt)) ->
+    nat.
 
 End HISTORY.
 
@@ -201,12 +194,18 @@ Class History :=
   {
     history : Type;
     init_hist : history;
-    This : history -> directive (L := Lt) -> observation (L := Lt) -> history;
+    This :
+      history ->
+      list (directive (L := Lt)) ->
+      list (observation (L := Lt)) ->
+      history;
   }.
 
 Definition sim_t {hist : History} := Eval hnf in sim_t0 history.
 Definition Tdir_t {hist : History} := Eval hnf in Tdir_t0 history.
 Definition Tobs_t {hist : History} := Eval hnf in Tobs_t0 history.
+Definition arity_t {hist : History} := Eval hnf in arity_t0 history.
+Definition oarity_t {hist : History} := Eval hnf in oarity_t0 history.
 
 Definition safe_step_preserves_sim
   (p_s : prog (L := Ls))
@@ -214,16 +213,20 @@ Definition safe_step_preserves_sim
   {hist : History}
   (sim : sim_t)
   (Tdir : Tdir_t)
-  (Tobs : Tobs_t) :
+  (Tobs : Tobs_t)
+  (arity : arity_t)
+  (oarity : oarity_t) :
   Prop :=
-  forall d h o_t s t t',
+  forall ds h os_t s t t',
     sim h s t ->
     sequential_safe p_s s ->
-    step p_t t d o_t t' ->
-    exists s' os_s,
-      sem p_s s (Tdir h d) os_s s'
-      /\ [o_t] = Tobs h d os_s
-      /\ sim (This h d o_t) s' t'.
+    step p_t t ds os_t t' ->
+    length ds = arity h
+    /\ exists s' os_s,
+         sem p_s s (Tdir h ds) os_s s'
+         /\ length os_s = oarity h ds
+         /\ os_t = Tobs h ds os_s
+         /\ sim (This h ds os_t) s' t'.
 
 Definition initial_sim
   (p_s : prog (L := Ls))
@@ -239,9 +242,9 @@ Definition initial_sim
 Definition has_safe_bw_simulation (compile : compiler) (sync : input_sync) :=
   forall p_s p_t,
     compile p_s p_t ->
-    exists (_ : History) sim Tdir Tobs,
+    exists (_ : History) sim Tdir Tobs arity oarity,
       initial_sim p_s p_t sync sim
-      /\ safe_step_preserves_sim p_s p_t sim Tdir Tobs.
+      /\ safe_step_preserves_sim p_s p_t sim Tdir Tobs arity oarity.
 
 
 (* -------------------------------------------------------------------------- *)
@@ -253,107 +256,37 @@ Definition step_preserves_sim
   {hist : History}
   (sim : sim_t)
   (Tdir : Tdir_t)
-  (Tobs : Tobs_t) :
+  (Tobs : Tobs_t)
+  (arity : arity_t)
+  (oarity : oarity_t) :
   Prop :=
-  forall d h o_t s t t',
+  forall ds h os_t s t t',
     sim h s t ->
-    step p_t t d o_t t' ->
-    exists s' os_s,
-      sem p_s s (Tdir h d) os_s s'
-      /\ [o_t] = Tobs h d os_s
-      /\ sim (This h d o_t) s' t'.
+    step p_t t ds os_t t' ->
+    length ds = arity h
+    /\ exists s' os_s,
+         sem p_s s (Tdir h ds) os_s s'
+         /\ length os_s = oarity h ds
+         /\ os_t = Tobs h ds os_s
+         /\ sim (This h ds os_t) s' t'.
 
 Definition has_bw_simulation (compile : compiler) (sync : input_sync) :=
   forall p_s p_t,
     compile p_s p_t ->
-    exists (_ : History) sim Tdir Tobs,
+    exists (_ : History) sim Tdir Tobs arity oarity,
       initial_sim p_s p_t sync sim
-      /\ step_preserves_sim p_s p_t sim Tdir Tobs.
+      /\ step_preserves_sim p_s p_t sim Tdir Tobs arity oarity.
 
 Lemma lift_bw_simulation compile sync :
   has_bw_simulation compile sync ->
   has_safe_bw_simulation compile sync.
 Proof.
   intros hbw p_s p_t hcomp.
-  destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [hinit hbw']]]]].
-  exists hist, sim, Tdir, Tobs.
+  destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [arity [oarity [hinit hbw']]]]]]].
+  exists hist, sim, Tdir, Tobs, arity, oarity.
   split; [exact hinit|].
-  intros d h o_t s t t' hsim _ hstep.
-  exact (hbw' d h o_t s t t' hsim hstep).
-Qed.
-
-
-(* -------------------------------------------------------------------------- *)
-(* Lifting single-step simulation into multi-step ones. *)
-
-Section TRANSFORMERS.
-
-  Context
-    {hist : History}
-    (Tdir : Tdir_t)
-    (Tobs : Tobs_t)
-  .
-
-  Fixpoint Tdir_sem
-    (h : history)
-    (ds : list (directive (L := Lt)))
-    (os_t : list (observation (L := Lt))) :
-    list (directive (L := Ls)) :=
-    match ds, os_t with
-    | d :: ds, o :: os_t => Tdir h d ++ Tdir_sem (This h d o) ds os_t
-    | _, _ => []
-    end.
-
-  Fixpoint Tobs_sem
-    (h : history)
-    (ds : list (directive (L := Lt)))
-    (os_t : list (observation (L := Lt)))
-    (os_s : list (observation (L := Ls))) :
-    list (observation (L := Lt)) :=
-    match ds, os_t with
-    | d :: ds, o :: os_t =>
-        let n := length (Tdir h d) in
-        Tobs h d (firstn n os_s) ++ Tobs_sem (This h d o) ds os_t (skipn n os_s)
-    | _, _ => []
-    end.
-
-End TRANSFORMERS.
-
-(* We don't need to ensure that the resulting machines are related. *)
-Definition safe_sem_preserves_sim
-  (p_s : prog (L := Ls))
-  (p_t : prog (L := Lt))
-  {hist : History}
-  (sim : sim_t)
-  (Tdir : Tdir_t)
-  (Tobs : Tobs_t) :
-  Prop :=
-  forall ds h os_t s t t',
-    sim h s t ->
-    sequential_safe p_s s ->
-    sem p_t t ds os_t t' ->
-    exists s' os_s,
-      sem p_s s (Tdir_sem Tdir h ds os_t) os_s s'
-      /\ os_t = Tobs_sem Tdir Tobs h ds os_t os_s.
-
-Lemma lift_step_preserves_sim p_s p_t {_ : History} sim Tdir Tobs :
-  safe_step_preserves_sim p_s p_t sim Tdir Tobs ->
-  safe_sem_preserves_sim p_s p_t sim Tdir Tobs.
-Proof.
-  intros hbw ds.
-  induction ds as [|d ds hind]; intros h os_t s t t' hsim hsafe hsem; apply semI in hsem.
-  - destruct hsem as [-> ->].
-    exists s, [].
-    split; [apply sem_refl | reflexivity].
-  - destruct hsem as [o_t [os_t' [ti [-> [hstep hsem]]]]].
-    destruct (hbw _ _ _ _ _ _ hsim hsafe hstep) as [s' [os_s [hsem_s [hobs hsim']]]].
-    pose proof (sequential_safe_sem hsafe hsem_s) as hsafe'.
-    destruct (hind _ _ _ _ _ hsim' hsafe' hsem) as [s'' [os_s' [hsem_s' hobs']]].
-    exists s'', (os_s ++ os_s'). simpl. split.
-    + eapply sem_cat; eassumption.
-    + rewrite (size_obs hsem_s), firstn_app, skipn_app, Nat.sub_diag,
-        firstn_O, skipn_O, app_nil_r, firstn_all, skipn_all, app_nil_l, <- hobs, <- hobs'.
-      reflexivity.
+  intros ds h os_t s t t' hsim _ hstep.
+  exact (hbw' ds h os_t s t t' hsim hstep).
 Qed.
 
 
@@ -362,36 +295,43 @@ Qed.
 
 Section TRACE_AS_HISTORY.
 
-Let current_hist {_ : History} (h : list (directive (L := Lt) * observation (L := Lt))) :=
+Let current_hist {_ : History}
+  (h : list (list (directive (L := Lt)) * list (observation (L := Lt)))) :=
   fold_left (fun h0 dobs => This h0 (fst dobs) (snd dobs)) h init_hist.
 Let sim_hist {_ : History} (sim : sim_t) h := sim (current_hist h).
 Let Tdir_hist {_ : History} (Tdir : Tdir_t) h := Tdir (current_hist h).
 Let Tobs_hist {_ : History} (Tobs : Tobs_t) h := Tobs (current_hist h).
+Let arity_hist {_ : History} (arity : arity_t) h := arity (current_hist h).
+Let oarity_hist {_ : History} (oarity : oarity_t) h := oarity (current_hist h).
 
 #[local]
 Instance TraceHist : History :=
   {|
-    history := list (directive (L := Lt) * observation (L := Lt));
+    history := list (list (directive (L := Lt)) * list (observation (L := Lt)));
     init_hist := [];
-    This := fun h d o => h ++ [(d, o)];
+    This := fun h ds os => h ++ [(ds, os)];
   |}.
 
 Lemma trace_as_history compile sync :
   has_bw_simulation compile sync ->
   forall p_s p_t,
     compile p_s p_t ->
-    exists sim Tdir Tobs,
+    exists sim Tdir Tobs arity oarity,
       initial_sim (hist := TraceHist) p_s p_t sync sim
-      /\ step_preserves_sim (hist := TraceHist) p_s p_t sim Tdir Tobs.
+      /\ step_preserves_sim (hist := TraceHist) p_s p_t sim Tdir Tobs arity oarity.
 Proof.
   intros hbw p_s p_t hcomp.
-  destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [hinit hbw']]]]].
-  exists (sim_hist sim), (Tdir_hist Tdir), (Tobs_hist Tobs).
+  destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [arity [oarity [hinit hbw']]]]]]].
+  exists (sim_hist sim), (Tdir_hist Tdir), (Tobs_hist Tobs),
+    (arity_hist arity), (oarity_hist oarity).
   split; [exact hinit|].
-  intros d h o_t s t t' hsim hstep_t.
-  destruct (hbw' _ _ _ _ _ _ hsim hstep_t) as [s' [os_s [hsem_s [hobs hsim']]]].
+  intros ds h os_t s t t' hsim hstep_t.
+  destruct (hbw' _ _ _ _ _ _ hsim hstep_t)
+    as [hlen [s' [os_s [hsem_s [holen [hobs hsim']]]]]].
+  split; [exact hlen|].
   exists s', os_s.
   split; [exact hsem_s|].
+  split; [exact holen|].
   split; [exact hobs|].
   unfold sim_hist, current_hist. simpl.
   rewrite fold_left_app. exact hsim'.
@@ -408,46 +348,45 @@ Definition safe_step_preserves_sim_lockstep_h
   (p_t : prog (L := Lt))
   {hist : History}
   (sim : sim_t)
-  (Tdir : history -> directive (L := Lt) -> directive (L := Ls))
-  (Tobs :
-    history ->
-    directive (L := Lt) ->
-    observation (L := Ls) ->
-    observation (L := Lt)) :
+  (Tdir : Tdir_t)
+  (Tobs : Tobs_t)
+  (arity : arity_t)
+  (oarity : oarity_t) :
   Prop :=
-  forall d h o_t s t t',
+  forall ds h os_t s t t',
     sim h s t ->
     sequential_safe p_s s ->
-    step p_t t d o_t t' ->
-    exists s' o_s,
-      step p_s s (Tdir h d) o_s s'
-      /\ o_t = Tobs h d o_s
-      /\ sim (This h d o_t) s' t'.
+    step p_t t ds os_t t' ->
+    length ds = arity h
+    /\ exists s' os_s,
+         step p_s s (Tdir h ds) os_s s'
+         /\ length os_s = oarity h ds
+         /\ os_t = Tobs h ds os_s
+         /\ sim (This h ds os_t) s' t'.
 
 Definition has_safe_lockstep_h_bw_simulation (compile : compiler) (sync : input_sync) :=
   forall p_s p_t,
     compile p_s p_t ->
-    exists (_ : History) sim Tdir Tobs,
+    exists (_ : History) sim Tdir Tobs arity oarity,
       initial_sim p_s p_t sync sim
-      /\ safe_step_preserves_sim_lockstep_h p_s p_t sim Tdir Tobs.
+      /\ safe_step_preserves_sim_lockstep_h p_s p_t sim Tdir Tobs arity oarity.
 
 Lemma lift_safe_lockstep_h compile sync :
   has_safe_lockstep_h_bw_simulation compile sync ->
   has_safe_bw_simulation compile sync.
 Proof.
   intros hbw p_s p_t hcomp.
-  destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [hinit hbw']]]]].
-  exists
-    hist,
-    sim,
-    (fun h d => [Tdir h d]),
-    (fun h d os => map (Tobs h d) os).
+  destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [arity [oarity [hinit hbw']]]]]]].
+  exists hist, sim, Tdir, Tobs, arity, oarity.
   split; [exact hinit|].
-  intros d h o_t s t t' hsim hsafe hstep_t.
-  destruct (hbw' _ _ _ _ _ _ hsim hsafe hstep_t) as [s' [o_s [hstep_s [-> hsim']]]].
-  exists s', [o_s].
+  intros ds h os_t s t t' hsim hsafe hstep_t.
+  destruct (hbw' _ _ _ _ _ _ hsim hsafe hstep_t)
+    as [hlen [s' [os_s [hstep_s [holen [hobs hsim']]]]]].
+  split; [exact hlen|].
+  exists s', os_s.
   split; [apply sem_step1; exact hstep_s|].
-  split; [reflexivity | exact hsim'].
+  split; [exact holen|].
+  split; [exact hobs | exact hsim'].
 Qed.
 
 
@@ -458,43 +397,52 @@ Definition step_preserves_sim_lockstep
   (p_s : prog (L := Ls))
   (p_t : prog (L := Lt))
   (sim : machine (L := Ls) -> machine (L := Lt) -> Prop)
-  (Tdir : directive (L := Lt) -> directive (L := Ls))
-  (Tobs : observation (L := Ls) -> observation (L := Lt)) :
+  (Tdir : list (directive (L := Lt)) -> list (directive (L := Ls)))
+  (Tobs : list (observation (L := Ls)) -> list (observation (L := Lt)))
+  (arity : nat)
+  (oarity : list (directive (L := Lt)) -> nat) :
   Prop :=
-  forall d o_t s t t',
+  forall ds os_t s t t',
     sim s t ->
-    step p_t t d o_t t' ->
-    exists s' o_s,
-      step p_s s (Tdir d) o_s s'
-      /\ o_t = Tobs o_s
-      /\ sim s' t'.
+    step p_t t ds os_t t' ->
+    length ds = arity
+    /\ exists s' os_s,
+         step p_s s (Tdir ds) os_s s'
+         /\ length os_s = oarity ds
+         /\ os_t = Tobs os_s
+         /\ sim s' t'.
 
 Definition has_lockstep_bw_simulation (compile : compiler) (sync : input_sync) :=
   forall p_s p_t,
     compile p_s p_t ->
-    exists sim Tdir Tobs,
+    exists sim Tdir Tobs arity oarity,
       (forall inp inp',
           sync p_s inp inp' ->
           sim (initial_machine p_s inp) (initial_machine p_t inp'))
-      /\ step_preserves_sim_lockstep p_s p_t sim Tdir Tobs.
+      /\ step_preserves_sim_lockstep p_s p_t sim Tdir Tobs arity oarity.
 
 Lemma lift_lockstep compile sync :
   has_lockstep_bw_simulation compile sync ->
   has_bw_simulation compile sync.
 Proof.
   intros hbw p_s p_t hcomp.
-  destruct (hbw p_s p_t hcomp) as [sim [Tdir [Tobs [hinit hbw']]]].
+  destruct (hbw p_s p_t hcomp) as [sim [Tdir [Tobs [arity [oarity [hinit hbw']]]]]].
   exists
     TraceHist,
     (fun _ => sim),
-    (fun _ d => [Tdir d]),
-    (fun _ _ os => map Tobs os).
+    (fun _ ds => Tdir ds),
+    (fun _ _ os => Tobs os),
+    (fun _ => arity),
+    (fun _ ds => oarity ds).
   split; [exact hinit|].
-  intros d h o_t s t t' hsim hstep_t.
-  destruct (hbw' _ _ _ _ _ hsim hstep_t) as [s' [o_s [hstep_s [-> hsim']]]].
-  exists s', [o_s].
+  intros ds h os_t s t t' hsim hstep_t.
+  destruct (hbw' _ _ _ _ _ hsim hstep_t)
+    as [hlen [s' [os_s [hstep_s [holen [hobs hsim']]]]]].
+  split; [exact hlen|].
+  exists s', os_s.
   split; [apply sem_step1; exact hstep_s|].
-  split; [reflexivity | exact hsim'].
+  split; [exact holen|].
+  split; [exact hobs | exact hsim'].
 Qed.
 
 End BACKWARD.
@@ -514,10 +462,10 @@ Record forward_lock_step_simulation_diagram : Prop :=
   { fls_init :
     forall inp, R (initial_machine p_s inp) (initial_machine p_t inp)
   ; fls_step :
-    forall d s o s' t,
+    forall ds s os s' t,
       R s t ->
-      step p_s s (Tdir d) o s' ->
-      exists2 t', step p_t t d (Tobs o) t' & R s' t'
+      step p_s s (map Tdir ds) os s' ->
+      exists2 t', step p_t t ds (map Tobs os) t' & R s' t'
   }.
 
 Context (diag: forward_lock_step_simulation_diagram).
@@ -529,20 +477,27 @@ Definition forward_semantics_preservation : Prop :=
 
 Lemma forward_lock_step_to_full_trace : forward_semantics_preservation.
 Proof.
-  intros inp ds.
+  intros inp ds os s' H.
+  unfold sem_p in *.
   pose proof (fls_init diag inp) as r.
   revert r.
-  unfold sem_p.
   generalize (initial_machine p_t inp) as t.
+  revert H.
   generalize (initial_machine p_s inp) as s.
-  clear inp.
-  induction ds as [|d ds ih]; intros s t r os s' H; apply semI in H.
-  - destruct H as [-> _].
-    exists t. apply sem_refl.
-  - destruct H as [o [os' [mi [-> [step_s sem_s]]]]].
+  intros s H.
+  remember (map Tdir ds) as D eqn:HD.
+  revert ds HD.
+  induction H as [s | s mi s'' D1 O1 D2 O2 step_s sem_s IH]; intros ds HD t r.
+  - exists t.
+    destruct ds as [|d ds]; [apply sem_refl | simpl in HD; discriminate HD].
+  - symmetry in HD.
+    apply map_eq_app in HD as [ds1 [ds2 [-> [HD1 HD2]]]].
+    rewrite <- HD1 in step_s.
     destruct (fls_step diag r step_s) as [t' step_t r'].
-    destruct (ih _ _ r' _ _ sem_s) as [tf exec_t].
-    exists tf. simpl. eapply sem_step; eassumption.
+    destruct (IH ds2 (eq_sym HD2) t' r') as [tf exec_t].
+    exists tf.
+    rewrite map_app.
+    eapply sem_step; eassumption.
 Qed.
 
 End FORWARD.
@@ -576,7 +531,7 @@ Definition is_sct (phi : relation input) (p : prog) : Prop :=
     phi inp1 inp2 ->
     sem_p p inp1 ds os1 out1 ->
     sem_p p inp2 ds os2 out2 ->
-    os1 = os2.
+    comparable os1 os2.
 
 End DEFINITION.
 
@@ -650,43 +605,55 @@ Lemma safe_step_preserves_sim_same_obs
   (sim : sim_t (Ls := Ls) (Lt := Lt))
   (Tdir : Tdir_t (Ls := Ls) (Lt := Lt))
   (Tobs : Tobs_t (Ls := Ls) (Lt := Lt))
+  (arity : arity_t (Lt := Lt))
+  (oarity : oarity_t (Lt := Lt))
   (phi : relation input)
   inp1 inp2 :
-  safe_step_preserves_sim p_s p_t sim Tdir Tobs ->
+  safe_step_preserves_sim p_s p_t sim Tdir Tobs arity oarity ->
   is_sct phi p_s ->
   phi inp1 inp2 ->
-  forall ds h D O1 O2 s1 s2 t1 t2 os1 os2 t1' t2',
-    sem_p p_s inp1 D O1 s1 ->
-    sem_p p_s inp2 D O2 s2 ->
+  forall ds h D O s1 s2 t1 t2 os1 os2 t1' t2',
+    sem_p p_s inp1 D O s1 ->
+    sem_p p_s inp2 D O s2 ->
     sequential_safe p_s s1 ->
     sequential_safe p_s s2 ->
     sim h s1 t1 ->
     sim h s2 t2 ->
     sem p_t t1 ds os1 t1' ->
     sem p_t t2 ds os2 t2' ->
-    os1 = os2.
+    comparable os1 os2.
 Proof.
-  intros hbw hsct hphi ds.
-  induction ds as [|d ds hind];
-    intros h D O1 O2 s1 s2 t1 t2 os1 os2 t1' t2'
-      hpre1 hpre2 hsafe1 hsafe2 hsim1 hsim2 hsem1 hsem2;
-    apply semI in hsem1; apply semI in hsem2.
-  - destruct hsem1 as [-> _], hsem2 as [-> _]. reflexivity.
-  - destruct hsem1 as [o1 [os1' [ti1 [-> [hstep1 hsem1]]]]].
-    destruct hsem2 as [o2 [os2' [ti2 [-> [hstep2 hsem2]]]]].
-    destruct (hbw _ _ _ _ _ _ hsim1 hsafe1 hstep1) as [s1' [os_s1 [hsem_s1 [hobs1 hsim1']]]].
-    destruct (hbw _ _ _ _ _ _ hsim2 hsafe2 hstep2) as [s2' [os_s2 [hsem_s2 [hobs2 hsim2']]]].
-    assert (O1 = O2) as <- by exact (hsct _ _ _ _ _ _ _ hphi hpre1 hpre2).
+  intros hbw hsct hphi ds h D O s1 s2 t1 t2 os1 os2 t1' t2'
+    hpre1 hpre2 hsafe1 hsafe2 hsim1 hsim2 hsem1.
+  revert h D O s1 s2 t2 os2 t2' hpre1 hpre2 hsafe1 hsafe2 hsim1 hsim2.
+  induction hsem1 as [t1 | t1 ti1 t1' ds1 os1 ds1' os1' hstep1 hsem1 IH];
+    intros h D O s1 s2 t2 os2 t2' hpre1 hpre2 hsafe1 hsafe2 hsim1 hsim2 hsem2.
+  - left. apply prefix_nil.
+  - destruct (semI hsem2)
+      as [[_ [-> _]] | [ds2 [os2a [ti2 [ds2' [os2b [Hds [-> [hstep2 hsem2']]]]]]]]].
+    { right. apply prefix_nil. }
+    destruct (hbw _ _ _ _ _ _ hsim1 hsafe1 hstep1)
+      as [hlen1 [s1' [os_s1 [hsem_s1 [holen1 [hobs1 hsim1']]]]]].
+    destruct (hbw _ _ _ _ _ _ hsim2 hsafe2 hstep2)
+      as [hlen2 [s2' [os_s2 [hsem_s2 [holen2 [hobs2 hsim2']]]]]].
+    assert (ds1 = ds2) as <-.
+    { destruct (app_eq_prefix Hds) as [hp | hp].
+      - apply prefix_same_length; [exact hp | congruence].
+      - symmetry. apply prefix_same_length; [exact hp | congruence]. }
+    apply app_inv_head in Hds. subst ds2'.
     assert (os_s1 = os_s2) as <-.
-    { apply (app_inv_head O1).
-      exact (hsct _ _ _ _ _ _ _ hphi (sem_cat hpre1 hsem_s1) (sem_cat hpre2 hsem_s2)). }
-    assert (o1 = o2) as <- by congruence.
-    f_equal.
-    exact (hind (This h d o1) (D ++ Tdir h d) (O1 ++ os_s1) (O1 ++ os_s1)
-             s1' s2' ti1 ti2 os1' os2' t1' t2'
-             (sem_cat hpre1 hsem_s1) (sem_cat hpre2 hsem_s2)
-             (sequential_safe_sem hsafe1 hsem_s1) (sequential_safe_sem hsafe2 hsem_s2)
-             hsim1' hsim2' hsem1 hsem2).
+    { destruct (hsct _ _ _ _ _ _ _ hphi (sem_cat hpre1 hsem_s1) (sem_cat hpre2 hsem_s2))
+        as [hp | hp];
+        apply (proj1 prefix_append_front) in hp.
+      - apply prefix_same_length; [exact hp | congruence].
+      - symmetry. apply prefix_same_length; [exact hp | congruence]. }
+    assert (os1 = os2a) as <- by congruence.
+    destruct (IH (This h ds1 os1) (D ++ Tdir h ds1) (O ++ os_s1) s1' s2' ti2 os2b t2'
+                (sem_cat hpre1 hsem_s1) (sem_cat hpre2 hsem_s2)
+                (sequential_safe_sem hsafe1 hsem_s1) (sequential_safe_sem hsafe2 hsem_s2)
+                hsim1' hsim2' hsem2')
+      as [hp | hp];
+      [left | right]; exact (proj2 prefix_append_front hp).
 Qed.
 
 Lemma has_safe_bw_simulation_preserves_sct phi :
@@ -695,7 +662,7 @@ Lemma has_safe_bw_simulation_preserves_sct phi :
 Proof.
   intros hbw p_s p_t hcomp hsafe hsct ds os1 os2 inp1' inp2' out1 out2
     [inp1 [inp2 [hphi [hsync1 hsync2]]]] hsem_t1 hsem_t2.
-  destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [hinit hbw']]]]].
+  destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [arity [oarity [hinit hbw']]]]]]].
   destruct (hsafe _ _ hphi) as [hsafe1 hsafe2].
   exact (safe_step_preserves_sim_same_obs hbw' hsct hphi
            (sem_refl _ _) (sem_refl _ _) hsafe1 hsafe2
@@ -773,7 +740,7 @@ Section OBSERVATIONAL_EQUIVALENCE.
     forall ds os1 os2 out1 out2,
       sem_p p inp1 ds os1 out1 ->
       sem_p p inp2 ds os2 out2 ->
-      (Utils.prefix os1 os2) \/ (Utils.prefix os2 os1).
+      comparable os1 os2.
 
 End OBSERVATIONAL_EQUIVALENCE.
 
@@ -781,29 +748,17 @@ End OBSERVATIONAL_EQUIVALENCE.
 Lemma is_sct_same_obs {input : Type} {L : Language input} (phi : relation input) (p : prog (L := L)) (inp1 inp2 : input):
   is_sct phi p -> phi inp1 inp2 -> same_obs p inp1 inp2.
 Proof.
-  intros Hsct Hphi.
-  unfold is_sct in Hsct.
-  unfold same_obs.
-  intros ds os1 os2 out1 out2 Hsem1 Hsem2.
-  specialize (Hsct ds os1 os2 inp1 inp2 out1 out2 Hphi Hsem1 Hsem2).
-  left.
-  rewrite Hsct.
-  apply prefix_refl.
+  intros Hsct Hphi ds os1 os2 out1 out2 Hsem1 Hsem2.
+  exact (Hsct ds os1 os2 inp1 inp2 out1 out2 Hphi Hsem1 Hsem2).
 Qed.
 
-(* --- same observations on inp1 and inp2 imply phi-SCT on exactly this inputs, hacky but ok *)
+(* --- same observations on inp1 and inp2 imply phi-SCT on exactly this inputs *)
 Lemma same_obs_is_sct {input : Type} {L : Language input} (p : prog (L := L)) inp1 inp2 :
   same_obs p inp1 inp2 ->
   is_sct (fun a b => a = inp1 /\ b = inp2) p.
 Proof.
-  intros Hso ds os1 os2 a b out1 out2 Hsameobs Hsem1 Hsem2.
-  pose proof (size_obs Hsem1) as Hlen1.
-  pose proof (size_obs Hsem2) as Hlen2.
-  rewrite Hlen1 in Hlen2.
-  destruct Hsameobs as [Ha Hb]; subst.
-  destruct (Hso _ _ _ _ _ Hsem1 Hsem2) as [Hpre | Hpre].
-  - apply prefix_same_length; [exact Hpre | congruence].
-  - symmetry. apply prefix_same_length; [exact Hpre | congruence].
+  intros Hso ds os1 os2 a b out1 out2 [-> ->] Hsem1 Hsem2.
+  exact (Hso _ _ _ _ _ Hsem1 Hsem2).
 Qed.
 
 Section RELATIVE_SECURITY.
@@ -838,7 +793,7 @@ Section SCT_PRESERVATION_RELSEC.
     relative_secure compile sync p_s p_t inp1 inp2.
   Proof.
     intros Hphisct Hsafe1 Hsafe2 inp1' inp2' Hsameobs Hsync1 Hsync2 Hcompile.
-    apply (is_sct_same_obs 
+    apply (is_sct_same_obs
             (phi := sync_rel sync p_s (fun a b => a = inp1 /\ b = inp2))).
     - apply (Hphisct _ p_s p_t Hcompile).
       + intros a b [-> ->]. split.
