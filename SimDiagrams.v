@@ -201,7 +201,7 @@ Class History :=
   {
     history : Type;
     init_hist : history;
-    This : history -> directive (L := Lt) -> history;
+    This : history -> directive (L := Lt) -> observation (L := Lt) -> history;
   }.
 
 Definition sim_t {hist : History} := Eval hnf in sim_t0 history.
@@ -223,7 +223,7 @@ Definition safe_step_preserves_sim
     exists s' os_s,
       sem p_s s (Tdir h d) os_s s'
       /\ [o_t] = Tobs h d os_s
-      /\ sim (This h d) s' t'.
+      /\ sim (This h d o_t) s' t'.
 
 Definition initial_sim
   (p_s : prog (L := Ls))
@@ -261,7 +261,7 @@ Definition step_preserves_sim
     exists s' os_s,
       sem p_s s (Tdir h d) os_s s'
       /\ [o_t] = Tobs h d os_s
-      /\ sim (This h d) s' t'.
+      /\ sim (This h d o_t) s' t'.
 
 Definition has_bw_simulation (compile : compiler) (sync : input_sync) :=
   forall p_s p_t,
@@ -296,23 +296,25 @@ Section TRANSFORMERS.
 
   Fixpoint Tdir_sem
     (h : history)
-    (ds : list (directive (L := Lt))) :
+    (ds : list (directive (L := Lt)))
+    (os_t : list (observation (L := Lt))) :
     list (directive (L := Ls)) :=
-    match ds with
-    | [] => []
-    | d :: ds => Tdir h d ++ Tdir_sem (This h d) ds
+    match ds, os_t with
+    | d :: ds, o :: os_t => Tdir h d ++ Tdir_sem (This h d o) ds os_t
+    | _, _ => []
     end.
 
   Fixpoint Tobs_sem
     (h : history)
     (ds : list (directive (L := Lt)))
+    (os_t : list (observation (L := Lt)))
     (os_s : list (observation (L := Ls))) :
     list (observation (L := Lt)) :=
-    match ds with
-    | [] => []
-    | d :: ds =>
+    match ds, os_t with
+    | d :: ds, o :: os_t =>
         let n := length (Tdir h d) in
-        Tobs h d (firstn n os_s) ++ Tobs_sem (This h d) ds (skipn n os_s)
+        Tobs h d (firstn n os_s) ++ Tobs_sem (This h d o) ds os_t (skipn n os_s)
+    | _, _ => []
     end.
 
 End TRANSFORMERS.
@@ -331,8 +333,8 @@ Definition safe_sem_preserves_sim
     sequential_safe p_s s ->
     sem p_t t ds os_t t' ->
     exists s' os_s,
-      sem p_s s (Tdir_sem Tdir h ds) os_s s'
-      /\ os_t = Tobs_sem Tdir Tobs h ds os_s.
+      sem p_s s (Tdir_sem Tdir h ds os_t) os_s s'
+      /\ os_t = Tobs_sem Tdir Tobs h ds os_t os_s.
 
 Lemma lift_step_preserves_sim p_s p_t {_ : History} sim Tdir Tobs :
   safe_step_preserves_sim p_s p_t sim Tdir Tobs ->
@@ -346,40 +348,41 @@ Proof.
   - destruct hsem as [o_t [os_t' [ti [-> [hstep hsem]]]]].
     destruct (hbw _ _ _ _ _ _ hsim hsafe hstep) as [s' [os_s [hsem_s [hobs hsim']]]].
     pose proof (sequential_safe_sem hsafe hsem_s) as hsafe'.
-    destruct (hind _ _ _ _ _ hsim' hsafe' hsem) as [s'' [os_s' [hsem_s' ->]]].
+    destruct (hind _ _ _ _ _ hsim' hsafe' hsem) as [s'' [os_s' [hsem_s' hobs']]].
     exists s'', (os_s ++ os_s'). simpl. split.
     + eapply sem_cat; eassumption.
     + rewrite (size_obs hsem_s), firstn_app, skipn_app, Nat.sub_diag,
-        firstn_O, skipn_O, app_nil_r, firstn_all, skipn_all, <- hobs.
+        firstn_O, skipn_O, app_nil_r, firstn_all, skipn_all, app_nil_l, <- hobs, <- hobs'.
       reflexivity.
 Qed.
 
 
 (* -------------------------------------------------------------------------- *)
-(* Using directives as history suffices. *)
+(* Using directives and observations as history suffices. *)
 
-Section DIRECTIVES_AS_HISTORY.
+Section TRACE_AS_HISTORY.
 
-Let current_hist {_ : History} h := fold_left This h init_hist.
+Let current_hist {_ : History} (h : list (directive (L := Lt) * observation (L := Lt))) :=
+  fold_left (fun h0 dobs => This h0 (fst dobs) (snd dobs)) h init_hist.
 Let sim_hist {_ : History} (sim : sim_t) h := sim (current_hist h).
 Let Tdir_hist {_ : History} (Tdir : Tdir_t) h := Tdir (current_hist h).
 Let Tobs_hist {_ : History} (Tobs : Tobs_t) h := Tobs (current_hist h).
 
 #[local]
-Instance DirectivesHist : History :=
+Instance TraceHist : History :=
   {|
-    history := list (directive (L := Lt));
+    history := list (directive (L := Lt) * observation (L := Lt));
     init_hist := [];
-    This := fun h d => h ++ [d];
+    This := fun h d o => h ++ [(d, o)];
   |}.
 
-Lemma directives_as_history compile sync :
+Lemma trace_as_history compile sync :
   has_bw_simulation compile sync ->
   forall p_s p_t,
     compile p_s p_t ->
     exists sim Tdir Tobs,
-      initial_sim (hist := DirectivesHist) p_s p_t sync sim
-      /\ step_preserves_sim (hist := DirectivesHist) p_s p_t sim Tdir Tobs.
+      initial_sim (hist := TraceHist) p_s p_t sync sim
+      /\ step_preserves_sim (hist := TraceHist) p_s p_t sim Tdir Tobs.
 Proof.
   intros hbw p_s p_t hcomp.
   destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [hinit hbw']]]]].
@@ -394,7 +397,7 @@ Proof.
   rewrite fold_left_app. exact hsim'.
 Qed.
 
-End DIRECTIVES_AS_HISTORY.
+End TRACE_AS_HISTORY.
 
 
 (* -------------------------------------------------------------------------- *)
@@ -419,7 +422,7 @@ Definition safe_step_preserves_sim_lockstep_h
     exists s' o_s,
       step p_s s (Tdir h d) o_s s'
       /\ o_t = Tobs h d o_s
-      /\ sim (This h d) s' t'.
+      /\ sim (This h d o_t) s' t'.
 
 Definition has_safe_lockstep_h_bw_simulation (compile : compiler) (sync : input_sync) :=
   forall p_s p_t,
@@ -482,7 +485,7 @@ Proof.
   intros hbw p_s p_t hcomp.
   destruct (hbw p_s p_t hcomp) as [sim [Tdir [Tobs [hinit hbw']]]].
   exists
-    DirectivesHist,
+    TraceHist,
     (fun _ => sim),
     (fun _ d => [Tdir d]),
     (fun _ _ os => map Tobs os).
@@ -640,6 +643,52 @@ Definition preserves_sct (phi : relation input) : Prop :=
     is_sct phi p_s ->
     is_sct (sync_rel p_s phi) p_t.
 
+Lemma safe_step_preserves_sim_same_obs
+  (p_s : prog (L := Ls))
+  (p_t : prog (L := Lt))
+  {hist : History (Lt := Lt)}
+  (sim : sim_t (Ls := Ls) (Lt := Lt))
+  (Tdir : Tdir_t (Ls := Ls) (Lt := Lt))
+  (Tobs : Tobs_t (Ls := Ls) (Lt := Lt))
+  (phi : relation input)
+  inp1 inp2 :
+  safe_step_preserves_sim p_s p_t sim Tdir Tobs ->
+  is_sct phi p_s ->
+  phi inp1 inp2 ->
+  forall ds h D O1 O2 s1 s2 t1 t2 os1 os2 t1' t2',
+    sem_p p_s inp1 D O1 s1 ->
+    sem_p p_s inp2 D O2 s2 ->
+    sequential_safe p_s s1 ->
+    sequential_safe p_s s2 ->
+    sim h s1 t1 ->
+    sim h s2 t2 ->
+    sem p_t t1 ds os1 t1' ->
+    sem p_t t2 ds os2 t2' ->
+    os1 = os2.
+Proof.
+  intros hbw hsct hphi ds.
+  induction ds as [|d ds hind];
+    intros h D O1 O2 s1 s2 t1 t2 os1 os2 t1' t2'
+      hpre1 hpre2 hsafe1 hsafe2 hsim1 hsim2 hsem1 hsem2;
+    apply semI in hsem1; apply semI in hsem2.
+  - destruct hsem1 as [-> _], hsem2 as [-> _]. reflexivity.
+  - destruct hsem1 as [o1 [os1' [ti1 [-> [hstep1 hsem1]]]]].
+    destruct hsem2 as [o2 [os2' [ti2 [-> [hstep2 hsem2]]]]].
+    destruct (hbw _ _ _ _ _ _ hsim1 hsafe1 hstep1) as [s1' [os_s1 [hsem_s1 [hobs1 hsim1']]]].
+    destruct (hbw _ _ _ _ _ _ hsim2 hsafe2 hstep2) as [s2' [os_s2 [hsem_s2 [hobs2 hsim2']]]].
+    assert (O1 = O2) as <- by exact (hsct _ _ _ _ _ _ _ hphi hpre1 hpre2).
+    assert (os_s1 = os_s2) as <-.
+    { apply (app_inv_head O1).
+      exact (hsct _ _ _ _ _ _ _ hphi (sem_cat hpre1 hsem_s1) (sem_cat hpre2 hsem_s2)). }
+    assert (o1 = o2) as <- by congruence.
+    f_equal.
+    exact (hind (This h d o1) (D ++ Tdir h d) (O1 ++ os_s1) (O1 ++ os_s1)
+             s1' s2' ti1 ti2 os1' os2' t1' t2'
+             (sem_cat hpre1 hsem_s1) (sem_cat hpre2 hsem_s2)
+             (sequential_safe_sem hsafe1 hsem_s1) (sequential_safe_sem hsafe2 hsem_s2)
+             hsim1' hsim2' hsem1 hsem2).
+Qed.
+
 Lemma has_safe_bw_simulation_preserves_sct phi :
   has_safe_bw_simulation compile sync ->
   preserves_sct phi.
@@ -647,12 +696,10 @@ Proof.
   intros hbw p_s p_t hcomp hsafe hsct ds os1 os2 inp1' inp2' out1 out2
     [inp1 [inp2 [hphi [hsync1 hsync2]]]] hsem_t1 hsem_t2.
   destruct (hbw p_s p_t hcomp) as [hist [sim [Tdir [Tobs [hinit hbw']]]]].
-  pose proof (lift_step_preserves_sim hbw') as hsem.
   destruct (hsafe _ _ hphi) as [hsafe1 hsafe2].
-  destruct (hsem _ _ _ _ _ _ (hinit _ _ hsync1) hsafe1 hsem_t1) as [s1' [os_s1 [hsem_s1 ->]]].
-  destruct (hsem _ _ _ _ _ _ (hinit _ _ hsync2) hsafe2 hsem_t2) as [s2' [os_s2 [hsem_s2 ->]]].
-  rewrite (hsct _ _ _ _ _ _ _ hphi hsem_s1 hsem_s2).
-  reflexivity.
+  exact (safe_step_preserves_sim_same_obs hbw' hsct hphi
+           (sem_refl _ _) (sem_refl _ _) hsafe1 hsafe2
+           (hinit _ _ hsync1) (hinit _ _ hsync2) hsem_t1 hsem_t2).
 Qed.
 
 End PRESERVATION.
