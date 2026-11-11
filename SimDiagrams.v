@@ -188,6 +188,7 @@ Class History :=
     This :
       history ->
       list (directive (L := Lt)) ->
+      (* We need observation to read information not present in the directive (like current stack pointer) *)
       list (observation (L := Lt)) ->
       history;
   }.
