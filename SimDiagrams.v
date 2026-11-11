@@ -523,30 +523,13 @@ Section OBSERVATIONAL_EQUIVALENCE.
     {L : Language input}
   .
 
-  Definition same_obs (p : prog) (inp1 inp2 : input) :=
+  Definition same_obs (p : prog) (inp1 inp2 : input) : Prop :=
     forall ds os1 os2 out1 out2,
       sem_p p inp1 ds os1 out1 ->
       sem_p p inp2 ds os2 out2 ->
       comparable os1 os2.
 
 End OBSERVATIONAL_EQUIVALENCE.
-
-(* --- phi-SCT inputs imply same observations, easy *)
-Lemma is_sct_same_obs {input : Type} {L : Language input} (phi : relation input) (p : prog (L := L)) (inp1 inp2 : input):
-  is_sct phi p -> phi inp1 inp2 -> same_obs p inp1 inp2.
-Proof.
-  intros Hsct Hphi ds os1 os2 out1 out2 Hsem1 Hsem2.
-  exact (Hsct ds os1 os2 inp1 inp2 out1 out2 Hphi Hsem1 Hsem2).
-Qed.
-
-(* --- same observations on inp1 and inp2 imply phi-SCT on exactly this inputs *)
-Lemma same_obs_is_sct {input : Type} {L : Language input} (p : prog (L := L)) inp1 inp2 :
-  same_obs p inp1 inp2 ->
-  is_sct (fun a b => a = inp1 /\ b = inp2) p.
-Proof.
-  intros Hso ds os1 os2 a b out1 out2 [-> ->] Hsem1 Hsem2.
-  exact (Hso _ _ _ _ _ Hsem1 Hsem2).
-Qed.
 
 Section RELATIVE_SECURITY.
   Context
@@ -565,7 +548,7 @@ Section RELATIVE_SECURITY.
       same_obs p_t inp1' inp2'.
 End RELATIVE_SECURITY.
 
-Section SCT_PRESERVATION_RELSEC.
+Section OBS_EQ_WITH_BACKWARDS_IMPLIES_RELSEC.
   Context
     {input : Type}
     {Ls Lt : Language input}
@@ -573,20 +556,72 @@ Section SCT_PRESERVATION_RELSEC.
     (sync : input_sync (Ls := Ls))
   .
 
-  Lemma preserves_sct_relsec p_s p_t inp1 inp2 :
-    (forall phi, preserves_sct compile sync phi) ->
+  Lemma safe_step_preserves_sim_same_obs
+  (p_s : prog (L := Ls))
+  (p_t : prog (L := Lt))
+  {hist : History (Lt := Lt)}
+  (sim : sim_t (Ls := Ls) (Lt := Lt))
+  (Tdir : Tdir_t (Ls := Ls) (Lt := Lt))
+  (Tobs : Tobs_t (Ls := Ls) (Lt := Lt))
+  (arity : arity_t (Lt := Lt))
+  (oarity : oarity_t (Lt := Lt))
+  inp1 inp2 :
+  safe_step_preserves_sim p_s p_t sim Tdir Tobs arity oarity ->
+  same_obs p_s inp1 inp2 ->
+  forall ds h D O s1 s2 t1 t2 os1 os2 t1' t2',
+    sem_p p_s inp1 D O s1 ->
+    sem_p p_s inp2 D O s2 ->
+    sequential_safe p_s s1 ->
+    sequential_safe p_s s2 ->
+    sim h s1 t1 ->
+    sim h s2 t2 ->
+    sem p_t t1 ds os1 t1' ->
+    sem p_t t2 ds os2 t2' ->
+    comparable os1 os2.
+  Proof.
+    intros hbw hsameobs ds h D O s1 s2 t1 t2 os1 os2 t1' t2'
+      hpre1 hpre2 hsafe1 hsafe2 hsim1 hsim2 hsem1.
+    revert h D O s1 s2 t2 os2 t2' hpre1 hpre2 hsafe1 hsafe2 hsim1 hsim2.
+    induction hsem1 as [t1 | t1 ti1 t1' ds1 os1 ds1' os1' hstep1 hsem1 IH];
+      intros h D O s1 s2 t2 os2 t2' hpre1 hpre2 hsafe1 hsafe2 hsim1 hsim2 hsem2.
+    - left. apply prefix_nil.
+    - destruct (semI hsem2)
+        as [[_ [-> _]] | [ds2 [os2a [ti2 [ds2' [os2b [Hds [-> [hstep2 hsem2']]]]]]]]].
+      { right. apply prefix_nil. }
+      destruct (hbw _ _ _ _ _ _ hsim1 hsafe1 hstep1)
+        as [hlen1 [s1' [os_s1 [hsem_s1 [holen1 [hobs1 hsim1']]]]]].
+      destruct (hbw _ _ _ _ _ _ hsim2 hsafe2 hstep2)
+        as [hlen2 [s2' [os_s2 [hsem_s2 [holen2 [hobs2 hsim2']]]]]].
+      assert (ds1 = ds2) as <-.
+      { destruct (app_eq_prefix Hds) as [hp | hp].
+        - apply prefix_same_length; [exact hp | congruence].
+        - symmetry. apply prefix_same_length; [exact hp | congruence]. }
+      apply app_inv_head in Hds. subst ds2'.
+      assert (os_s1 = os_s2) as <-.
+      { destruct (hsameobs _ _ _ _ _ (sem_cat hpre1 hsem_s1) (sem_cat hpre2 hsem_s2))
+          as [hp | hp]; apply (proj1 prefix_append_front) in hp.
+        - apply prefix_same_length; [exact hp | congruence].
+        - symmetry. apply prefix_same_length; [exact hp | congruence]. }
+      assert (os1 = os2a) as <- by congruence.
+      destruct (IH (This h ds1 os1) (D ++ Tdir h ds1) (O ++ os_s1) s1' s2' ti2 os2b t2'
+                  (sem_cat hpre1 hsem_s1) (sem_cat hpre2 hsem_s2)
+                  (sequential_safe_sem hsafe1 hsem_s1) (sequential_safe_sem hsafe2 hsem_s2)
+                  hsim1' hsim2' hsem2')
+        as [hp | hp];
+        [left | right]; exact (proj2 prefix_append_front hp).
+  Qed.
+
+  Lemma obs_eq_safe_bw_relsec p_s p_t inp1 inp2 :
+    has_safe_bw_simulation compile sync ->
     sequential_safe p_s (initial_machine p_s inp1) ->
     sequential_safe p_s (initial_machine p_s inp2) ->
     relative_secure compile sync p_s p_t inp1 inp2.
   Proof.
-    intros Hphisct Hsafe1 Hsafe2 inp1' inp2' Hsameobs Hsync1 Hsync2 Hcompile.
-    apply (is_sct_same_obs
-            (phi := sync_rel sync p_s (fun a b => a = inp1 /\ b = inp2))).
-    - apply (Hphisct _ p_s p_t Hcompile).
-      + intros a b [-> ->]. split.
-        * apply Hsafe1.
-        * apply Hsafe2.
-      + exact (same_obs_is_sct Hsameobs).
-    - exists inp1, inp2. auto.
+    intros Hbw Hsafe1 Hsafe2 inp1' inp2' Hsameobs Hsync1 Hsync2 Hcompile ds os1 os2 out1 out2 Hsem_t1 Hsem_t2.
+    destruct (Hbw p_s p_t Hcompile) as [hist [sim [Tdir [Tobs [arity [oarity [hinit hbw']]]]]]].
+    exact (safe_step_preserves_sim_same_obs hbw' Hsameobs
+            (sem_refl _ _) (sem_refl _ _) Hsafe1 Hsafe2
+            (hinit _ _ Hsync1) (hinit _ _ Hsync2) Hsem_t1 Hsem_t2).
   Qed.
-End SCT_PRESERVATION_RELSEC.
+    
+End OBS_EQ_WITH_BACKWARDS_IMPLIES_RELSEC.
