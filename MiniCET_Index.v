@@ -748,8 +748,30 @@ Instance SeqLang : SimDiagrams.Language input :=
     SimDiagrams.sequential_safe1 := safe_imm_seq;
   |}.
 
-Notation "p |- <(( c ))> -->*^ os <(( ct ))>" := 
-  (fun p c os ct => sem (L := SeqLang) p c _ os ct).
+Notation "p |- <(( c ))> -->*^ os <(( ct ))>" :=
+  (sem (L := SeqLang) p c [] os ct).
+
+Lemma multi_seq_cons p c1 c2 c3 os1 os2 :
+  p |- <(( c1 ))> -->^ os1 <(( c2 ))> ->
+  p |- <(( c2 ))> -->*^ os2 <(( c3 ))> ->
+  p |- <(( c1 ))> -->*^ os1 ++ os2 <(( c3 ))>.
+Proof. intros H1 H2. exact (sem_step (L := SeqLang) (ds1 := []) (ds2 := []) H1 H2). Qed.
+
+Lemma multi_seq_ind p (P : state cfg -> obs -> state cfg -> Prop)
+  (REFL: forall c, P c [] c)
+  (STEP: forall c1 c2 c3 os1 os2,
+      p |- <(( c1 ))> -->^ os1 <(( c2 ))> ->
+      p |- <(( c2 ))> -->*^ os2 <(( c3 ))> ->
+      P c2 os2 c3 ->
+      P c1 (os1 ++ os2) c3) :
+  forall c os c', p |- <(( c ))> -->*^ os <(( c' ))> -> P c os c'.
+Proof.
+  intros c os c' H.
+  remember (@nil (SimDiagrams.directive (L := SeqLang))) as ds eqn:Hds.
+  induction H as [c | c1 c2 c3 ds1 os1 ds2 os2 Hs Hr IH]; [apply REFL|].
+  destruct ds1; [|discriminate]. simpl in Hds. subst ds2.
+  eapply STEP; [exact Hs | exact Hr | auto].
+Qed.
 
 (* -------------------------------------------------------------------------- *)
 (* Ideal semantics. *)
@@ -769,8 +791,8 @@ Instance IdealLang : SimDiagrams.Language input :=
     SimDiagrams.sequential_safe1 := safe_imm_ideal;
   |}.
 
-Notation "p '|-' '<((' ic '))>' '-->i*_' ds '^^' os '<((' ict '))>'" :=
-  (fun p ic ds os ict => sem (L := IdealLang) p ic ds os ict).
+Notation "p |- <(( ic ))> -->i*_ ds ^^ os <(( ict ))>" :=
+  (sem (L := IdealLang) p ic ds os ict).
 
 (* -------------------------------------------------------------------------- *)
 (* Speculative semantics. *)
@@ -793,7 +815,7 @@ Instance SpecLang : SimDiagrams.Language input :=
 
 
 Notation "p |- <(( sc ))> -->*_ ds ^^ os <(( sct ))>" :=
-  (fun p sc ds os n sct => sem (L := SpecLang) p sc ds os sct).
+  (sem (L := SpecLang) p sc ds os sct).
 
 (* -------------------------------------------------------------------------- *)
 (* USLH as a compiler from the ideal to the speculative semantics. *)
@@ -807,25 +829,6 @@ Definition uslh_compiler : SimDiagrams.compiler (Ls := IdealLang) (Lt := SpecLan
     /\ unused_prog callee p_s.
 
 (* -------------------------------------------------------------------------- *)
-
-Lemma multi_spec_splitting p sc ds os n sct m
-    (LEN: n >= m)
-    (STEPS: p |- <(( sc ))> -->*_ ds ^^ os ^^ n <(( sct ))>) :
-  exists scm ds1 ds2 os1 os2,
-    p |- <(( sc ))> -->*_ ds1 ^^ os1 ^^ m <(( scm ))>
-  /\ p |- <(( scm ))> -->*_ ds2 ^^ os2 ^^ (n - m) <(( sct ))>
-  /\ ds = ds1 ++ ds2 /\ os = os1 ++ os2.
-Proof.
-  ginduction m; ii.
-  - esplits; try econs. rewrite sub_0_r. auto.
-  - destruct n as [|n]; try lia. inv STEPS.
-    exploit IHm; try eapply H5; eauto; [lia|]. i. des.
-    replace (S n - S m) with (n - m) by lia.
-    esplits; eauto.
-    { econs; eauto. }
-    { subst. rewrite app_assoc. auto. }
-    { subst. rewrite app_assoc. auto. }
-Qed.
 
 Lemma rev_fetch : forall (p: prog) (pc: cptr) (blk: list inst * bool) (i: inst),
   nth_error p (fst pc) = Some blk ->
