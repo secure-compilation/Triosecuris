@@ -80,19 +80,8 @@ Inductive seq_eval_small_step_inst (p: prog) :
   where "p '|-' '<((' c '))>' '-->^' os '<((' ct '))>'" :=
       (seq_eval_small_step_inst p c ct os).
 
-Reserved Notation
-  "p '|-' '<((' c '))>' '-->*^' os '<((' ct '))>'"
+Reserved Notation "p '|-' '<((' c '))>' '-->*^' os '<((' ct '))>'"
       (at level 40, c constr, ct constr).
-
-Inductive multi_seq_inst (p : prog) (c : @state cfg) : @state cfg -> obs -> Prop :=
-  | multi_seq_inst_refl : p |- <(( c ))> -->*^[] <(( c ))>
-  | multi_seq_inst_trans (c' c'' : @state cfg) (os1 os2 : obs) :
-      p |- <(( c ))> -->^os1 <(( c' ))> ->
-      p |- <(( c' ))> -->*^os2 <(( c'' ))> ->
-      p |- <(( c ))> -->*^(os1 ++ os2) <(( c'' ))>
-
-  where "p |- <(( c ))> -->*^ os <(( ct ))>" :=
-      (multi_seq_inst p c ct os).
 
 Definition wf_ret (p: prog) (pc: cptr) : Prop :=
   let '(l, o) := pc in
@@ -254,19 +243,8 @@ Inductive spec_eval_small_step (p:prog):
     (spec_eval_small_step p sc sct ds os).
 
 Reserved Notation
-  "p '|-' '<((' sc '))>' '-->*_' ds '^^' os '^^' n '<((' sct '))>'"
+  "p '|-' '<((' sc '))>' '-->*_' ds '^^' os '<((' sct '))>'"
   (at level 40, sc constr, sct constr).
-
-Inductive multi_spec_inst (p:prog) :
-  @state spec_cfg -> @state spec_cfg -> dirs -> obs -> nat -> Prop :=
-  |multi_spec_inst_refl sc : p |- <(( sc ))> -->*_[]^^[]^^0 <(( sc ))>
-  |multi_spec_inst_trans sc1 sc2 sc3 ds1 ds2 os1 os2 n :
-      p |- <(( sc1 ))> -->_ds1^^os1 <(( sc2 ))> ->
-      p |- <(( sc2 ))> -->*_ds2^^os2^^n <(( sc3 ))> ->
-      p |- <(( sc1 ))> -->*_(ds1++ds2)^^(os1++os2)^^(S n) <(( sc3 ))>
-
-  where "p |- <(( sc ))> -->*_ ds ^^ os ^^ n <(( sct ))>" :=
-    (multi_spec_inst p sc sct ds os n).
 
 Definition mirrors (m : mem) (sb : spec_mem) : Prop :=
   forall n v, nth_error m.(memory) n = Some v -> sb ! n = v.
@@ -433,16 +411,6 @@ Qed.
 Reserved Notation
   "p '|-' '<((' ic '))>' '-->i*_' ds '^^' os '<((' ict '))>'"
   (at level 40, ic constr, ict constr).
-
-Inductive multi_ideal_inst (p:prog) :
-  @state ideal_cfg -> @state ideal_cfg -> dirs -> obs -> Prop :=
-  | multi_ideal_inst_refl ic : p |- <(( ic ))> -->i*_[]^^[] <(( ic ))>
-  | multi_ideal_inst_trans ic1 ic2 ic3 ds1 ds2 os1 os2 :
-      p |- <(( ic1 ))> -->i_ds1^^os1 <(( ic2 ))> ->
-      p |- <(( ic2 ))> -->i*_ds2^^os2 <(( ic3 ))> ->
-      p |- <(( ic1 ))> -->i*_(ds1++ds2)^^(os1++os2) <(( ic3 ))>
-  where "p |- <(( ic ))> -->i*_ ds ^^ os <(( ict ))>" :=
-    (multi_ideal_inst p ic ict ds os).
 
 Definition msf_lookup_sc (sc: spec_cfg) : val :=
   let '(c, ct, ms) := sc in
@@ -734,6 +702,111 @@ Lemma wf_ds_app p ds1 ds2
     (WF: wf_ds' p (ds1 ++ ds2)) :
   wf_ds' p ds1 /\ wf_ds' p ds2.
 Proof. eapply Forall_app. eauto. Qed.
+
+(* -------------------------------------------------------------------------- *)
+(* Immediate safety *)
+Definition safe_imm_seq (p: prog) (st: state cfg) : Prop :=
+  match st with
+  | S_Running c => exists os stt, p |- <(( S_Running c ))> -->^ os <(( stt ))>
+  | S_Fault | S_Term => True
+  | S_Undef => False
+  end.
+
+Definition safe_imm_ideal (p: prog) (st: state ideal_cfg) : Prop :=
+  match st with
+  | S_Running sc => exists ds os stt, p |- <(( S_Running sc ))> -->i_ ds ^^ os  <(( stt ))>
+  | S_Fault | S_Term => True
+  | S_Undef => False
+  end.
+
+Definition safe_imm_spec (p: prog) (st: state spec_cfg) : Prop :=
+  match st with
+  | S_Running sc => exists ds os stt, p |- <(( S_Running sc ))> -->_ ds ^^ os  <(( stt ))>
+  | S_Fault | S_Term => True
+  | S_Undef => False
+  end.
+
+(*--------- End Safety ----------- *)
+
+Definition input : Type := reg * mem.
+
+(* -------------------------------------------------------------------------- *)
+(* Sequential semantics. *)
+
+Definition seq_initial (p : prog) (inp : input) : state cfg :=
+  let '(r, m) := inp in S_Running ((0, 0), r, m).
+
+#[local]
+Instance SeqLang : SimDiagrams.Language input :=
+  {|
+    SimDiagrams.prog := prog;
+    SimDiagrams.directive := unit;
+    SimDiagrams.observation := observation;
+    SimDiagrams.machine := state cfg;
+    SimDiagrams.initial_machine := seq_initial;
+    SimDiagrams.step := fun p st _ os st' => seq_eval_small_step_inst p st st' os;
+    SimDiagrams.sequential_safe1 := safe_imm_seq;
+  |}.
+
+Notation "p |- <(( c ))> -->*^ os <(( ct ))>" := 
+  (fun p c os ct => sem (L := SeqLang) p c _ os ct).
+
+(* -------------------------------------------------------------------------- *)
+(* Ideal semantics. *)
+
+Definition ideal_initial (p : prog) (inp : input) : state ideal_cfg :=
+  let '(r, m) := inp in S_Running ((0, 0), r, m, spec_mem_init, false).
+
+#[local]
+Instance IdealLang : SimDiagrams.Language input :=
+  {|
+    SimDiagrams.prog := prog;
+    SimDiagrams.directive := direction;
+    SimDiagrams.observation := observation;
+    SimDiagrams.machine := state ideal_cfg;
+    SimDiagrams.initial_machine := ideal_initial;
+    SimDiagrams.step := fun p st ds os st' => ideal_eval_small_step_inst p st st' ds os;
+    SimDiagrams.sequential_safe1 := safe_imm_ideal;
+  |}.
+
+Notation "p '|-' '<((' ic '))>' '-->i*_' ds '^^' os '<((' ict '))>'" :=
+  (fun p ic ds os ict => sem (L := IdealLang) p ic ds os ict).
+
+(* -------------------------------------------------------------------------- *)
+(* Speculative semantics. *)
+
+Definition spec_initial (p : prog) (inp : input) : state spec_cfg :=
+  let '(r, m) := inp in
+  S_Running ((0, 0), (callee !-> FP (0, 0); msf !-> N 0; r), m, spec_mem_init, true, false).
+
+#[local]
+Instance SpecLang : SimDiagrams.Language input :=
+  {|
+    SimDiagrams.prog := prog;
+    SimDiagrams.directive := direction;
+    SimDiagrams.observation := observation;
+    SimDiagrams.machine := state spec_cfg;
+    SimDiagrams.initial_machine := spec_initial;
+    SimDiagrams.step := fun p st ds os st' => spec_eval_small_step p st st' ds os;
+    SimDiagrams.sequential_safe1 := safe_imm_spec;
+  |}.
+
+
+Notation "p |- <(( sc ))> -->*_ ds ^^ os <(( sct ))>" :=
+  (fun p sc ds os n sct => sem (L := SpecLang) p sc ds os sct).
+
+(* -------------------------------------------------------------------------- *)
+(* USLH as a compiler from the ideal to the speculative semantics. *)
+
+Definition uslh_compiler : SimDiagrams.compiler (Ls := IdealLang) (Lt := SpecLang) :=
+  fun p_s p_t =>
+    p_t = uslh_prog p_s
+    /\ wf_prog p_s
+    /\ no_ct_prog p_s
+    /\ unused_prog msf p_s
+    /\ unused_prog callee p_s.
+
+(* -------------------------------------------------------------------------- *)
 
 Lemma multi_spec_splitting p sc ds os n sct m
     (LEN: n >= m)
