@@ -108,6 +108,12 @@ Proof.
     + cbn. apply IHl. now apply Nat.succ_inj_wd_neg.
 Qed.
 
+Fixpoint index_of (n: nat) (l: list nat) : option nat :=
+  match l with
+  | [] => None
+  | x :: tl => if (x =? n)%nat then Some 0 else option_map S (index_of n tl)
+  end.
+
 Definition add_index {a:Type} (xs:list a) : list (nat * a) :=
   combine (seq 0 (length xs)) xs.
 

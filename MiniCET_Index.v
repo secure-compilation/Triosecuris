@@ -614,24 +614,6 @@ Definition match_ob (p: prog) (o1 o2: observation) : Prop :=
 Definition match_obs (p: prog) (os1 os2: obs) : Prop :=
   Forall2 (match_ob p) os1 os2.
 
-Definition exp_ob (o: observation) : obs :=
-  match o with
-  | ORet l n => [OLoad n; OStore n; OLoad n; ORet l n]
-  | _ => [o]
-  end.
-
-Definition exp_obs (os: obs) : obs := flat_map exp_ob os.
-
-Definition pending_obs (p: prog) (ic: state ideal_cfg) : obs :=
-  match ic with
-  | S_Running ((pc, r, m), sb, ms) =>
-      match p[[pc]], r ! sp with
-      | Some <{{ ret }}>, N n => [OLoad n; OStore n; OLoad n]
-      | _, _ => []
-      end
-  | _ => []
-  end.
-
 Definition match_dir (p: prog) (d1 d2: direction) : Prop :=
   match d1, d2 with
   | DBranch b1, DBranch b2 => b1 = b2
@@ -832,8 +814,147 @@ Definition uslh_compiler : SimDiagrams.compiler (Ls := IdealLang) (Lt := SpecLan
     /\ wf_prog p_s
     /\ no_ct_prog p_s
     /\ unused_prog msf p_s
-    /\ unused_prog callee p_s.
+    /\ unused_prog callee p_s
+    /\ unused_prog sp p_s.
 
+(* -------------------------------------------------------------------------- *)
+(* Transformers *)
+
+(* State of the USLH leakage transformer *)
+Record uslh_hstate := {
+  hs_src : prog; (* source program *)
+  hs_tgt : prog; (* target program *)
+  hs_tpc : cptr; (* target pc *)
+  hs_ct : bool; (* target ct *)
+  hs_sp : val (* target sp *)
+}.
+
+Definition hs_set (h: uslh_hstate) (tpc: cptr) (ct: bool) (v: val) : uslh_hstate :=
+  {| hs_src := hs_src h; hs_tgt := hs_tgt h; hs_tpc := tpc; hs_ct := ct; hs_sp := v |}.
+
+Definition tctrl (p_s p_t: prog) (st: state spec_cfg) : option uslh_hstate :=
+  match st with
+  | S_Running ((pc, r, _), _, ct, _) =>
+      Some {| hs_src := p_s; hs_tgt := p_t; hs_tpc := pc; hs_ct := ct; hs_sp := r ! sp |}
+  | _ => None
+  end.
+
+(* Implementation of This -- update of the history after one step, given target dir and target obs *)
+(* We use target observations to retrieve current sp *)
+Definition tctrl_step (h: option uslh_hstate) (ds: dirs) (os: obs) : option uslh_hstate :=
+  match h with
+  | None => None
+  | Some h =>
+      if hs_ct h then
+        match (hs_tgt h)[[hs_tpc h]] with
+        | Some ICTarget => Some (hs_set h (hs_tpc h + 1) false (hs_sp h))
+        | _ => None
+        end
+      else
+        match (hs_tgt h)[[hs_tpc h]], ds, os with
+        | Some (IBranch _ l), [DBranch b], _ =>
+            Some (hs_set h (if b then (l, 0) else hs_tpc h + 1) false (hs_sp h))
+        | Some (IJump l), _, _ => Some (hs_set h (l, 0) false (hs_sp h))
+        | Some (ICall _), [DCall pc'], [OCall _ n] => Some (hs_set h pc' true (N (S n)))
+        | Some IRet, [DRet (Some pc'')], [ORet _ n] => Some (hs_set h pc'' false (N (n - 1)))
+        | Some IRet, [DRet None], [ORet pc' n] => Some (hs_set h pc' false (N (n - 1)))
+        | Some IExit, _, _ => None
+        | Some _, _, _ => Some (hs_set h (hs_tpc h + 1) false (hs_sp h))
+        | None, _, _ => None
+        end
+  end.
+
+Definition ret_unsync (p: prog) (tpc: cptr) : cptr :=
+  let '(l, o') := tpc in
+  match nth_error p l with
+  | Some blk => match index_of (o' - 2) (offset_uslh blk) with
+               | Some o => (l, S o)
+               | None => tpc
+               end
+  | None => tpc
+  end.
+
+Definition sync_fp (p: prog) (pc: cptr) : cptr :=
+  match pc with
+  | (l, 0) => (l, 0)
+  | _ => match ret_sync p pc with
+        | Some tpc => tpc
+        | None => pc
+        end
+  end.
+
+Definition sync_ob (p: prog) (o: observation) : observation :=
+  match o with
+  | OCall l n => OCall (sync_fp p l) n
+  | ORet l n => ORet (sync_fp p l) n
+  | _ => o
+  end.
+
+(* Kinds of instructions in the target: *)
+(* - TSrc - the instruction from the source *)
+(* - TSilent - the instruction inserted by USLH which doesn't produce observation. *)
+(* - TMask - the instruction inserted by USLH which produces observation. *)
+Variant tkind := TSrc | TSilent | TMask.
+
+Definition uslh_kind (p: prog) (tpc: cptr) (i: inst) : tkind :=
+  match i with
+  | IAsgn x _ => if (String.eqb x msf || String.eqb x callee)%bool then TSilent else TSrc
+  | ILoad x _ => if String.eqb x callee then TMask else TSrc
+  | IStore (AId x) _ => if String.eqb x sp then TMask else TSrc
+  | IJump _ => if (fst tpc <? Datatypes.length p)%nat then TSrc else TSilent
+  | ICTarget => TSilent
+  | _ => TSrc
+  end.
+
+Definition unsync_dirs (p: prog) (ds: dirs) : dirs :=
+  match ds with
+  | [DRet (Some x)] => [DRet (Some (ret_unsync p x))]
+  | _ => ds
+  end.
+
+Definition uslh_Tdir (h: option uslh_hstate) (ds: dirs) : dirs :=
+  match h with
+  | Some h =>
+      if hs_ct h then []
+      else match (hs_tgt h)[[hs_tpc h]] with
+           | Some i => match uslh_kind (hs_src h) (hs_tpc h) i with
+                      | TSrc => unsync_dirs (hs_src h) ds
+                      | _ => []
+                      end
+           | None => []
+           end
+  | None => []
+  end.
+
+Definition uslh_mask (h: uslh_hstate) : obs :=
+  if hs_ct h then []
+  else match (hs_tgt h)[[hs_tpc h]], hs_sp h with
+       | Some i, N n =>
+           match uslh_kind (hs_src h) (hs_tpc h) i, i with
+           | TMask, ILoad _ _ => [OLoad n]
+           | TMask, IStore _ _ => [OStore n]
+           | _, _ => []
+           end
+       | _, _ => []
+       end.
+
+Definition uslh_Tobs (h: option uslh_hstate) (ds: dirs) (os: obs) : obs :=
+  match h with
+  | Some h => uslh_mask h ++ map (sync_ob (hs_src h)) os
+  | None => os
+  end.
+
+Definition uslh_hist (p_s p_t: prog) (isp: nat) : History (Lt := SpecLang) :=
+  {| SimDiagrams.history := option uslh_hstate;
+     SimDiagrams.init_hist :=
+       Some {| hs_src := p_s; hs_tgt := p_t; hs_tpc := (0, 0); hs_ct := true; hs_sp := N isp |};
+     SimDiagrams.This := tctrl_step |}.
+
+Definition uslh_sync (isp: nat) : SimDiagrams.input_sync (Ls := IdealLang) :=
+  fun p inp inp' =>
+    Rsync1 p (fst inp) (fst inp') false
+    /\ Msync p (snd inp) (snd inp')
+    /\ (fst inp) ! sp = N isp.
 (* -------------------------------------------------------------------------- *)
 
 Lemma rev_fetch : forall (p: prog) (pc: cptr) (blk: list inst * bool) (i: inst),
