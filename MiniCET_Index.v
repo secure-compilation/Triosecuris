@@ -2572,6 +2572,10 @@ Variant match_cfgs_ext (p: prog) : state ideal_cfg -> state spec_cfg -> Prop :=
   match_cfgs_ext p S_Term S_Term
 .
 
+(* USLH simulation relation between ideal and hardened speculative programs *)
+Definition uslh_sim (p : prog) (h : option uslh_hstate) ic sc :=
+  h = tctrl p (uslh_prog p) sc /\ match_cfgs_ext p ic sc.
+
 Lemma src_lookup p pc pc'
   (SYNC: pc_sync p pc = Some pc') :
   exists i, p[[pc]] = Some i.
@@ -3006,17 +3010,18 @@ Proof.
   - simpl in PTR, WFE. clarify. ss. des; clarify.
 Qed.
 
-Lemma ultimate_slh_bcc_single (p: prog) ic1 sc1 sc2 ds os
+Lemma ultimate_slh_bcc_single (p: prog) ic1 sc1 sc2 ds os (h : option uslh_hstate)
   (NCT: no_ct_prog p)
   (WFP: wf_prog p)
   (UNUSED1: unused_prog msf p)
   (UNUSED2: unused_prog callee p)
-  (MATCH: match_cfgs_ext p ic1 sc1)
-  (TGT: uslh_prog p |- <(( sc1 ))> -->_ ds^^os <(( sc2 ))>) :
-  exists ds' os' ic2, p |- <(( ic1 ))> -->i*_ ds' ^^ os' <(( ic2 ))>
-               /\ match_cfgs_ext p ic2 sc2
-               /\ match_ds p ds' ds
-               /\ match_obs p os' os.
+  (UNUSED3: unused_prog sp p)
+  (MATCH: uslh_sim p h ic1 sc1)
+  (TGT: uslh_prog p |- <(( sc1 ))> -->_ ds^^os <(( sc2 ))>)
+  (SAFE: sequential_safe (L := IdealLang) p ic1) :
+  exists os' ic2, p |- <(( ic1 ))> -->i*_ (uslh_Tdir h ds) ^^ os' <(( ic2 ))>
+               /\ uslh_sim p (tctrl_step h ds os) ic2 sc2
+               /\ os = uslh_Tobs h ds os'.
 Proof.
   inv MATCH; try sfby inv TGT.
   (* pc_sync match *)
@@ -3601,17 +3606,20 @@ Proof.
         inv MATCH. eapply unused_prog_lookup in UNUSED2; eauto. now destruct UNUSED2.
       * split; repeat econs.
   (* after return *)
-  - inv TGT; clarify.
-    exists [], []. esplits; try sfby (repeat econs).
-    econs. econs.
-    + hexploit block_always_terminator_prog; eauto. i. des.
-      hexploit pc_sync_next; eauto. i. simpl in H0.
-      replace o with (add (o - 1) 1) by lia. simpl.
-      replace (add (o' + 2) 1) with (o' + 3) by lia. auto.
-    + split; [|ss].
-      i. des. rewrite t_update_neq; eauto.
-    + eauto.
-    + eauto.
+(* The glue lemma to connect ultimate_slh_bcc_single to the leakage transformers framework *)
+Lemma uslh_safe_step_preserves_sim (p: prog) (isp: nat)
+  (NCT: no_ct_prog p)
+  (WFP: wf_prog p)
+  (UNUSED1: unused_prog msf p)
+  (UNUSED2: unused_prog callee p)
+  (UNUSED3: unused_prog sp p) :
+  safe_step_preserves_sim (Ls := IdealLang) (Lt := SpecLang) (hist := uslh_hist p (uslh_prog p) isp)
+    p (uslh_prog p) (uslh_sim p) uslh_Tdir uslh_Tobs.
+Proof.
+  intros ds h os_t s t t' SIM SAFE STEP.
+  destruct (ultimate_slh_bcc_single p s t t' ds os_t h NCT WFP UNUSED1 UNUSED2 UNUSED3 SIM STEP SAFE)
+    as (os' & ic2 & RUN & SIM' & OBS).
+  exists ic2, os'. split; [exact RUN|]. split; [exact OBS|exact SIM'].
 Qed.
 
 Lemma multi_ideal_inst_trans2
