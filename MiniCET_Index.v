@@ -615,18 +615,6 @@ Definition match_ob (p: prog) (o1 o2: observation) : Prop :=
 Definition match_obs (p: prog) (os1 os2: obs) : Prop :=
   Forall2 (match_ob p) os1 os2.
 
-Definition match_dir (p: prog) (d1 d2: direction) : Prop :=
-  match d1, d2 with
-  | DBranch b1, DBranch b2 => b1 = b2
-  | DCall pc1, DCall pc2 => pc1 = pc2
-  | DRet None, DRet None => True
-  | DRet (Some pc1), DRet (Some pc2) => ret_sync p pc1 = Some pc2
-  | _, _ => False
-  end.
-
-Definition match_ds (p: prog) (ds1 ds2: dirs) : Prop :=
-  Forall2 (match_dir p) ds1 ds2.
-
 Definition nonempty_block (blk : (list inst * bool)) : Prop :=
   0 < Datatypes.length (fst blk).
 
@@ -2049,39 +2037,6 @@ Proof.
     destruct b; cbn [Nat.eqb]; i; des; subst; congruence.
 Qed.
 
-Lemma match_dir_inj p d1 d2 d':
-    match_dir p d1 d' ->
-    match_dir p d2 d' ->
-    d1 = d2.
-Proof.
-    unfold match_dir. intros H H0.
-    destruct d1 as [b1|c1|[l1| ] ], d2 as [b2|c2|[l2| ] ], d' as [b'|c'|[l'| ] ];
-      simpl in *; subst; try reflexivity; try contradiction.
-    destruct l1, l2, l'.
-    exploit ret_sync_inj; [exact H | exact H0 |].
-    i. des. subst. reflexivity.
-Qed.
-
-Lemma match_ob_inj p o1 o2 o':
-    match_ob p o1 o' ->
-    match_ob p o2 o' ->
-    o1 = o2.
-Proof.
-    unfold match_ob. intros H H0.
-    destruct o1, o2, o'; cbv beta iota in *; try contradiction; try congruence;
-      destruct H as [? H], H0 as [? H0]; subst; f_equal; eapply val_match_fp_inj; eauto.
-Qed.
-
-Lemma match_ob_functional p o o'1 o'2:
-    match_ob p o o'1 ->
-    match_ob p o o'2 ->
-    o'1 = o'2.
-Proof.
-    unfold match_ob. intros H H0.
-    destruct o, o'1, o'2; cbv beta iota in *; try contradiction; try congruence;
-      destruct H as [? H], H0 as [? H0]; subst; f_equal; eapply val_match_fp_functional; eauto.
-Qed.
-
 Lemma eval_regs_eq : forall p (r r': reg) (e: exp),
    e_unused msf e ->
    e_unused callee e ->
@@ -2954,78 +2909,6 @@ Proof.
 Qed.
 
 
-Lemma wf_ret_msync_src p m m' i l o
-  (WFP: wf_prog p)
-  (MREL: Msync p m m')
-  (PTR: nth_error m.(memory) i = Some (FP (l, o)))
-  (NZR: o <> 0) :
-  wf_ret p (l, o).
-Proof.
-  destruct MREL as [MREL _].
-  specialize (MREL i). rewrite PTR in MREL. des_ifs.
-  unfold val_match in MREL. des_ifs.
-  { des; subst. rewrite Nat.eqb_eq in Heq0. subst. clarify. }
-  eapply wf_ret_src; eauto.
-Qed.
-
-Lemma wf_ret_msync_tgt p m m' i l o
-  (WFP: wf_prog p)
-  (NCT: no_ct_prog p)
-  (UNUSED: unused_prog sp p)
-  (MREL: Msync p m m')
-  (PTR: nth_error m'.(memory) i = Some (FP (l, o)))
-  (NZR: o <> 0) :
-  wf_ret (uslh_prog p) (l, o).
-Proof.
-  destruct MREL as [MREL _].
-  specialize (MREL i). rewrite PTR in MREL. des_ifs.
-  unfold val_match in MREL. des_ifs.
-  { des; subst. clarify. }
-  eapply wf_ret_tgt; eauto.
-Qed.
-
-Lemma wf_ret_expr_src p sr tr e l o
-  (WFP: wf_prog p)
-  (RET: Rsync p sr tr false)
-  (WFE: wf_expr p e)
-  (UNUSED1: e_unused msf e)
-  (UNUSED2: e_unused callee e )
-  (PTR: eval sr e = FP (l, o))
-  (NZR: o <> 0) :
-  wf_ret p (l, o).
-Proof.
-  ginduction e; (try sfby ss); i.
-  - eapply wf_ret_rsync_src; eauto.
-  - ss. exfalso. unfold eval_binop in PTR. clear -PTR.
-    des_ifs.
-  - simpl in UNUSED1, UNUSED2, PTR, WFE. des. des_ifs.
-    + hexploit IHe2; eauto.
-    + hexploit IHe3; eauto.
-  - simpl in PTR, WFE. clarify. ss. des; clarify.
-Qed.
-
-Lemma wf_ret_expr_tgt p sr tr e l o
-  (WFP: wf_prog p)
-  (NCT: no_ct_prog p)
-  (UNUSED: unused_prog sp p)
-  (RET: Rsync p sr tr false)
-  (WFE: wf_expr p e)
-  (UNUSED1: e_unused msf e)
-  (UNUSED2: e_unused callee e )
-  (PTR: eval tr e = FP (l, o))
-  (NZR: o <> 0) :
-  wf_ret (uslh_prog p) (l, o).
-Proof.
-  ginduction e; (try sfby ss); i.
-  - eapply wf_ret_rsync_tgt; eauto.
-  - ss. exfalso. unfold eval_binop in PTR. clear -PTR.
-    des_ifs.
-  - simpl in UNUSED1, UNUSED2, PTR, WFE. des. des_ifs.
-    + hexploit IHe2; eauto.
-    + hexploit IHe3; eauto.
-  - simpl in PTR, WFE. clarify. ss. des; clarify.
-Qed.
-
 Lemma nth_error_upd_same {A} (l: list A) i a :
   nth_error (upd i l a) i = option_map (fun _ => a) (nth_error l i).
 Proof. induction l in i |- *; destruct i; ss. Qed.
@@ -3240,21 +3123,6 @@ Proof.
   destruct i; try discriminate.
   destruct (pc_sync p (l, o)) as [ [l' o'] | ] eqn:PS; [|discriminate].
   injection RS as <-. exists fp, l', o'. splits; reflexivity.
-Qed.
-
-Lemma ideal_safe_rettarget p pc r m spv pc' sb
-  (SAFE: sequential_safe (L := IdealLang) p (S_Running (pc, r, m, sb, false)))
-  (RET: p[[pc]] = Some <{{ ret }}>)
-  (SP: r ! sp = N spv)
-  (STACK_TOP: spv < stack_top m)
-  (NTH: nth_error m.(memory) spv = Some (FP pc')) :
-  exists i, p[[pc']] = Some i.
-Proof.
-  assert (STEP: p |- <(( S_Running (pc, r, m, sb, false) ))> -->i_ [DRet None] ^^ [ORet pc' spv]
-                     <(( S_Running (pc', sp !-> N (spv - 1); r, m, sb, false) ))>)
-    by (eapply ISMI_Ret_Step; eauto).
-  exploit SAFE; [exact (sem_step1 (L := IdealLang) STEP)|].
-  intros (ds1 & os1 & st1 & STEP1). inv STEP1; eauto.
 Qed.
 
 Definition writes_reg (x: string) (i: inst) : Prop :=
