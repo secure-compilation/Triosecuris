@@ -1,6 +1,7 @@
 Set Warnings "-notation-overridden,-parsing,-deprecated-hint-without-locality".
 From Stdlib Require Import Strings.String.
 From SECF Require Import Utils.
+From SECF Require Import SimDiagrams.
 From SECF Require Import MiniCET.
 From Stdlib Require Import Bool.Bool.
 From Stdlib Require Import Arith.Arith.
@@ -64,6 +65,8 @@ Inductive seq_eval_small_step_inst (p: prog) :
   | SSMI_Call : forall pc r (m : mem) e sp_val l,
       p[[pc]] = Some <{{ call e }}> ->
       to_fp (eval r e) = Some l ->
+      (* Call should lead to the procedure entry *)
+      wf_label p true (fst l) ->
       r ! sp = N sp_val ->
       S sp_val < stack_top m ->
       p |- <(( S_Running (pc, r, m) ))> -->^[OCall l sp_val] <(( S_Running (l, sp !-> N (S sp_val); r, upd_mem (S sp_val) m (FP (pc + 1)))))>
@@ -183,7 +186,7 @@ Inductive spec_eval_small_step (p:prog):
       p[[pc]] = Some <{{ call e }}> ->
       to_fp (eval r e) = Some l ->
       r ! sp = N sp_val ->
-      (* S sp_val < stack_top m -> *)
+      S sp_val < stack_top m ->
       ms' = negb ((fst pc' =? fst l)%nat && (snd pc' =? snd l)%nat) ->
       p |- <(( S_Running ((pc, r, m), sbuffer, false, false) ))> -->_[DCall pc']^^[OCall l sp_val] <(( S_Running ((pc', sp !-> N (S sp_val) ; r, upd_mem (S sp_val) m (FP (pc + 1))), S sp_val !-> FP (pc + 1); sbuffer, true, ms') ))>
   | SpecSMI_Call_Misspec : forall pc pc' r m e l sp_val sbuffer,
@@ -198,7 +201,7 @@ Inductive spec_eval_small_step (p:prog):
       p[[pc]] = Some <{{ ret }}> ->
       wf_ret p pc'' ->
       r ! sp = N sp_val ->
-      (* sp_val < stack_top m -> *)
+      sp_val < stack_top m ->
       ms' = negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat)->
       nth_error m.(memory) sp_val = Some (FP pc') ->
       p |- <(( S_Running ((pc, r, m), sbuffer, false, false) ))> -->_[DRet (Some pc'')]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, false, ms') ))>
@@ -206,7 +209,7 @@ Inductive spec_eval_small_step (p:prog):
   | SpecSMI_Ret_Step : forall pc r m pc' sp_val sbuffer,
       p[[pc]] = Some <{{ ret }}> ->
       r ! sp = N sp_val ->
-      (* sp_val < stack_top m -> *)
+      sp_val < stack_top m ->
       (* ms' = negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat)-> *)
       (*** ***)
       (* wf_ret p pc' -> *) (* YF: do we need this? *)
@@ -327,6 +330,7 @@ Inductive ideal_eval_small_step_inst (p:prog) :
   | ISMI_Call : forall pc pc' r m e l (ms' : bool) blk sp_val sbuffer,
       p[[pc]] = Some <{{ call e }}> ->
       r ! sp = N sp_val ->
+      S sp_val < stack_top m ->
       to_fp (eval r e) = Some l ->
       ms' = negb ((fst pc' =? fst l)%nat && (snd pc' =? snd l)%nat) ->
       nth_error p (fst pc') = Some blk ->
@@ -351,6 +355,7 @@ Inductive ideal_eval_small_step_inst (p:prog) :
       p[[pc]] = Some <{{ ret }}> ->
       wf_ret p pc'' ->
       r ! sp = N sp_val ->
+      sp_val < stack_top m ->
       nth_error m.(memory) sp_val = Some (FP pc') ->
       ms' = negb ((fst pc' =? fst pc'')%nat && (snd pc' =? snd pc'')%nat) ->
       p |- <(( S_Running ((pc, r, m), sbuffer, false) ))> -->i_[DRet (Some pc'')]^^[ORet pc' sp_val] <(( S_Running ((pc'', sp !-> N (sp_val - 1) ; r, m), sbuffer, ms') ))>
@@ -358,6 +363,7 @@ Inductive ideal_eval_small_step_inst (p:prog) :
   | ISMI_Ret_Step : forall pc r m pc' sp_val sbuffer,
       p[[pc]] = Some <{{ ret }}> ->
       r ! sp = N sp_val ->
+      sp_val < stack_top m ->
       nth_error m.(memory) sp_val = Some (FP pc') ->
       p |- <(( S_Running ((pc, r, m), sbuffer, false) ))> -->i_[DRet None]^^[ORet pc' sp_val] <(( S_Running ((pc', sp !-> N (sp_val - 1) ; r, m), sbuffer, false) ))>
   | ISMI_Ret_Misspec_Dir : forall pc r m (pc'' : cptr) sp_val sbuffer,
