@@ -809,6 +809,12 @@ Notation "p |- <(( sc ))> -->*_ ds ^^ os <(( sct ))>" :=
 (* -------------------------------------------------------------------------- *)
 (* USLH as a compiler from the ideal to the speculative semantics. *)
 
+Definition first_blk_call (p: prog) : Prop :=
+  match nth_error p 0 with
+  | None => False
+  | Some (blk, b) => if b then True else False
+  end.
+
 Definition uslh_compiler : SimDiagrams.compiler (Ls := IdealLang) (Lt := SpecLang) :=
   fun p_s p_t =>
     p_t = uslh_prog p_s
@@ -816,7 +822,8 @@ Definition uslh_compiler : SimDiagrams.compiler (Ls := IdealLang) (Lt := SpecLan
     /\ no_ct_prog p_s
     /\ unused_prog msf p_s
     /\ unused_prog callee p_s
-    /\ unused_prog sp p_s.
+    /\ unused_prog sp p_s
+    /\ first_blk_call p_s.
 
 (* -------------------------------------------------------------------------- *)
 (* Transformers *)
@@ -3954,99 +3961,56 @@ Proof.
   exists ic2, os'. split; [exact RUN|]. split; [exact OBS|exact SIM'].
 Qed.
 
-Lemma multi_ideal_inst_trans2
-  p ic1 ic2 ic3 ds1 ds2 os1 os2
-  (STEPS1: p |- <(( ic1 ))> -->i*_ ds1 ^^ os1 <(( ic2 ))>)
-  (STEPS2: p |- <(( ic2 ))> -->i*_ ds2 ^^ os2 <(( ic3 ))>) :
-  p |- <(( ic1 ))> -->i*_ ds1 ++ ds2 ^^ os1 ++ os2 <(( ic3 ))>.
+Lemma spec_step_shape p pc r1 m1 sb1 ct ms1 r2 m2 sb2 ms2 st1' st2' ds1 ds2 os1 os2 :
+  p |- <(( S_Running ((pc, r1, m1), sb1, ct, ms1) ))> -->_ds1^^os1 <(( st1' ))> ->
+  p |- <(( S_Running ((pc, r2, m2), sb2, ct, ms2) ))> -->_ds2^^os2 <(( st2' ))> ->
+  Datatypes.length ds1 = Datatypes.length ds2 /\ Datatypes.length os1 = Datatypes.length os2.
 Proof.
-  ginduction STEPS1; ii; ss.
-  do 2 rewrite <- app_assoc. econs; eauto.
+  intros H1 H2.
+  inversion H1; inversion H2; subst; try (split; reflexivity); congruence.
 Qed.
 
-Lemma ultimate_slh_bcc' (p: prog) ic1 sc1 sc2 ds os
-  (NCT: no_ct_prog p)
-  (WFP: wf_prog p)
-  (UNUSED1: unused_prog msf p)
-  (UNUSED2: unused_prog callee p)
-  (MATCH: match_cfgs_ext p ic1 sc1)
-  n
-  (TGT: uslh_prog p |- <(( sc1 ))> -->*_ ds^^os^^n <(( sc2 ))>) :
-  exists os' ds' ic2, p |- <(( ic1 ))> -->i*_ ds' ^^ os' <(( ic2 ))>
-      /\ match_cfgs_ext p ic2 sc2 /\ match_ds p ds' ds /\ match_obs p os' os.
+Lemma ultimate_slh_safe_bw_simulation (isp : nat) :
+  has_safe_bw_simulation uslh_compiler (uslh_sync isp).
 Proof.
-  ginduction n; ii.
-  { inv TGT. esplits; eauto; econs. }
-  inv TGT.
-  exploit ultimate_slh_bcc_single; try eapply H0; eauto.
-  i. des.
-  exploit IHn; try eapply H5; eauto.
-  i. des. esplits.
-  - eapply multi_ideal_inst_trans2; eauto.
-  - eauto.
-  - clear - x2 x6.
-    unfold match_ds.
-    apply Forall2_app; assumption.
-  - clear - x3 x7.
-    apply Forall2_app; assumption.
-Qed.
-
-Lemma ultimate_slh_bcc (p: prog) : forall n ic1 sc1 sc2 ds os,
-  no_ct_prog p ->
-  wf_prog p ->
-  unused_prog msf p ->
-  unused_prog callee p ->
-  match_cfgs p ic1 sc1 ->
-  uslh_prog p |- <(( S_Running sc1 ))> -->*_ds^^os^^n <(( sc2 ))> ->
-  exists os' ds' ic2, p |- <(( S_Running ic1 ))> -->i*_ ds' ^^ os' <(( ic2 ))>
-               /\ match_ds p ds' ds /\ match_obs p os' os.
-Proof.
-  ii. exploit ultimate_slh_bcc'; try eapply H5; eauto.
-  { econs. eauto. }
-  i. des. esplits; eauto.
-Qed.
-
-Definition first_blk_call (p: prog) : Prop :=
-  match nth_error p 0 with
-  | None => False
-  | Some (blk, b) => if b then True else False
-  end.
-
-Lemma ultimate_slh_bcc_init
-  (p: prog) n ir im sc1 sr sm sc2 ds os
-  (NCT: no_ct_prog p)
-  (FST: first_blk_call p)
-  (WFP: wf_prog p)
-  (UNUSED1: unused_prog msf p)
-  (UNUSED2: unused_prog callee p)
-  (SC1: sc1 = ((0,0), sr, sm, @nil cptr, true, false))
-  (INIT1: Rsync p ir sr false)
-  (INIT2: sr ! callee = FP (0,0))
-  (INIT3: Msync p im sm)
-  (TGT: uslh_prog p |- <(( S_Running sc1 ))> -->*_ds^^os^^n <(( sc2 ))>) :
-  exists os' ds' ic2, p |- <(( S_Running ((0,0), ir, im, [], false) ))> -->i*_ ds' ^^ os' <(( ic2 ))>
-               /\ match_ds p ds' ds /\ match_obs p os' os.
-Proof.
-  destruct n.
-  { inv TGT. esplits; econs. }
-  assert (CT: (uslh_prog p)[[(0, 0)]] = Some <{{ ctarget }}>).
-  { red in FST. des_ifs. eapply ctarget_exists; eauto. }
-  destruct n.
-  { inv TGT. inv H5. inv H0; clarify. ss. esplits; do 3 econs. }
-  exploit head_call_target; eauto. i. des; clarify.
-  replace ((0,0) + 1) with (0, 1) in x2 by ss.
-  inv TGT. inv H0; clarify. inv H5. inv H0; clarify. simpl.
-  exploit ultimate_slh_bcc; try eapply H6; eauto.
-  econs; try sfby ss.
-  - red in FST. des_ifs_safe.
-    unfold pc_sync. rewrite nth_error_map. rewrite Heq. simpl.
-    destruct l.
-    { red in WFP. des. eapply nth_error_In in Heq. rewrite Forall_forall in WFP0.
-      eapply WFP0 in Heq. red in Heq. des. ss. }
-    simpl. auto.
-  - inv INIT1. split; ii.
-    + des. rewrite t_update_neq; eauto.
-    + rewrite t_update_eq. simpl. rewrite INIT2. ss.
+  intros p_s p_t (-> & WFP & NCT & UNUSED1 & UNUSED2 & UNUSED3 & FST).
+  (* Witnesses: the history tracks the target pc, ct flag and sp (starting from isp);
+     the transformers translate directions/observations by the target instruction kind. *)
+  exists (uslh_hist p_s (uslh_prog p_s) isp), (uslh_sim p_s), uslh_Tdir, uslh_Tobs.
+  splits.
+  (* initial_sim: both runs start at (0,0); the target is at the ctarget of the entry
+     procedure (block 0 is a procedure by first_blk_call), which is match_cfgs_ext_ct1. *)
+  - intros [r m] [r' m'] (REG & MSC & SPV). simpl in REG, MSC, SPV.
+    red in FST. destruct (nth_error p_s 0) as [ [blk [|] ] | ] eqn:BLK; try contradiction.
+    (* The synced target sp equals the source sp, i.e. isp. *)
+    assert (VSP: r' ! sp = N isp).
+    { pose proof (Rsync1_sp p_s r r' false REG) as V. rewrite SPV in V.
+      destruct (r' ! sp); ss; subst; auto. }
+    unfold uslh_sim. simpl. split.
+    (* The initial history is exactly tctrl of the initial target state. *)
+    + unfold tctrl. rewrite !t_update_neq by discriminate. rewrite VSP. reflexivity.
+    + eapply match_cfgs_ext_ct1; [exact BLK|eapply ctarget_exists; eauto| |exact MSC|].
+      (* spec_initial only sets the target-only registers msf and callee. *)
+      * eapply Rsync1_upd_tgt; [eapply Rsync1_upd_tgt; [exact REG|left; reflexivity]|right; reflexivity].
+      (* callee = &(0,0), so the entry check keeps msf = 0. *)
+      * reflexivity.
+  (* The step diagram is the single-step backward compiler correctness lemma. *)
+  - exact (uslh_safe_step_preserves_sim p_s isp NCT WFP UNUSED1 UNUSED2 UNUSED3).
+  (* step_shape_det: the same history means the same target pc and ct flag, and a
+     speculative step's numbers of directions and observations depend only on those. *)
+  - intros h s1 s2 t1 t2 t1' t2' ds1 ds2 os1 os2 [H1 _] [H2 _] ST1 ST2 PRE.
+    rewrite H1 in H2.
+    destruct t1 as [ [ [ [ [ [pc1 r1] m1] sb1] ct1] ms1] | | | ]; try (inv ST1; fail).
+    destruct t2 as [ [ [ [ [ [pc2 r2] m2] sb2] ct2] ms2] | | | ]; try (inv ST2; fail);
+      unfold tctrl in H2; try discriminate.
+    inversion H2; subst.
+    destruct (spec_step_shape _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ ST1 ST2) as [LD LO].
+    (* Comparable directive chunks of equal length are equal. *)
+    split; [apply prefix_same_length; assumption | exact LO].
+  (* Tobs_length_inj: Tobs prepends the masking observations (fixed by the history)
+     to an element-wise translation of the source observations. *)
+  - intros [h|] ds os1 os2 LEN; unfold uslh_Tobs in LEN; [|exact LEN].
+    rewrite !length_app, !length_map in LEN. apply Nat.add_cancel_l in LEN. exact LEN.
 Qed.
 
 Definition seq_same_obs p pc r1 r2 m1 m2 stk : Prop :=
