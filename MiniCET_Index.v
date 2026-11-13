@@ -535,15 +535,15 @@ Definition Rsync (p: prog) (sr tr: reg) (ms: bool) : Prop :=
    (forall x, x <> msf /\ x <> callee -> (ms = false \/ x = sp) -> val_match p (sr ! x) (tr ! x)) /\
    (tr ! msf = N (if ms then 1 else 0)).
 
+Definition Rsync1 (p: prog) (sr tr: reg) (ms: bool) : Prop :=
+  (forall x, x <> msf /\ x <> callee -> (ms = false \/ x = sp) -> val_match p (sr ! x) (tr ! x)).
+
 Definition Msync (p: prog) (sm tm: mem) : Prop :=
   forall i, match nth_error sm.(memory) i, nth_error tm.(memory) i with
        | Some sv, Some tv => val_match p sv tv
        | None, None => True
        | _, _ => False
        end.
-
-Definition Rsync1 (p: prog) (sr tr: reg) (ms: bool) : Prop :=
-  (forall x, x <> msf /\ x <> callee -> (ms = false \/ x = sp) -> val_match p (sr ! x) (tr ! x)).
 
 Definition ms_msf_match (tr: reg) (ms: bool) : Prop :=
   (tr ! msf = N (if ms then 1 else 0)).
@@ -1921,8 +1921,10 @@ Lemma match_dir_inj p d1 d2 d':
     match_dir p d2 d' ->
     d1 = d2.
 Proof.
-    destruct d1, d2, d'; ss; try congruence.
-    destruct lo, lo0, lo1. i.
+    unfold match_dir. intros H H0.
+    destruct d1 as [b1|c1|[l1| ] ], d2 as [b2|c2|[l2| ] ], d' as [b'|c'|[l'| ] ];
+      simpl in *; subst; try reflexivity; try contradiction.
+    destruct l1, l2, l'.
     exploit ret_sync_inj; [exact H | exact H0 |].
     i. des. subst. reflexivity.
 Qed.
@@ -1932,16 +1934,9 @@ Lemma match_ob_inj p o1 o2 o':
     match_ob p o2 o' ->
     o1 = o2.
 Proof.
-    destruct o1, o2, o'; try contradiction; try congruence.
-    all: destruct l.
-    all: try (destruct n4; contradiction).
-    all: try (destruct n2; contradiction).
-    all: try (destruct n0; contradiction).
-    all: try (destruct n1; contradiction).
-    destruct l0, l1. unfold match_ob. destruct n0, n4, n2; try contradiction.
-    1: congruence.
-    i. exploit ret_sync_inj; [exact H|exact H0|].
-    now intros [-> ->%succ_inj].
+    unfold match_ob. intros H H0.
+    destruct o1, o2, o'; cbv beta iota in *; try contradiction; try congruence;
+      destruct H as [? H], H0 as [? H0]; subst; f_equal; eapply val_match_fp_inj; eauto.
 Qed.
 
 Lemma match_ob_functional p o o'1 o'2:
@@ -1949,25 +1944,16 @@ Lemma match_ob_functional p o o'1 o'2:
     match_ob p o o'2 ->
     o'1 = o'2.
 Proof.
-    destruct o, o'1, o'2; try contradiction; try congruence.
-    all: destruct l.
-    all: match goal with 
-         | |- match_ob _ (OCall (_, ?n)) _ -> _ => try (destruct n; contradiction)
-         end.
-    destruct l0, l1. unfold match_ob. destruct n0, n4, n2; try contradiction.
-    - congruence.
-    - unfold ret_sync.
-      destruct (p [[(n, n0)]]); try discriminate.
-      destruct i; try discriminate.
-      destruct (pc_sync p (n, n0)); try discriminate. 
-      destruct c. i. inv H. inv H0. reflexivity.
+    unfold match_ob. intros H H0.
+    destruct o, o'1, o'2; cbv beta iota in *; try contradiction; try congruence;
+      destruct H as [? H], H0 as [? H0]; subst; f_equal; eapply val_match_fp_functional; eauto.
 Qed.
 
 Lemma eval_regs_eq : forall p (r r': reg) (e: exp),
    e_unused msf e ->
    e_unused callee e ->
    wf_exp p e = true ->
-   Rsync1 p r r' ->
+   Rsync1 p r r' false ->
    val_match p (eval r e) (eval r' e).
 Proof.
   intros. ginduction e; ss; ii.
@@ -2014,7 +2000,7 @@ Lemma eval_regs_eq_nat : forall p (r r': reg) (e: exp),
    e_unused msf e ->
    e_unused callee e ->
    wf_exp p e = true ->
-   Rsync1 p r r' ->
+   Rsync1 p r r' false ->
    to_nat (eval r e) = to_nat (eval r' e).
 Proof.
   i. exploit eval_regs_eq; eauto. i.
@@ -2030,18 +2016,6 @@ Proof.
   rewrite Forall_forall in H0. eapply nth_error_In in Heq.
   eapply H0 in Heq. unfold wf_block in Heq. des.
   rewrite Forall_forall in Heq1. eapply nth_error_In in INST. eauto.
-Qed.
-
-Lemma unused_prog_lookup x p pc i
-  (UNUSED: unused_prog x p)
-  (INST: p [[pc]] = Some i) :
-  i_unused x i.
-Proof.
-  unfold unused_prog in *. destruct pc; ss. des_ifs_safe.
-  rewrite Forall_forall in UNUSED. eapply nth_error_In in Heq.
-  exploit in_split_l; eauto. i. rewrite Heq0 in x1. ss.
-  exploit UNUSED; eauto. i. unfold b_unused in x2.
-  rewrite Forall_forall in x2. eapply nth_error_In in INST. eauto.
 Qed.
 
 Lemma no_ct_prog_cons b p
@@ -2345,48 +2319,52 @@ Proof.
 Qed.
 
 Variant match_cfgs_ext (p: prog) : state ideal_cfg -> state spec_cfg -> Prop :=
+(* Target matches source *)
 | match_cfgs_ext_intro ic sc
   (MATCH: match_cfgs p ic sc) :
   match_cfgs_ext p (S_Running ic) (S_Running sc)
+(* Match source beginning of procedure to target <{{ ctarget }}> beggining of procedure. *)
+(* Matches on both ct, as we now may enter procedures without calling (on masked return) *)
 | match_cfgs_ext_ct1
-  l blk r m stk (ms:bool) r' m' stk'
+  l blk r m sb (ms:bool) r' m' sb' (ct:bool)
   (CT: nth_error p l = Some (blk, true))
   (CT1: (uslh_prog p)[[(l, 0)]] = Some <{{ ctarget }}>)
-  (REG: Rsync1 p r r')
+  (REG: Rsync1 p r r' ms)
   (MSC: Msync p m m')
-  (STK: map_opt (ret_sync p) stk = Some stk')
   (MS: eval r' <{{ (callee = (&(l, 0))) ? msf : 1 }}> = N (if ms then 1 else 0)) :
-  match_cfgs_ext p (S_Running (((l, 0), r, m, stk), ms))
-                   (S_Running (((l, 0), r', m', stk'), true, ms))
+  match_cfgs_ext p (S_Running (((l, 0), r, m), sb, ms))
+                   (S_Running (((l, 0), r', m'), sb', ct, ms))
+(* Stuttering on the source procedure entry *)
 | match_cfgs_ext_ct2
-  l blk r m stk (ms:bool) r' m' stk'
+  l blk r m sb (ms:bool) r' m' sb'
   (CT: nth_error p l = Some (blk, true))
   (CT1: (uslh_prog p)[[(l, 0)]] = Some <{{ ctarget }}>)
   (CT2: (uslh_prog p)[[(l, 1)]] = Some <{{ msf := (callee = (& (l, 0))) ? msf : 1 }}>)
-  (REG: Rsync1 p r r')
+  (REG: Rsync1 p r r' ms)
   (MSC: Msync p m m')
-  (STK: map_opt (ret_sync p) stk = Some stk')
   (MS: eval r' <{{ (callee = (& (l, 0))) ? msf : 1 }}> = N (if ms then 1 else 0)) :
-  match_cfgs_ext p (S_Running (((l, 0), r, m, stk), ms))
-                   (S_Running (((l, 1), r', m', stk'), false, ms))
+  match_cfgs_ext p (S_Running (((l, 0), r, m), sb, ms))
+                   (S_Running (((l, 1), r', m'), sb', false, ms))
+(* Match source call with target call *)
 | match_cfgs_ext_call
-  pc fp r m stk ms pc' r' m' stk'
+  pc fp r m sb ms pc' r' m' sb'
   (CALL: p[[pc]] = Some <{{ call fp }}>)
   (TCALL: (uslh_prog p)[[pc' + 1]] = Some <{{ call ((msf = 1) ? &(0, 0) : fp) }}>)
   (PC: pc_sync p pc = Some pc')
   (REG: Rsync p r r' ms)
   (MSC: Msync p m m')
-  (STK: map_opt (ret_sync p) stk = Some stk')
   (MS: r' ! callee = (eval r' <{{ (msf = 1) ? &(0, 0) : fp }}>)) :
-  match_cfgs_ext p (S_Running ((pc, r, m, stk), ms))
-                   (S_Running ((pc' + 1, r', m', stk'), false, ms))
+  match_cfgs_ext p (S_Running ((pc, r, m), sb, ms))
+                   (S_Running ((pc' + 1, r', m'), sb', false, ms))
+(* Match source fault with target fault on faulted call *)
 | match_cfgs_ext_call_fault
-  pc r m stk ms
+  pc r m sb ms
   (CT: (uslh_prog p)[[pc]] <> Some <{{ ctarget }}>):
   match_cfgs_ext p S_Fault
-                   (S_Running ((pc, r, m, stk), true, ms))
+                   (S_Running ((pc, r, m), sb, true, ms))
+(* Match source branch with target branch *)
 | match_cfgs_ext_br_true1
-  l l' r m stk (ms: bool) r' m' stk'
+  l l' r m sb (ms: bool) r' m' sb'
   pc fl fo e
   (BR: p[[pc]] = Some <{{ branch e to l }}>)
   (FROM: (uslh_prog p) [[(fl, fo)]] = Some <{{ branch ((msf = 1) ? 0 : e) to l' }}>)
@@ -2395,59 +2373,80 @@ Variant match_cfgs_ext (p: prog) : state ideal_cfg -> state spec_cfg -> Prop :=
   (MS: eval r' <{{ (~ ((msf = 1) ? 0 : e)) ? 1 : msf }}> = N (if ms then 1 else 0))
 
   (BT2: (uslh_prog p)[[(l', 1)]] = Some <{{ jump l }}>)
-  (REG: Rsync1 p r r')
-  (MSC: Msync p m m')
-  (STK: map_opt (ret_sync p) stk = Some stk') :
-  match_cfgs_ext p (S_Running (((l, 0), r, m, stk), ms))
-                   (S_Running (((l', 0), r', m', stk'), false, ms))
+  (REG: Rsync1 p r r' ms)
+  (MSC: Msync p m m') :
+  match_cfgs_ext p (S_Running (((l, 0), r, m), sb, ms))
+                   (S_Running (((l', 0), r', m'), sb', false, ms))
+(* Match source branch with target hardening *)
 | match_cfgs_ext_br_true2
-  pc e l l' r m stk ms r' m' stk'
+  pc e l l' r m sb ms r' m' sb'
   (BR: p[[pc]] = Some <{{ branch e to l }}>)
   (BT2: (uslh_prog p)[[(l', 1)]] = Some <{{ jump l }}>)
   (REG: Rsync p r r' ms)
-  (MSC: Msync p m m')
-  (STK: map_opt (ret_sync p) stk = Some stk') :
-  match_cfgs_ext p (S_Running (((l, 0), r, m, stk), ms))
-                   (S_Running (((l', 1), r', m', stk'), false, ms))
+  (MSC: Msync p m m') :
+  match_cfgs_ext p (S_Running (((l, 0), r, m), sb, ms))
+                   (S_Running (((l', 1), r', m'), sb', false, ms))
+(* Match source branch false with target branch false (fall-through) *)
 | match_cfgs_ext_br_false
-  pc pc' l e  r r' m m' stk stk' (ms:bool)
+  pc pc' l e r r' m m' sb sb' (ms:bool)
   (FROM: (uslh_prog p) [[pc']] = Some <{{ branch ((msf = 1) ? 0 : e) to l }}>)
   (TO: (uslh_prog p) [[pc'+1]] = Some <{{ msf := ((msf = 1) ? 0 : e) ? 1 : msf }}>)
   (MS: eval r' <{{ ((msf = 1) ? 0 : e) ? 1 : msf }}> = N (if ms then 1 else 0))
   (PC: pc_sync p pc = Some pc')
-  (REG: Rsync1 p r r')
-  (MSC: Msync p m m')
-  (STK: map_opt (ret_sync p) stk = Some stk') :
-  match_cfgs_ext p (S_Running ((pc + 1, r, m, stk), ms))
-                   (S_Running ((pc' + 1, r', m', stk'), false, ms))
-| match_cfgs_ext_ret1 (* ret - ret match *)
-  pc pc' r r' m m' stk stk' (ms: bool)
+  (REG: Rsync1 p r r' ms)
+  (MSC: Msync p m m') :
+  match_cfgs_ext p (S_Running ((pc + 1, r, m), sb, ms))
+                   (S_Running ((pc' + 1, r', m'), sb', false, ms))
+(* Match source ret with first step of target return masking (loading current value at "sp") *)
+| match_cfgs_ext_ret1
+  pc pc' r r' m m' sb sb' (ms: bool) spv
+  (RET: p[[pc]] = Some <{{ ret }}>)
   (PC: pc_sync p pc = Some pc')
-  (FROM: (uslh_prog p) [[pc']] = Some <{{ callee <- load[AId "sp"%string] }}>)
-  (TO: (uslh_prog p) [[pc'+1]] = Some <{{ ret }}>)
   (REG: Rsync p r r' ms)
   (MSC: Msync p m m')
-  (STK: map_opt (ret_sync p) stk = Some stk')
-  (MS: r' ! callee = match stk' with
-                     | [] => UV
-                     | (l, o)::sttl => FP (l, o)
-                     end) :
-  match_cfgs_ext p (S_Running ((pc, r, m, stk), ms))
-                   (S_Running ((pc' + 1, r', m', stk'), false, ms))
-| match_cfgs_ext_ret2 (* after return *)
-  l o l' o' r r' m m' stk stk' (ms:bool) e
+  (SP: r ! sp = N spv)
+  (CALLEE: ms = false -> nth_error m'.(memory) spv = Some (r' ! callee)) :
+  match_cfgs_ext p (S_Running ((pc, r, m), sb, ms))
+                   (S_Running ((pc' + 1, r', m'), sb', false, ms))
+(* Match source ret with second step of target return masking (after potentially masking at "sp" value) *)
+| match_cfgs_ext_ret2
+  pc pc' r r' m m' sb sb' (ms: bool) spv
+  (RET: p[[pc]] = Some <{{ ret }}>)
+  (PC: pc_sync p pc = Some pc')
+  (REG: Rsync p r r' ms)
+  (MSC: Msync p m m')
+  (SP: r ! sp = N spv)
+  (SLOT: ms = true -> sb' ! spv = FP (0, 0)) :
+  match_cfgs_ext p (S_Running ((pc, r, m), sb, ms))
+                   (S_Running (((pc' + 1) + 1, r', m'), sb', false, ms))
+(* Match source ret with third step of target return masking (loading "callee" potentially masked) *)
+| match_cfgs_ext_ret3
+  pc pc' r r' m m' sb sb' (ms: bool) spv
+  (RET: p[[pc]] = Some <{{ ret }}>)
+  (PC: pc_sync p pc = Some pc')
+  (REG: Rsync p r r' ms)
+  (MSC: Msync p m m')
+  (SP: r ! sp = N spv)
+  (CALLEE: if ms then sb' ! spv = FP (0, 0) /\ r' ! callee = FP (0, 0)
+           else nth_error m'.(memory) spv = Some (r' ! callee)) :
+  match_cfgs_ext p (S_Running ((pc, r, m), sb, ms))
+                   (S_Running ((((pc' + 1) + 1) + 1, r', m'), sb', false, ms))
+(* Match after return step in target with source: either (0, 0) on misspeculation, or the actual return target *)
+| match_cfgs_ext_ret4 (* after return *)
+  l o l' o' r r' m m' sb sb' (ms:bool) e
   (PC: pc_sync p (l, o - 1) = Some (l', o')) (* call - callee asgn match *)
   (FROM: p[[(l, o - 1)]] = Some (ICall e))
   (POS: o > 0)
   (TO: (uslh_prog p) [[(l', o' + 2)]] = Some <{{ msf := (callee = (& (l', o' + 2))) ? msf : 1 }}>)
-  (REG: Rsync1 p r r')
+  (REG: Rsync1 p r r' ms)
   (MSC: Msync p m m')
-  (STK: map_opt (ret_sync p) stk = Some stk')
   (MS: eval r' <{{ (callee = (& (l', o' + 2))) ? msf : 1 }}> = N (if ms then 1 else 0)) :
-  match_cfgs_ext p (S_Running (((l, o), r, m, stk), ms))
-                   (S_Running (((l', o' + 2), r', m', stk'), false, ms))
+  match_cfgs_ext p (S_Running (((l, o), r, m), sb, ms))
+                   (S_Running (((l', o' + 2), r', m'), sb', false, ms))
+(* Match fault to fault *)
 | match_cfgs_ext_fault :
   match_cfgs_ext p S_Fault S_Fault
+(* Match term to term *)
 | match_cfgs_ext_term :
   match_cfgs_ext p S_Term S_Term
 .
