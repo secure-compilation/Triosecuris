@@ -350,20 +350,6 @@ Qed.
 
 End FORWARD.
 
-Section COMPOSITION.
-
-Context
-  {input : Type}
-  {L0 L1 L2 : Language input}
-  (compile2 : compiler (Ls := L1) (Lt := L2))
-  (compile1 : compiler (Ls := L0) (Lt := L1))
-.
-
-Definition compose : compiler (Ls := L0) (Lt := L2) :=
-  fun p_s p_t => exists2 p_i, compile1 p_s p_i & compile2 p_i p_t.
-
-End COMPOSITION.
-
 (* --- Triosecuris: parametrized observational equivalence (applicable to all semantics, with directions in sequential being unit) *)
 Section OBSERVATIONAL_EQUIVALENCE.
   Context
@@ -527,3 +513,87 @@ Section OBS_EQ_WITH_BACKWARDS_IMPLIES_RELSEC.
   Qed.
     
 End OBS_EQ_WITH_BACKWARDS_IMPLIES_RELSEC.
+
+Section SAFETY_PRESERVATION.
+  Context
+    {input : Type}
+    {Ls Lt : Language input}
+    (compile : compiler (Ls := Ls) (Lt := Lt))
+    (sync : input_sync (input := input))
+  .
+
+  Definition preserves_safety : Prop :=
+    forall p_s p_t inp1 inp2,
+      sequential_safe p_s (initial_machine p_s inp1) ->
+      compile p_s p_t ->
+      sync inp1 inp2 ->
+      sequential_safe p_t (initial_machine p_t inp2).
+
+End SAFETY_PRESERVATION.
+
+(* YF: TODO: Discuss whether it would be better to prove the composition of safe backwards simulation *)
+(*           and use it to prove relative security from sequential to speculative, with ideal as a natural intermediate *)
+(*           Current problem: due to the source taking any number of steps, it is impossible to match histories *)
+(*           It can be solved by limiting source to take 0 or 1 steps, which is currently the structure of the MiniCET backwards simulation. *)
+Section COMPOSITION.
+
+Context
+  {input : Type}
+  {L0 L1 L2 : Language input}
+  (compile2 : compiler (Ls := L1) (Lt := L2))
+  (compile1 : compiler (Ls := L0) (Lt := L1))
+  (sync2 : input_sync (input := input))
+  (sync1 : input_sync (input := input))
+.
+
+Definition compose : compiler (Ls := L0) (Lt := L2) :=
+  fun p_s p_t => exists2 p_i, compile1 p_s p_i & compile2 p_i p_t.
+
+Definition compose_sync : input_sync (input := input) :=
+  fun inp_s inp_t => exists2 inp_i, sync1 inp_s inp_i & sync2 inp_i inp_t.
+
+Lemma compose_safe_bw_simulation :
+  preserves_safety compile1 sync1  ->
+  has_safe_bw_simulation compile2 sync2 ->
+  has_safe_bw_simulation compile1 sync1 ->
+  has_safe_bw_simulation compose compose_sync.
+Proof.
+  intros Hprev Hbw2 Hbw1 p_s p_t Hcompose.
+  unfold has_safe_bw_simulation in Hbw1, Hbw2.
+  destruct Hcompose as [p_i Hcompile1 Hcompile2].
+  destruct (Hbw1 p_s p_i Hcompile1) as (H1 & sim1 & Tdir1 & Tobs1 & Hinit1 & Hstep1 & Hshape1 & Hinj1).
+  destruct (Hbw2 p_i p_t Hcompile2) as (H2 & sim2 & Tdir2 & Tobs2 & Hinit2 & Hstep2 & Hshape2 & Hinj2).
+  pose (hist := {| history := @history _ _ H1 * @history _ _ H2;
+                   init_hist := (@init_hist _ _ H1, @init_hist _ _ H2);
+                   This := fun h ds os => (fst h, @This _ _ H2 (snd h) ds os) |}
+                : History (Lt := L2)).
+  exists hist.
+  exists (fun h s t => exists i, sim1 (fst h) s i /\ sim2 (snd h) i t
+                          /\ (sequential_safe p_s s -> sequential_safe p_i i)).
+  exists (fun h ds => Tdir1 (fst h) (Tdir2 (snd h) ds)).
+  exists (fun h ds os => Tobs2 (snd h) ds (Tobs1 (fst h) (Tdir2 (snd h) ds) os)).
+  split; [|split; [|split]].
+  - intros inp_s inp_t [inp_i S1 S2].
+    exists (initial_machine p_i inp_i).
+    split; [exact (Hinit1 _ _ S1)|]. split; [exact (Hinit2 _ _ S2)|].
+    intros SAFE. exact (Hprev _ _ _ _ SAFE Hcompile1 S1).
+  - intros ds [h1 h2] os_t s t t' (i & SIM1 & SIM2 & SAFEI) SAFE STEP.
+    destruct (Hstep2 ds h2 os_t i t t' SIM2 (SAFEI SAFE) STEP) as (i' & os_i & SEM2 & OBS2 & SIM2').
+    simpl. subst os_t.
+    (* Unprovable with the current definitions:
+       1. The composed history cannot update h1: This only receives the target observations
+          Tobs2 h2 ds os_i, and the intermediate observations os_i cannot be recovered from them
+          (Tobs2 is only length-injective).
+       2. SEM2 may consist of several L1 steps, while Hstep1 covers one L1 step at a time with h1
+          updated between steps using each step's source observations. The composed Tdir only sees
+          (h1, h2) and ds, so it cannot know the number of L1 steps, how Tdir2 h2 ds splits among
+          them, or the intermediate histories. *)
+    admit.
+  - intros [h1 h2] s1 s2 t1 t2 t1' t2' ds1 ds2 os1 os2
+      (i1 & _ & SIM21 & _) (i2 & _ & SIM22 & _) ST1 ST2 PRE.
+    exact (Hshape2 h2 i1 i2 t1 t2 t1' t2' ds1 ds2 os1 os2 SIM21 SIM22 ST1 ST2 PRE).
+  - intros [h1 h2] ds os os' LEN. simpl in LEN.
+    exact (Hinj1 h1 _ os os' (Hinj2 h2 ds _ _ LEN)).
+Admitted.
+
+End COMPOSITION.
