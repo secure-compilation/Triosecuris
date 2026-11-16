@@ -147,6 +147,8 @@ Section SAFETY.
 
 End SAFETY.
 
+Definition input_sync {input : Type} : Type := input -> input -> Prop.
+
 Section BACKWARD.
 
 Context
@@ -155,8 +157,6 @@ Context
 .
 
 Definition compiler : Type := prog (L := Ls) -> prog (L := Lt) -> Prop.
-
-Definition input_sync : Type := prog (L := Ls) -> input -> input -> Prop.
 
 Section HISTORY.
 
@@ -222,7 +222,7 @@ Definition initial_sim
   (sim : sim_t) :
   Prop :=
   forall inp inp',
-    sync p_s inp inp' ->
+    sync inp inp' ->
     sim init_hist (initial_machine p_s inp) (initial_machine p_t inp').
 
 Definition step_shape_det
@@ -384,14 +384,14 @@ Section RELATIVE_SECURITY.
     {input : Type}
     {Ls Lt : Language input}
     (compile : compiler (Ls := Ls) (Lt := Lt))
-    (sync : prog (L := Ls) -> input -> input -> Prop)
+    (sync : input_sync (input := input))
   .
 
   Definition relative_secure p_s p_t inp1 inp2 :=
       forall inp1' inp2',
       same_obs p_s inp1 inp2 ->
-      sync p_s inp1 inp1' ->
-      sync p_s inp2 inp2' ->
+      sync inp1 inp1' ->
+      sync inp2 inp2' ->
       compile p_s p_t ->
       same_obs p_t inp1' inp2'.
 End RELATIVE_SECURITY.
@@ -401,7 +401,7 @@ Section OBS_EQ_WITH_BACKWARDS_IMPLIES_RELSEC.
     {input : Type}
     {Ls Lt : Language input}
     (compile : compiler (Ls := Ls) (Lt := Lt))
-    (sync : input_sync (Ls := Ls))
+    (sync : input_sync (input := input))
   .
 
   Section SIM_RUN.
