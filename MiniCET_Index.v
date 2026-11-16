@@ -813,6 +813,11 @@ Definition uslh_compiler : SimDiagrams.compiler (Ls := IdealLang) (Lt := SpecLan
     /\ unused_prog sp p_s
     /\ first_blk_call p_s.
 
+Definition ideal_compiler : compiler (Ls := SeqLang) (Lt := IdealLang) := fun p_s p_t =>
+  p_s = p_t.
+
+Definition uslh_full_compiler := compose ideal_compiler uslh_compiler.
+
 (* -------------------------------------------------------------------------- *)
 (* Transformers *)
 
@@ -952,9 +957,12 @@ Definition uslh_hist (p_s p_t: prog) (isp: nat) : History (Lt := SpecLang) :=
 
 Definition uslh_sync (isp: nat) : SimDiagrams.input_sync (Ls := IdealLang) :=
   fun p inp inp' =>
+    let r := fst inp in
+    let r' := fst inp' in
     Rsync1 p (fst inp) (fst inp') false
     /\ Msync p (snd inp) (snd inp')
-    /\ (fst inp) ! sp = N isp.
+    /\ r ! sp = N isp
+    /\ r' ! callee = FP (0, 0).
 (* -------------------------------------------------------------------------- *)
 
 Lemma rev_fetch : forall (p: prog) (pc: cptr) (blk: list inst * bool) (i: inst),
@@ -3848,7 +3856,7 @@ Proof.
   splits.
   (* initial_sim: both runs start at (0,0); the target is at the ctarget of the entry
      procedure (block 0 is a procedure by first_blk_call), which is match_cfgs_ext_ct1. *)
-  - intros [r m] [r' m'] (REG & MSC & SPV). simpl in REG, MSC, SPV.
+  - intros [r m] [r' m'] (REG & MSC & SPV & CALLEEV). simpl in REG, MSC, SPV.
     red in FST. destruct (nth_error p_s 0) as [ [blk [|] ] | ] eqn:BLK; try contradiction.
     (* The synced target sp equals the source sp, i.e. isp. *)
     assert (VSP: r' ! sp = N isp).
@@ -4306,19 +4314,21 @@ Proof.
 Qed.
 
 Lemma spec_eval_relative_secure
-  p r1 r2 r1' r2' m1 m2 m1' m2'
+  (p : prog)
+  (r1 r2 : reg)
+  (m1 m2 : mem)
+  (initial_sp : nat)
   (FST: first_blk_call p)
   (NCT: no_ct_prog p)
   (WFP: wf_prog p)
-  (CALLEE1: r1' ! callee = FP (0, 0))
-  (CALLEE2: r2' ! callee = FP (0, 0))
   (UNUSED1: unused_prog msf p)
-  (UNUSED2: unused_prog callee p) :
-  relative_secure p (uslh_prog) r1 r2 r1' r2' m1 m2 m1' m2'.
+  (UNUSED2: unused_prog callee p)
+  (UNUSED3: unused_prog sp p)
+  (SAFE1 : sequential_safe (L := SeqLang) p (initial_machine (L := SeqLang) p (r1, m1)))
+  (SAFE2 : sequential_safe (L := SeqLang) p (initial_machine (L := SeqLang) p (r2, m2))) :
+  relative_secure (Ls := SeqLang) (Lt := SpecLang) 
+    uslh_full_compiler (uslh_sync initial_sp) p (uslh_prog p) (r1, m1) (r2, m2).
 Proof.
-  red. ii. eapply spec_eval_relative_secure_init_aux.
-  11:{ eapply H0. }
-  11:{ eapply H1. }
-  all: eauto.
-Qed.
- 
+  apply obs_eq_safe_bw_relsec; eauto.
+  (* TODO: write composition lemmas for "has_safe_bw_simulation" *)
+Admitted.
