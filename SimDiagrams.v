@@ -379,7 +379,7 @@ Section RELATIVE_SECURITY.
     {input : Type}
     {Ls Lt : Language input}
     (compile : compiler (Ls := Ls) (Lt := Lt))
-    (sync : prog (L := Ls) -> input -> input -> Prop)
+    (sync : input_sync (Ls := Ls))
   .
 
   Definition relative_secure p_s p_t inp1 inp2 :=
@@ -390,13 +390,6 @@ Section RELATIVE_SECURITY.
       compile p_s p_t ->
       same_obs p_t inp1' inp2'.
 
-  Definition relative_secure_sim (_ : History) sim p_s p_t inp1 inp2 :=
-    forall inp1' inp2',
-    same_obs p_s inp1 inp2 ->
-    compile p_s p_t ->
-    initial_sim_pointwise p_s p_t sim inp1 inp1' ->
-    initial_sim_pointwise p_s p_t sim inp2 inp2' ->
-    same_obs p_t inp1' inp2'.
 End RELATIVE_SECURITY.
 
 Section OBS_EQ_WITH_BACKWARDS_IMPLIES_RELSEC.
