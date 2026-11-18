@@ -1,6 +1,7 @@
 Set Warnings "-notation-overridden,-parsing,-deprecated-hint-without-locality".
 From Stdlib Require Import Strings.String.
 From SECF Require Import Utils.
+From SECF Require Import SimDiagrams.
 From SECF Require Import MiniCET.
 From Stdlib Require Import Bool.Bool.
 From Stdlib Require Import Arith.Arith.
@@ -20,31 +21,6 @@ Import FunctionalExtensionality.
 
 Import MCC.
 
-Notation t_update_eq := TotalMap.t_update_eq.
-Notation t_update_neq := TotalMap.t_update_neq.
-
-
-Definition safe_imm_seq (p: prog) (st: state cfg) : Prop :=
-  match st with
-  | S_Running c => exists os stt, p |- <(( S_Running c ))> -->^ os <(( stt ))>
-  | S_Fault | S_Term => True
-  | S_Undef => False
-  end.
-
-Definition safe_imm_ideal (p: prog) (st: state ideal_cfg) : Prop :=
-  match st with
-  | S_Running sc => exists ds os stt, p |- <(( S_Running sc ))> -->i_ ds ^^ os  <(( stt ))>
-  | S_Fault | S_Term => True
-  | S_Undef => False
-  end.
-
-Definition safe_imm_spec (p: prog) (st: state spec_cfg) : Prop :=
-  match st with
-  | S_Running sc => exists ds os stt, p |- <(( S_Running sc ))> -->_ ds ^^ os  <(( stt ))>
-  | S_Fault | S_Term => True
-  | S_Undef => False
-  end.
-
 Definition seq_nostep (p: prog) (st: state cfg) : Prop :=
   ~ (exists os stt, p |- <(( st ))> -->^ os <(( stt ))>).
 
@@ -54,441 +30,250 @@ Definition ideal_nostep (p: prog) (st: state ideal_cfg) : Prop :=
 Definition spec_nostep (p: prog) (st: state spec_cfg) : Prop :=
   ~ (exists ds os stt, p |- <(( st ))> -->_ ds ^^ os  <(( stt ))>).
 
-
-Definition seq_exec_safe (p: prog) (c: cfg) : Prop :=
-  forall os ct,
-    p |- <(( S_Running c ))> -->*^ os <(( S_Running ct ))> ->
-    exists os' ctt, p |- <(( S_Running ct ))> -->^ os' <(( ctt ))>.
-
-Definition ideal_exec_safe (p: prog) (ic: ideal_cfg) : Prop :=
-  forall ds os ict,
-    p |- <(( S_Running ic ))> -->i*_ ds ^^ os  <(( S_Running ict ))> ->
-    exists ds' os' stt, p |- <(( S_Running ict ))> -->i_ ds' ^^ os'  <(( stt ))>.
-
-Definition spec_exec_safe (p: prog) (sc: spec_cfg) : Prop :=
-  forall ds os n sct (WFDS: wf_ds' p ds),
-    p |- <(( S_Running sc ))> -->*_ ds ^^ os ^^ n <(( S_Running sct ))> ->
-    exists ds' os' stt, p |- <(( S_Running sct ))> -->_ ds' ^^ os'  <(( stt ))>.
-
 Definition seq_ideal_match (st1: state cfg) (st2: state ideal_cfg) : Prop :=
   match st1, st2 with
   | S_Term, S_Term => True
   | _, S_Fault => True
   | S_Undef, _ => True
-  | S_Running c, S_Running (c', b) => c = c' /\ b = false
+  | S_Running c, S_Running (c', _, b) => c = c' /\ b = false
   | _, _ => False
   end.
 
-Definition nonempty_mem (m: mem) : Prop :=
-  0 < Datatypes.length m.
+Lemma val_match_N_l p n v
+  (VM: val_match p (N n) v) :
+  v = N n.
+Proof. destruct v; ss; subst; auto. Qed.
 
-Lemma seq_ideal_nonspec
-  p pc r m stk os stt
-  (WF: wf_stk p stk)
-  (SEQ: p |- <(( S_Running (pc, r, m, stk) ))> -->^ os <(( stt ))>) :
-  exists ds stt',
-    p |- <(( S_Running (pc, r, m, stk, false) ))> -->i_ ds ^^ os <(( stt' ))>.
-  (* /\ seq_ideal_match stt stt'. *)
-Proof.
-  inv SEQ; try (sfby (esplits; try econs; eauto)).
-  (* - exists [DBranch (not_zero n)]. esplits. *)
-  (*   { econs; eauto. } *)
-  (*   ss. split; auto. rewrite eqb_reflx. ss. *)
-  - exists [DCall l].
-    destruct (nth_error p (fst l)) eqn:PL; cycle 1.
-    { esplits. eapply ISMI_Call_F; eauto. ii. ss; clarify. }
-    destruct p0. destruct b; cycle 1.
-    { esplits. eapply ISMI_Call_F; eauto. ii. ss; clarify. ss. auto. }
-    destruct l. ss.
-    destruct n0.
-    + esplits. econs; eauto.
-    + esplits. eapply ISMI_Call_F; eauto. ii. ss; clarify. right. auto.
-  - exists [DRet pc'].
-    esplits. econs; eauto. inv WF. auto.
-Unshelve. econs.
-Qed.
+Lemma val_match_FP_l p l v
+  (VM: val_match p (FP l) v) :
+  exists l', v = FP l'.
+Proof. destruct l; destruct v; ss; eauto. Qed.
 
-Lemma wf_stk_preserve_ideal
-  p pc r m stk ms pc' r' m' stk' ms' ds os
-  (WFP: wf_prog p)
-  (WFSTK: wf_stk p stk)
-  (STEP: p |- <(( S_Running (pc, r, m, stk, ms) ))> -->i_ ds ^^ os <((S_Running (pc', r', m', stk', ms') ))>):
-  wf_stk p stk'.
-Proof.
-  inv STEP; eauto.
-  { econs; eauto. red. ii. des_ifs_safe.
-    destruct pc. simpl in Heq. clarify.
-    rewrite <- add_sub_assoc; [|lia].
-    rewrite sub_diag, add_0_r. esplits; eauto; try lia.
-    ii. exploit block_always_terminator_prog; eauto.
-    i. des. ss. clarify. }
-  inv WFSTK. auto.
-Qed.
-
-Lemma nonempty_mem_preserve_ideal
-  p pc r m stk ms pc' r' m' stk' ms' ds os
-  (STEP: p |- <(( S_Running (pc, r, m, stk, ms) ))> -->i_ ds ^^ os <((S_Running (pc', r', m', stk', ms') ))>):
-  Datatypes.length m = Datatypes.length m'.
-Proof.
-  inv STEP; eauto. rewrite upd_length. eauto.
-Qed.
-
-Require Import Stdlib.Program.Equality.
-
-Lemma wf_stk_preserve_multi_ideal
-  p pc r m stk ms pc' r' m' stk' ms' ds os
-  (WFP: wf_prog p)
-  (WFSTK: wf_stk p stk)
-  (STEP: p |- <(( S_Running (pc, r, m, stk, ms) ))> -->i*_ ds ^^ os <((S_Running (pc', r', m', stk', ms') ))>):
-  wf_stk p stk'.
-Proof.
-  dependent induction STEP; auto.
-  destruct ic2. 2-4: inv STEP; inv H0.
-  destruct a as [ [ [ [pc'' r''] m''] stk''] ms''].
-  eapply wf_stk_preserve_ideal in H; eauto.
-Qed.
-
-Lemma ideal_res_pc_exists
-  p pc r m stk ms pc' r' m' stk' ms' ds os
-  (WFSTK: wf_stk p stk)
-  (WFP: wf_prog p)
-  (STEP: p |- <(( S_Running (pc, r, m, stk, ms) ))> -->i_ ds ^^ os <((S_Running (pc', r', m', stk', ms') ))>):
-  exists i, p[[pc']] = Some i.
-Proof.
-  inv STEP.
-  - exploit block_always_terminator_prog; try eapply H11; eauto.
-  - exploit block_always_terminator_prog; try eapply H11; eauto.
-  - exploit block_always_terminator_prog; try eapply H11; eauto.
-  - exploit block_always_terminator_prog; try eapply H11; eauto.
-    intros (i'' & PC').
-    destruct pc as [b o]. ss. des_ifs_safe. destruct p0 as [blk ct].
-    destruct b'.
-    { inv WFP. rewrite Forall_forall in H0.
-      eapply nth_error_In in Heq, H11. eapply H0 in Heq.
-      red in Heq. des. rewrite Forall_forall in Heq1. eapply Heq1 in H11.
-      simpl in H11. des. red in H1. des_ifs_safe. simpl.
-      rewrite Heq2. destruct l0; simpl; eauto.
-      eapply nth_error_In in Heq2. eapply H0 in Heq2. red in Heq2. des.
-      red in Heq2. ss; lia. }
-    ss. des_ifs; ss; eauto.
-  - destruct pc as [b o]. ss. des_ifs_safe. destruct p0 as [blk ct].
-    inv WFP. rewrite Forall_forall in H0.
-    eapply nth_error_In in Heq, H11. eapply H0 in Heq. red in Heq. des.
-    rewrite Forall_forall in Heq1. eapply Heq1 in H11.
-    simpl in H11. des. red in H11. des_ifs_safe. simpl.
-    destruct l0; simpl; eauto.
-    eapply nth_error_In in Heq2. eapply H0 in Heq2. red in Heq2. des.
-    red in Heq2. ss; lia.
-  - exploit block_always_terminator_prog; try eapply H11; eauto.
-  - exploit block_always_terminator_prog; try eapply H11; eauto.
-  - destruct pc', blk. ss. subst. rewrite H14. ss. destruct l0; eauto.
-    inv WFP. rewrite Forall_forall in H0.
-    eapply nth_error_In in H14. eapply H0 in H14. red in H14. des.
-    red in H14. ss.
-  - destruct pc' as [b' o'].
-    red in H12. des.
-    exploit block_always_terminator_prog; try eapply H12; eauto.
-    simpl. replace (add (o' - 1) 1) with o' by lia. auto.
-  - exploit block_always_terminator_prog; try eapply H11; eauto.
-Qed.
-
-Lemma multi_ideal_res_pc_exists_aux :
-  forall p ic1 ic2 ds os,
-    p |- <(( ic1 ))>  -->i*_ ds ^^ os <(( ic2 ))> ->
-    forall pc r m stk ms pc' r' m' stk' ms',
-      ic1 = S_Running (pc, r, m, stk, ms) ->
-      ic2 = S_Running (pc', r', m', stk', ms') ->
-      wf_stk p stk -> wf_prog p -> p[[pc]] <> None -> exists i, p[[pc']] = Some i.
-Proof.
-  induction 1; subst; i.
-  - subst. clarify. destruct (p[[pc']]); eauto. clarify.
-  - destruct ic2. 2-4: inv H0; inv H7; inv H6.
-    destruct a as [ [ [ [pc'' r''] m''] stk''] ms'']. subst.
-    exploit IHmulti_ideal_inst.
-    { eauto. }
-    { eauto. }
-    { eapply wf_stk_preserve_ideal in H; eauto. }
-    { eauto. }
-    { eapply ideal_res_pc_exists in H; eauto. des. ii. clarify. }
-    eauto.
-Qed.
-
-Lemma multi_ideal_res_pc_exists
-  p pc r m stk ms pc' r' m' stk' ms' ds os
-  (WFSTK: wf_stk p stk)
-  (WFP: wf_prog p)
-  (PC: p[[pc]] <> None)
-  (STEP: p |- <(( S_Running (pc, r, m, stk, ms) ))> -->i*_ ds ^^ os <((S_Running (pc', r', m', stk', ms') ))>):
-  exists i, p[[pc']] = Some i.
-Proof.
-  eapply multi_ideal_res_pc_exists_aux; eauto.
-Qed.
-
-Lemma nonempty_mem_preserve_multi_ideal
-  p pc r m stk ms pc' r' m' stk' ms' ds os
-  (STEP: p |- <(( S_Running (pc, r, m, stk, ms) ))> -->i*_ ds ^^ os <((S_Running (pc', r', m', stk', ms') ))>):
-  Datatypes.length m = Datatypes.length m'.
-Proof.
-  dependent induction STEP; eauto.
-  destruct ic2. 2-4: inv STEP; inv H0.
-  destruct a as [ [ [ [pc'' r''] m''] stk''] ms'']. subst.
-  eapply nonempty_mem_preserve_ideal in H.
-  rewrite H. eapply IHSTEP; eauto.
-Qed.
+Lemma Msync_nth_src p m m' n v
+  (MSC: Msync p m m')
+  (NTH: nth_error m.(memory) n = Some v) :
+  exists v', nth_error m'.(memory) n = Some v' /\ val_match p v v'.
+Proof. destruct MSC as [MSC _]. specialize (MSC n). rewrite NTH in MSC. des_ifs. eauto. Qed.
 
 Lemma seq_ideal_safety_preservation
-  p c pc r m stk
-  (CFG: c = (pc, r, m, stk))
-  (MEM: nonempty_mem m)
-  (WFSTK: wf_stk p stk)
+  p pc r m sb n
+  (SP: r ! sp = N n)
   (WFP: wf_prog p)
   (NCT: no_ct_prog p)
-  (SEQ: seq_exec_safe p c) :
-  ideal_exec_safe p (c, false).
+  (FST: first_blk_call p)
+  (UNUSED: unused_prog sp p)
+  (SEQ: sequential_safe (L := SeqLang) p (S_Running (pc, r, m))) :
+  sequential_safe (L := IdealLang) p (S_Running (pc, r, m, sb, false)).
 Proof.
-  red. ii. destruct ict as [c' ms]. subst.
+  eapply seq_safe_ideal_safe; eauto.
+Qed.
 
-  destruct c' as [cl' stk']. destruct cl' as [cl' m']. destruct cl' as [pc' r'].
-  destruct ms; cycle 1.
-  { red in SEQ.
-    exploit multi_ideal_nonspec_seq; eauto. i.
-    eapply SEQ in x0. des. eapply seq_ideal_nonspec in x0.
-    - des. eauto.
-    - eapply wf_stk_preserve_multi_ideal; eauto. }
-  destruct (p[[pc']]) eqn:PC'; cycle 1.
-  { eapply multi_ideal_res_pc_exists in H; eauto; des; clarify.
-    ii. red in SEQ. exploit SEQ; [econs|]. i. des. inv x0; clarify. }
-  destruct i.
-  - esplits. econs; eauto.
-  - esplits. econs 2. eauto.
-  - esplits. econs 3; eauto.
-  - esplits. econs 4; eauto.
-  - esplits. econs 5; eauto.
-  - assert (MEM': nonempty_mem m').
-    { eapply nonempty_mem_preserve_multi_ideal in H.
-      unfold nonempty_mem in *. lia. }
-    assert (exists v, nth_error m' 0 = Some v).
-    { red in MEM'. erewrite <- nth_error_Some in MEM'.
-      destruct (nth_error m' 0); eauto. clarify. }
-    des. esplits. econs 6; ss; eauto.
-  - esplits. econs 7; ss; eauto.
-  - exists [DCall (0, 0)], [OCall (0, 0)].
-    red in WFP. des. red in WFP.
-    assert (exists blk b, nth_error p 0 = Some (blk, b)).
-    { erewrite <- nth_error_Some in WFP. destruct (nth_error p 0); clarify.
-      destruct p0. eauto. }
-    des. destruct b.
-    + esplits. econs; eauto.
-    + esplits. eapply ISMI_Call_F; eauto. ii. ss. clarify.
-      left. ss.
-  - exfalso. eapply no_ct_prog_src; eauto.
-  - esplits. eapply ISMI_Peek; eauto.
-  - destruct stk'.
-    + esplits. eapply ISMI_Term. eauto.
-    + exists [DRet c].
-      esplits. eapply ISMI_Ret; eauto.
-      hexploit wf_stk_preserve_multi_ideal; eauto. i.
-      inv H0. eauto.
-Unshelve. econs.
+Lemma ultimate_slh_bcc_multi p sc ds os sc'
+  (NCT: no_ct_prog p)
+  (WFP: wf_prog p)
+  (UNUSED1: unused_prog msf p)
+  (UNUSED2: unused_prog callee p)
+  (UNUSED3: unused_prog sp p)
+  (RUN: uslh_prog p |- <(( sc ))> -->*_ ds ^^ os <(( sc' ))>) :
+  forall h ic,
+    uslh_sim p h ic sc ->
+    sequential_safe (L := IdealLang) p ic ->
+    exists h' ds' os' ic',
+      p |- <(( ic ))> -->i*_ ds' ^^ os' <(( ic' ))> /\ uslh_sim p h' ic' sc'.
+Proof.
+  induction RUN as [sc | sc sci sc' ds1 os1 ds2 os2 STEP RUN IH]; intros h ic SIM SAFE.
+  { exists h, [], [], ic. split; [apply (sem_refl (L := IdealLang))|exact SIM]. }
+  destruct (uslh_safe_step_preserves_sim p 0 NCT WFP UNUSED1 UNUSED2 UNUSED3 ds1 h os1 ic sc sci SIM SAFE STEP)
+    as (ici & osi & RUNi & _ & SIMi).
+  destruct (IH _ ici SIMi (sequential_safe_sem SAFE RUNi)) as (h' & ds' & os' & ic' & RUN' & SIM').
+  exists h'. do 2 eexists. exists ic'.
+  split; [eapply sem_cat; [exact RUNi|exact RUN']|exact SIM'].
 Qed.
 
 Lemma seq_spec_safety_preservation
-  p b c c' pc r m stk
-  (CFG: c = (pc, r, m, stk))
-  (MEM: nonempty_mem m)
-  (WFSTK: wf_stk p stk)
+  p pc r m sb n h sc
+  (SP: r ! sp = N n)
+  (FST: first_blk_call p)
   (NCT: no_ct_prog p)
   (WFP: wf_prog p)
   (UNUSED1: unused_prog msf p)
   (UNUSED2: unused_prog callee p)
-  (SEQ: seq_exec_safe p c)
-  (MATCH: match_cfgs_ext p (S_Running (c, false)) (S_Running (c', b, false))) :
-  spec_exec_safe (uslh_prog p) (c', b, false).
+  (UNUSED3: unused_prog sp p)
+  (SEQ: sequential_safe (L := SeqLang) p (S_Running (pc, r, m)))
+  (MATCH: uslh_sim p h (S_Running (pc, r, m, sb, false)) sc) :
+  sequential_safe (L := SpecLang) (uslh_prog p) sc.
 Proof.
-  ii. eapply seq_ideal_safety_preservation in SEQ; eauto.
-
-  red in SEQ.
-  exploit ultimate_slh_bcc'; eauto.
-  i. des. destruct ic2.
-  - exploit SEQ; eauto. i. des.
-    inv x1.
-    + inv MATCH0. inv x4.
-      * exploit src_inv; eauto. i. des. inv x4. inv MATCH0.
-        esplits. econs; eauto.
-      * exploit src_inv; eauto. i. des. inv x1. inv MATCH0.
-        esplits. econs 2; eauto.
-      * exploit src_inv; eauto. i. des. inv x1. inv MATCH0.
-        eapply unused_prog_lookup in UNUSED1; eauto.
-        eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
-        esplits. econs 3; eauto.
-        { erewrite <- H9. inv REG. ss. rewrite H1.
-          destruct ms; ss.
-          exploit eval_regs_eq; try eapply UNUSED4; eauto.
-          { apply wf_expr_wf_exp. eapply wf_prog_lookup in WFP; eauto. apply WFP. }
-          destruct (eval r0 e1), (eval r' e1); ss.
-          congruence.
-        }
-        { erewrite <- H10. inv REG. ss. rewrite H1.
-          destruct ms; ss.
-          exploit eval_regs_eq; try eapply UNUSED5; eauto.
-          { apply wf_expr_wf_exp. eapply wf_prog_lookup in WFP; eauto. apply WFP. }
-          destruct (eval r0 e2), (eval r' e2); ss.
-          congruence.
-        }
-      * exploit src_inv; eauto. i. des. inv x4; [ss|].
-        eapply unused_prog_lookup in UNUSED1; eauto.
-        eapply unused_prog_lookup in UNUSED2; eauto.
-
-        assert (to_nat (eval r' <{{ (msf = 1) ? 0 : e }}>) = Some n').
-        { ss. inv REG. rewrite H1. destruct ms; ss; eauto. rewrite <- H9.
-          exploit eval_regs_eq; try eapply UNUSED4; eauto.
-          { apply wf_expr_wf_exp. eapply wf_prog_lookup in WFP; eauto. apply WFP. }
-          destruct (eval r0 e), (eval r' e); ss.
-          congruence.
-        }
-        esplits. econs 4; eauto.
-      * exploit src_inv; eauto. i. des. inv x4. inv MATCH0.
-        esplits. econs 5; eauto.
-      * exploit src_inv; eauto. i. des. inv x1. inv MATCH0.
-        eapply unused_prog_lookup in UNUSED1; eauto.
-        eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
-
-        red in MSC. specialize (MSC n0). des_ifs_safe.
-        esplits. econs 6; eauto. rewrite <- H10.
-        inv REG. simpl. rewrite H1. destruct ms; ss.
-        exploit eval_regs_eq; eauto.
-        { apply wf_expr_wf_exp. eapply wf_prog_lookup in WFP; eauto. apply WFP. }
-        destruct (eval r0 e), (eval r' e); ss.
-        congruence.
-      * exploit src_inv; eauto. i. des. inv x4. inv MATCH0.
-        eapply unused_prog_lookup in UNUSED1; eauto.
-        eapply unused_prog_lookup in UNUSED2; eauto. ss. des.
-
-        esplits. econs 7; eauto. erewrite <- H10.
-        inv REG. simpl. rewrite H1. destruct ms; ss.
-        exploit eval_regs_eq; try apply UNUSED1; eauto.
-        { apply wf_expr_wf_exp. eapply wf_prog_lookup in WFP; eauto. apply WFP. }
-        destruct (eval r0 e), (eval r' e); ss.
-        congruence.
-      * exploit src_inv; eauto. i. des. inv x4; [ss|].
-        esplits. econs 2; eauto.
-      * exploit src_inv; eauto. i. des. inv x4; [ss|].
-        esplits. econs 2; eauto.
-      * destruct stk'.
-        { ss. des_ifs. }
-        exploit src_inv; eauto. i. des. inv x4.
-        { inv SIMPL. }
-        esplits. econs 11; eauto.
-      * exploit src_inv; eauto. i. des. inv x4. inv x1. inv MATCH0.
-        esplits. econs 11. eauto.
-      * destruct stk'; [|ss].
-        exploit src_inv; eauto. i. des. inv x4.
-        { inv SIMPL. }
-        esplits. econs 11; eauto.
-    + esplits. econs. eauto.
-    + esplits. econs 2; eauto.
-    + inv REG.
-      eapply unused_prog_lookup in UNUSED1; eauto.
-      eapply unused_prog_lookup in UNUSED2; eauto.
-
-      destruct (to_fp (eval r' <{{ (msf = 1) ? & (0,0) : fp }}>)) eqn:FP.
-      2:{ ss. rewrite H1 in FP. ss. destruct ms; ss.
-        assert (exists l, to_fp (eval r0 fp) = Some l).
-        { inv x4; clarify; eauto. }
-        des. exploit eval_regs_eq; eauto. 1: apply wf_expr_wf_exp; eapply wf_prog_lookup in WFP; eauto; apply WFP.
-        destruct (eval r' fp), (eval r0 fp); ss; destruct pc1; ss.
-      }
-      esplits. eapply SpecSMI_Call; eauto.
-    + esplits. econs 2; eauto.
-    + esplits. eapply SpecSMI_Jump; eauto.
-    + esplits. econs 2; eauto.
-    (* In this case, the callee register stores the return target. *)
-    + destruct stk'.
-      * esplits. eapply SpecSMI_Term; eauto.
-      * destruct c as [l' o'].
-        exists [DRet (l', o')].
-        esplits. econs 10; eauto.
-        unfold wf_ret.
-        destruct stk0; ss.
-        destruct (ret_sync p c) eqn: ?;  ss.
-        destruct (map_opt (ret_sync p) stk0); ss. clarify.
-        destruct c. exploit ret_sync_same_label; eauto. intros ->.
-        destruct n1; ss.
-        destruct (p [[(l', n1)]]) eqn:?; ss; rewrite Heqo0 in Heqo. 2: discriminate.
-        destruct i; ss.
-        destruct (pc_sync p (l', n1)) eqn:?; ss; rewrite Heqo1 in Heqo. 2: discriminate.
-        exploit src_inv. 3: instantiate (2 := (l', n1)); exact Heqo1. all: eauto. i.
-        destruct c; clarify. des. inv x5. 1: inv SIMPL.
-        destruct tpc. simpl in SYNC. clarify. ss.
-        rewrite IN'. assert (n2 + 2 - 1 = Nat.add n2 1) as -> by lia. rewrite IN.
-        split; ss. econs. split; [reflexivity|lia].
-    + esplits. eapply SpecSMI_Asgn. eauto.
-  - clear - x0. exfalso. remember false. clear Heqb.
-    dependent induction x0. destruct ic2. 3-4: inv x0; inv H0.
-    2:{ inv H. }
-    destruct a. eapply IHx0; eauto.
-  - inv x1. exists [], [], S_Fault.
-    eapply SpecSMI_Fault; eauto.
-  - inv x1.
-Unshelve. all: repeat econs.
+  intros ds os sct RUN.
+  exploit ultimate_slh_bcc_multi; eauto.
+  { eapply seq_ideal_safety_preservation; eauto. }
+  intros (h' & ds' & os' & ic & IRUN & _ & MATCH').
+  assert (INV: ideal_safe_inv p ic).
+  { eapply ideal_safe_inv_sem; [exact WFP|exact UNUSED3| |exact IRUN]. ss. eauto. }
+  clear - INV MATCH' FST NCT WFP UNUSED1 UNUSED2 UNUSED3. simpl.
+  inv MATCH'.
+  (* Target matches source: the target executes the hardened source instruction. *)
+  - inv MATCH. destruct INV as [ [spv SP] INV].
+    destruct REG as [REGX MSF].
+    exploit src_lookup; eauto. intros [i INST].
+    exploit src_inv; eauto. intros (i' & TINST & MI).
+    assert (TSP: r' ! sp = N spv).
+    { exploit Rsync1_sp; [exact REGX|]. rewrite SP. apply val_match_N_l. }
+    exploit unused_prog_lookup; [exact UNUSED1|exact INST|]. intros U1.
+    exploit unused_prog_lookup; [exact UNUSED2|exact INST|]. intros U2.
+    exploit wf_prog_lookup; [exact WFP|exact INST|]. intros WFI.
+    destruct ms; simpl in MSF.
+    (* Misspeculation: masked indices evaluate to 0. *)
+    + inv MI.
+      * match goal with H: match_simple_inst_uslh _ _ |- _ => inv H end.
+        -- do 3 eexists. eapply SpecSMI_Skip; eauto.
+        -- do 3 eexists. eapply SpecSMI_Jump; eauto.
+        -- do 3 eexists. eapply SpecSMI_Load_Misspec; [exact TINST| |reflexivity].
+           simpl. rewrite MSF. reflexivity.
+        -- do 3 eexists. eapply SpecSMI_Store_Misspec; [exact TINST|].
+           simpl. rewrite MSF. reflexivity.
+        -- do 3 eexists. eapply SpecSMI_Asgn; eauto.
+        -- do 3 eexists. eapply SpecSMI_Div; [exact TINST| |]; simpl; rewrite MSF; reflexivity.
+        -- do 3 eexists. eapply SpecSMI_Term; eauto.
+      * do 3 eexists. eapply SpecSMI_Branch with (b' := false); [exact TINST| |reflexivity|reflexivity|reflexivity].
+        simpl. rewrite MSF. reflexivity.
+      * do 3 eexists. eapply SpecSMI_Asgn; eauto.
+      * do 3 eexists. eapply SpecSMI_Load_Misspec; [exact TINST| |reflexivity].
+        simpl. rewrite TSP. reflexivity.
+    (* No misspeculation: the source takes a sequential step, which the target mirrors. *)
+    + destruct (INV [] [] _ (sem_refl (L := SeqLang) p _)) as (os0 & st0 & SSTEP).
+      assert (EVAL: forall e, e_unused msf e -> e_unused callee e -> wf_expr p e ->
+                     to_nat (eval r' <{{ (msf = 1) ? 0 : e }}>) = to_nat (eval r e)).
+      { intros e UE1 UE2 WFE. simpl. rewrite MSF. simpl.
+        symmetry. eapply eval_regs_eq_nat; eauto. apply wf_expr_wf_exp. auto. }
+      inv MI.
+      * match goal with H: match_simple_inst_uslh _ _ |- _ => inv H end.
+        -- do 3 eexists. eapply SpecSMI_Skip; eauto.
+        -- do 3 eexists. eapply SpecSMI_Jump; eauto.
+        -- inv SSTEP; clarify. simpl in U1, U2, WFI. des.
+           exploit Msync_nth_src; eauto. intros (tv & NTH' & _).
+           do 3 eexists. eapply SpecSMI_Load; [exact TINST| |exact NTH'].
+           rewrite EVAL; eauto.
+        -- inv SSTEP; clarify. simpl in U1, U2, WFI. des.
+           do 3 eexists. eapply SpecSMI_Store; [exact TINST|].
+           rewrite EVAL; eauto.
+        -- do 3 eexists. eapply SpecSMI_Asgn; eauto.
+        -- inv SSTEP; clarify. simpl in U1, U2, WFI. des.
+           do 3 eexists. eapply SpecSMI_Div; [exact TINST| |]; rewrite EVAL; eauto.
+        -- do 3 eexists. eapply SpecSMI_Term; eauto.
+      * inv SSTEP; clarify. simpl in U1, U2, WFI. des.
+        do 3 eexists. eapply SpecSMI_Branch with (b' := false); [exact TINST| |reflexivity|reflexivity|reflexivity].
+        rewrite EVAL; eauto.
+      * do 3 eexists. eapply SpecSMI_Asgn; eauto.
+      * inv SSTEP; clarify.
+        exploit Msync_nth_src; eauto. intros (tv & NTH' & _).
+        do 3 eexists. eapply SpecSMI_Load; [exact TINST| |exact NTH'].
+        simpl. rewrite TSP. simpl. congruence.
+  (* Procedure entry: the target executes ctarget. *)
+  - do 3 eexists. eapply SpecSMI_CTarget; eauto.
+  (* Procedure entry: the target updates msf. *)
+  - do 3 eexists. eapply SpecSMI_Asgn; eauto.
+  (* Call: the target executes the masked call. *)
+  - destruct INV as [ [spv SP] INV].
+    destruct REG as [REGX MSF].
+    assert (TSP: r' ! sp = N spv).
+    { exploit (REGX sp); [split; discriminate|auto|]. rewrite SP. apply val_match_N_l. }
+    destruct ms; simpl in MSF.
+    + do 3 eexists. eapply SpecSMI_Call_Misspec; [exact TCALL| |exact TSP].
+      simpl. rewrite MSF. reflexivity.
+    + destruct (INV [] [] _ (sem_refl (L := SeqLang) p _)) as (os0 & st0 & SSTEP).
+      exploit unused_prog_lookup; [exact UNUSED1|exact CALL|]. intros U1.
+      exploit unused_prog_lookup; [exact UNUSED2|exact CALL|]. intros U2.
+      exploit wf_prog_lookup; [exact WFP|exact CALL|]. intros WFI.
+      exploit eval_regs_eq; [exact U1|exact U2|apply wf_expr_wf_exp; exact WFI|exact REGX|]. intros VM.
+      inv SSTEP; clarify. rewrite SP in *. clarify.
+      match goal with H: to_fp (eval r fp) = Some _ |- _ => rename H into EFP end.
+      destruct (eval r fp) eqn:EV; try discriminate EFP. simpl in EFP. clarify.
+      exploit val_match_FP_l; [exact VM|]. intros [l' EV'].
+      do 3 eexists. eapply SpecSMI_Call with (pc' := (0, 0)); [exact TCALL| |exact TSP| |reflexivity].
+      * simpl. rewrite MSF. simpl. rewrite EV'. reflexivity.
+      * destruct MSC as [_ TOP]. rewrite <- TOP. eauto.
+  (* Faulty call: the target faults on a missing ctarget. *)
+  - do 3 eexists. eapply SpecSMI_Fault; eauto.
+  (* Branch hardening steps. *)
+  - do 3 eexists. eapply SpecSMI_Asgn; eauto.
+  - do 3 eexists. eapply SpecSMI_Jump; eauto.
+  - do 3 eexists. eapply SpecSMI_Asgn; eauto.
+  (* Return masking: the target stores the masked return address. *)
+  - exploit src_inv; eauto. intros (i' & TINST & MI). inv MI; [inv SIMPL|].
+    rewrite SYNC in PC. clarify.
+    destruct REG as [REGX MSF].
+    assert (TSP: r' ! sp = N spv).
+    { exploit (REGX sp); [split; discriminate|auto|]. rewrite SP. apply val_match_N_l. }
+    destruct ms.
+    + do 3 eexists. eapply SpecSMI_Store_Misspec; [exact NXT1|]. simpl. rewrite TSP. reflexivity.
+    + do 3 eexists. eapply SpecSMI_Store; [exact NXT1|]. simpl. rewrite TSP. reflexivity.
+  (* Return masking: the target reloads the return address. *)
+  - exploit src_inv; eauto. intros (i' & TINST & MI). inv MI; [inv SIMPL|].
+    rewrite SYNC in PC. clarify.
+    destruct REG as [REGX MSF].
+    assert (TSP: r' ! sp = N spv).
+    { exploit (REGX sp); [split; discriminate|auto|]. rewrite SP. apply val_match_N_l. }
+    destruct ms.
+    + do 3 eexists. eapply SpecSMI_Load_Misspec; [exact NXT2| |reflexivity]. simpl. rewrite TSP. reflexivity.
+    + destruct INV as [_ INV].
+      destruct (INV [] [] _ (sem_refl (L := SeqLang) p _)) as (os0 & st0 & SSTEP).
+      inv SSTEP; clarify. rewrite SP in *. clarify.
+      exploit Msync_nth_src; eauto. intros (tv & NTH' & _).
+      do 3 eexists. eapply SpecSMI_Load; [exact NXT2| |exact NTH']. simpl. rewrite TSP. reflexivity.
+  (* Return: the target returns to the (possibly masked) return address. *)
+  - exploit src_inv; eauto. intros (i' & TINST & MI). inv MI; [inv SIMPL|].
+    rewrite SYNC in PC. clarify.
+    destruct REG as [REGX MSF].
+    assert (TSP: r' ! sp = N spv).
+    { exploit (REGX sp); [split; discriminate|auto|]. rewrite SP. apply val_match_N_l. }
+    destruct ms.
+    + destruct CALLEE as [SLOT _].
+      do 3 eexists. eapply SpecSMI_Ret_Misspec_Step; [exact NXT3|exact TSP|exact SLOT].
+    + destruct INV as [_ INV].
+      destruct (INV [] [] _ (sem_refl (L := SeqLang) p _)) as (os0 & st0 & SSTEP).
+      inv SSTEP; clarify. rewrite SP in *. clarify.
+      exploit Msync_nth_src; eauto. intros (tv & NTH' & VM).
+      rewrite CALLEE in NTH'. clarify.
+      exploit val_match_FP_l; eauto. intros [l' CALLEE'].
+      rewrite CALLEE' in CALLEE.
+      do 3 eexists. eapply SpecSMI_Ret_Step; [exact NXT3|exact TSP| |exact CALLEE].
+      destruct MSC as [_ TOP]. rewrite <- TOP. eauto.
+  (* After return: the target updates msf. *)
+  - do 3 eexists. eapply SpecSMI_Asgn; eauto.
+  - auto.
+  - auto.
+Unshelve. repeat econs.
 Qed.
 
 Lemma seq_spec_safety_preservation_init_aux
-  p c c' r r' m m'
+  p r r' m m' isp
   (FST: first_blk_call p)
-  (CFG1: c = ((0,0), r, m, @nil cptr))
-  (CFG2: c' = ((0,0), r', m', @nil cptr))
-  (CALLEE: r' ! callee = FP (0, 0))
-  (MEM: nonempty_mem m)
-  (NCT: no_ct_prog p)
-  (WFP: wf_prog p)
-  (UNUSED1: unused_prog msf p)
-  (UNUSED2: unused_prog callee p)
-  (SEQ: seq_exec_safe p c)
-  (REG: Rsync p r r' false)
-  (MSC: Msync p m m') :
-  spec_exec_safe (uslh_prog p) (c', true, false).
+  (SYNC: uslh_sync isp p (r, m) (r', m')) :
+  exists h, uslh_sim p h (initial_machine (L := IdealLang) p (r, m))
+                         (initial_machine (L := SpecLang) (uslh_prog p) (r', m')).
 Proof.
-  red. i.
-  assert (CT: (uslh_prog p)[[(0, 0)]] = Some <{{ ctarget }}>).
-  { red in FST. des_ifs. eapply ctarget_exists; eauto. }
-  exploit head_call_target; eauto. i. des; clarify.
-  replace ((0,0) + 1) with (0,1) in x2 by ss.
-  destruct n.
-  { inv H. esplits. econs. eauto. }
-  destruct n.
-  { inv H. inv H6. inv H1. esplits. econs 2. eauto. }
-  inv H. inv H1; clarify. inv H6. inv H0; clarify.
-  replace ((0,1) + 1) with (0,2) in H5 by ss.
-  eapply seq_spec_safety_preservation in SEQ; eauto.
-  { ii. ss. }
-  econs. econs.
-  { red in FST. des_ifs_safe.
-    unfold pc_sync. rewrite nth_error_map. rewrite Heq. simpl.
-    destruct l.
-    { red in WFP. des. eapply nth_error_In in Heq. rewrite Forall_forall in WFP0.
-      eapply WFP0 in Heq. red in Heq. des. ss. }
-    simpl. auto. }
-  { red. inv REG. split.
-    - i. des. rewrite t_update_neq; eauto.
-    - ss. rewrite CALLEE. ss. }
-  { ss. }
-  { ss. }
+  destruct SYNC as (REG & MSC & _ & _). simpl in REG, MSC.
+  red in FST. destruct (nth_error p 0) as [ [blk [|] ] | ] eqn:BLK; try contradiction.
+  eexists. split; [reflexivity|].
+  eapply match_cfgs_ext_ct1; [exact BLK|eapply ctarget_exists; eauto| |exact MSC|].
+  - eapply Rsync1_upd_tgt; [eapply Rsync1_upd_tgt; [exact REG|left; reflexivity]|right; reflexivity].
+  - reflexivity.
 Qed.
 
 Lemma seq_spec_safety_preservation_init
-  p r r' m m'
+  p r r' m m' isp
   (FST: first_blk_call p)
-  (CALLEE: r' ! callee = FP (0,0))
-  (MEM: nonempty_mem m)
   (NCT: no_ct_prog p)
   (WFP: wf_prog p)
   (UNUSED1: unused_prog msf p)
   (UNUSED2: unused_prog callee p)
-  (SEQ: seq_exec_safe p ((0,0), r, m, @nil cptr))
-  (REG: Rsync p r r' false)
-  (MSC: Msync p m m') :
-  spec_exec_safe (uslh_prog p) (((0,0), r', m', @nil cptr), true, false).
+  (UNUSED3: unused_prog sp p)
+  (SEQ: sequential_safe (L := SeqLang) p (initial_machine (L := SeqLang) p (r, m)))
+  (SYNC: uslh_sync isp p (r, m) (r', m')) :
+  sequential_safe (L := SpecLang) (uslh_prog p) (initial_machine (L := SpecLang) (uslh_prog p) (r', m')).
 Proof.
-  eapply seq_spec_safety_preservation_init_aux; eauto.
+  pose proof SYNC as (_ & _ & SP & _). simpl in SP.
+  destruct (seq_spec_safety_preservation_init_aux p r r' m m' isp FST SYNC) as [h MATCH].
+  exact (seq_spec_safety_preservation p (0, 0) r m spec_mem_init isp h _
+           SP FST NCT WFP UNUSED1 UNUSED2 UNUSED3 SEQ MATCH).
 Qed.
