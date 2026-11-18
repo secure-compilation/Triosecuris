@@ -214,6 +214,15 @@ Definition safe_step_preserves_sim
          /\ os_t = Tobs h ds os_s
          /\ sim (This h ds os_t) s' t'.
 
+Definition initial_sim_pointwise
+  (p_s : prog (L := Ls))
+  (p_t : prog (L := Lt))
+  {hist : History}
+  (sim : sim_t)
+  (inp inp' : input) :
+  Prop :=
+    sim init_hist (initial_machine p_s inp) (initial_machine p_t inp').
+
 Definition initial_sim
   (p_s : prog (L := Ls))
   (p_t : prog (L := Lt))
@@ -380,6 +389,14 @@ Section RELATIVE_SECURITY.
       sync inp2 inp2' ->
       compile p_s p_t ->
       same_obs p_t inp1' inp2'.
+
+  Definition relative_secure_sim (_ : History) sim p_s p_t inp1 inp2 :=
+    forall inp1' inp2',
+    same_obs p_s inp1 inp2 ->
+    compile p_s p_t ->
+    initial_sim_pointwise p_s p_t sim inp1 inp1' ->
+    initial_sim_pointwise p_s p_t sim inp2 inp2' ->
+    same_obs p_t inp1' inp2'.
 End RELATIVE_SECURITY.
 
 Section OBS_EQ_WITH_BACKWARDS_IMPLIES_RELSEC.
