@@ -4453,12 +4453,6 @@ Lemma spec_eval_relative_secure
   (r1 r2 : reg)
   (m1 m2 : mem)
   (initial_sp : nat)
-  (FST: first_blk_call p)
-  (NCT: no_ct_prog p)
-  (WFP: wf_prog p)
-  (UNUSED1: unused_prog msf p)
-  (UNUSED2: unused_prog callee p)
-  (UNUSED3: unused_prog sp p)
   (SAFE1 : sequential_safe (L := SeqLang) p (initial_machine (L := SeqLang) p (r1, m1)))
   (SAFE2 : sequential_safe (L := SeqLang) p (initial_machine (L := SeqLang) p (r2, m2))) :
   relative_secure (Ls := SeqLang) (Lt := SpecLang) 
@@ -4468,7 +4462,8 @@ Proof.
   pose proof SYNC1 as (_ & _ & SP1 & _). pose proof SYNC2 as (_ & _ & SP2 & _).
   simpl in SP1, SP2.
   eapply (obs_eq_safe_bw_relsec (Ls := IdealLang) (Lt := SpecLang) (p_s := p) (p_t := uslh_prog p) (inp1 := (r1, m1)) (inp2 := (r2, m2))
-            (ultimate_slh_safe_bw_simulation initial_sp)); [| | |exact SYNC1|exact SYNC2|exact COMP].
+            (ultimate_slh_safe_bw_simulation initial_sp)); [| | |exact SYNC1|exact SYNC2|exact COMP];
+  destruct COMP as (COMP & WFP & NCT & UNUSED1 & UNUSED2 & UNUSED3 & FST).
   - exact (seq_safe_ideal_safe p (0, 0) r1 m1 (mirror_mem m1) initial_sp WFP NCT FST UNUSED3 SP1 SAFE1).
   - exact (seq_safe_ideal_safe p (0, 0) r2 m2 (mirror_mem m2) initial_sp WFP NCT FST UNUSED3 SP2 SAFE2).
   - intros ds os1 os2 c1 c2 RUN1 RUN2.
