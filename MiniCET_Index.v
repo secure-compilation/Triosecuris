@@ -707,6 +707,9 @@ Definition safe_imm_spec (p: prog) (st: state spec_cfg) : Prop :=
 
 Definition input : Type := reg * mem.
 
+Definition mirror_mem (m : mem) : spec_mem :=
+  fold_left (fun sb '(n, v) => (n !-> v; sb)) (add_index m.(memory)) spec_mem_init.
+
 (* -------------------------------------------------------------------------- *)
 (* Sequential semantics. *)
 
@@ -754,7 +757,7 @@ Qed.
 (* Ideal semantics. *)
 
 Definition ideal_initial (p : prog) (inp : input) : state ideal_cfg :=
-  let '(r, m) := inp in S_Running ((0, 0), r, m, spec_mem_init, false).
+  let '(r, m) := inp in S_Running ((0, 0), r, m, mirror_mem m, false).
 
 #[local]
 Instance IdealLang : SimDiagrams.Language input :=
@@ -776,7 +779,7 @@ Notation "p |- <(( ic ))> -->i*_ ds ^^ os <(( ict ))>" :=
 
 Definition spec_initial (p : prog) (inp : input) : state spec_cfg :=
   let '(r, m) := inp in
-  S_Running ((0, 0), (callee !-> FP (0, 0); msf !-> N 0; r), m, spec_mem_init, true, false).
+  S_Running ((0, 0), (callee !-> FP (0, 0); msf !-> N 0; r), m, mirror_mem m, true, false).
 
 #[local]
 Instance SpecLang : SimDiagrams.Language input :=
@@ -4466,10 +4469,10 @@ Proof.
   simpl in SP1, SP2.
   eapply (obs_eq_safe_bw_relsec (Ls := IdealLang) (Lt := SpecLang) (p_s := p) (p_t := uslh_prog p) (inp1 := (r1, m1)) (inp2 := (r2, m2))
             (ultimate_slh_safe_bw_simulation initial_sp)); [| | |exact SYNC1|exact SYNC2|exact COMP].
-  - exact (seq_safe_ideal_safe p (0, 0) r1 m1 spec_mem_init initial_sp WFP NCT FST UNUSED3 SP1 SAFE1).
-  - exact (seq_safe_ideal_safe p (0, 0) r2 m2 spec_mem_init initial_sp WFP NCT FST UNUSED3 SP2 SAFE2).
+  - exact (seq_safe_ideal_safe p (0, 0) r1 m1 (mirror_mem m1) initial_sp WFP NCT FST UNUSED3 SP1 SAFE1).
+  - exact (seq_safe_ideal_safe p (0, 0) r2 m2 (mirror_mem m2) initial_sp WFP NCT FST UNUSED3 SP2 SAFE2).
   - intros ds os1 os2 c1 c2 RUN1 RUN2.
-    eapply (ideal_eval_relative_secure p (0, 0) r1 r2 m1 m2 spec_mem_init spec_mem_init);
+    eapply (ideal_eval_relative_secure p (0, 0) r1 r2 m1 m2 (mirror_mem m1) (mirror_mem m2));
       [|exact SAFE1|exact SAFE2|congruence|exact UNUSED3|exact RUN1|exact RUN2].
     intros os1' os2' c1' c2' S1 S2. exact (SAME [] os1' os2' c1' c2' S1 S2).
 Qed.

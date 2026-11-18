@@ -274,6 +274,6 @@ Lemma seq_spec_safety_preservation_init
 Proof.
   pose proof SYNC as (_ & _ & SP & _). simpl in SP.
   destruct (seq_spec_safety_preservation_init_aux p r r' m m' isp FST SYNC) as [h MATCH].
-  exact (seq_spec_safety_preservation p (0, 0) r m spec_mem_init isp h _
+  exact (seq_spec_safety_preservation p (0, 0) r m (mirror_mem m) isp h _
            SP FST NCT WFP UNUSED1 UNUSED2 UNUSED3 SEQ MATCH).
 Qed.
