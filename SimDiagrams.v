@@ -147,8 +147,6 @@ Section SAFETY.
 
 End SAFETY.
 
-Definition input_sync {input : Type} : Type := input -> input -> Prop.
-
 Section BACKWARD.
 
 Context
@@ -157,6 +155,8 @@ Context
 .
 
 Definition compiler : Type := prog (L := Ls) -> prog (L := Lt) -> Prop.
+
+Definition input_sync : Type := prog (L := Ls) -> input -> input -> Prop.
 
 Section HISTORY.
 
@@ -231,7 +231,7 @@ Definition initial_sim
   (sim : sim_t) :
   Prop :=
   forall inp inp',
-    sync inp inp' ->
+    sync p_s inp inp' ->
     sim init_hist (initial_machine p_s inp) (initial_machine p_t inp').
 
 Definition step_shape_det
@@ -379,14 +379,14 @@ Section RELATIVE_SECURITY.
     {input : Type}
     {Ls Lt : Language input}
     (compile : compiler (Ls := Ls) (Lt := Lt))
-    (sync : input_sync (input := input))
+    (sync : prog (L := Ls) -> input -> input -> Prop)
   .
 
   Definition relative_secure p_s p_t inp1 inp2 :=
       forall inp1' inp2',
       same_obs p_s inp1 inp2 ->
-      sync inp1 inp1' ->
-      sync inp2 inp2' ->
+      sync p_s inp1 inp1' ->
+      sync p_s inp2 inp2' ->
       compile p_s p_t ->
       same_obs p_t inp1' inp2'.
 
@@ -404,7 +404,7 @@ Section OBS_EQ_WITH_BACKWARDS_IMPLIES_RELSEC.
     {input : Type}
     {Ls Lt : Language input}
     (compile : compiler (Ls := Ls) (Lt := Lt))
-    (sync : input_sync (input := input))
+    (sync : input_sync (Ls := Ls))
   .
 
   Section SIM_RUN.
@@ -536,14 +536,14 @@ Section SAFETY_PRESERVATION.
     {input : Type}
     {Ls Lt : Language input}
     (compile : compiler (Ls := Ls) (Lt := Lt))
-    (sync : input_sync (input := input))
+    (sync : input_sync (Ls := Ls))
   .
 
   Definition preserves_safety : Prop :=
     forall p_s p_t inp1 inp2,
       sequential_safe p_s (initial_machine p_s inp1) ->
       compile p_s p_t ->
-      sync inp1 inp2 ->
+      sync p_s inp1 inp2 ->
       sequential_safe p_t (initial_machine p_t inp2).
 
 End SAFETY_PRESERVATION.
@@ -559,15 +559,17 @@ Context
   {L0 L1 L2 : Language input}
   (compile2 : compiler (Ls := L1) (Lt := L2))
   (compile1 : compiler (Ls := L0) (Lt := L1))
-  (sync2 : input_sync (input := input))
-  (sync1 : input_sync (input := input))
+  (sync2 : input_sync (Ls := L1))
+  (sync1 : input_sync (Ls := L0))
 .
 
 Definition compose : compiler (Ls := L0) (Lt := L2) :=
   fun p_s p_t => exists2 p_i, compile1 p_s p_i & compile2 p_i p_t.
 
-Definition compose_sync : input_sync (input := input) :=
-  fun inp_s inp_t => exists2 inp_i, sync1 inp_s inp_i & sync2 inp_i inp_t.
+Definition compose_sync : input_sync (Ls := L0) :=
+  fun p_s inp_s inp_t =>
+    forall p_i, compile1 p_s p_i ->
+      exists2 inp_i, sync1 p_s inp_s inp_i & sync2 p_i inp_i inp_t.
 
 Lemma compose_safe_bw_simulation :
   preserves_safety compile1 sync1  ->
@@ -590,7 +592,8 @@ Proof.
   exists (fun h ds => Tdir1 (fst h) (Tdir2 (snd h) ds)).
   exists (fun h ds os => Tobs2 (snd h) ds (Tobs1 (fst h) (Tdir2 (snd h) ds) os)).
   split; [|split; [|split]].
-  - intros inp_s inp_t [inp_i S1 S2].
+  - intros inp_s inp_t SYNC.
+    destruct (SYNC p_i Hcompile1) as [inp_i S1 S2].
     exists (initial_machine p_i inp_i).
     split; [exact (Hinit1 _ _ S1)|]. split; [exact (Hinit2 _ _ S2)|].
     intros SAFE. exact (Hprev _ _ _ _ SAFE Hcompile1 S1).

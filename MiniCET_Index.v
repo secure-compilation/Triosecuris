@@ -816,7 +816,17 @@ Definition uslh_compiler : SimDiagrams.compiler (Ls := IdealLang) (Lt := SpecLan
 Definition ideal_compiler : compiler (Ls := SeqLang) (Lt := IdealLang) := fun p_s p_t =>
   p_s = p_t.
 
-Definition uslh_full_compiler := compose ideal_compiler uslh_compiler.
+Definition uslh_full_compiler := compose uslh_compiler ideal_compiler.
+
+Definition ideal_safe_inv (p: prog) (st: state ideal_cfg) : Prop :=
+  match st with
+  | S_Running ((pc, r, m), _, ms) =>
+      (exists n, r ! sp = N n)
+      /\ (if ms then exists i, p[[pc]] = Some i
+          else sequential_safe (L := SeqLang) p (S_Running (pc, r, m)))
+  | S_Undef => False
+  | _ => True
+  end.
 
 (* -------------------------------------------------------------------------- *)
 (* Transformers *)
@@ -955,7 +965,7 @@ Definition uslh_hist (p_s p_t: prog) (isp: nat) : History (Lt := SpecLang) :=
        Some {| hs_src := p_s; hs_tgt := p_t; hs_tpc := (0, 0); hs_ct := true; hs_sp := N isp |};
      SimDiagrams.This := tctrl_step |}.
 
-Definition uslh_sync (isp: nat) : SimDiagrams.input_sync (Ls := IdealLang) :=
+Definition uslh_sync (isp: nat) : SimDiagrams.input_sync (input := input) :=
   fun p inp inp' =>
     let r := fst inp in
     let r' := fst inp' in
@@ -4313,6 +4323,128 @@ Proof.
       * right. now do 2 apply prefix_append_front.
 Qed.
 
+Lemma wf_prog_entry_fetch p l blk
+  (WFP: wf_prog p)
+  (BLK: nth_error p l = Some blk) :
+  exists i, p[[(l, 0)]] = Some i.
+Proof.
+  destruct WFP as [_ WFB]. rewrite Forall_forall in WFB.
+  destruct (WFB _ (nth_error_In _ _ BLK)) as (NE & _ & _). red in NE.
+  ss. rewrite BLK. ss. destruct (fst blk); ss; [lia|eauto].
+Qed.
+
+Lemma ideal_step_sp_N p pc r m sb ms ds os pc' r' m' sb' ms' n
+  (UNUSED: unused_prog sp p)
+  (SP: r ! sp = N n)
+  (STEP: p |- <(( S_Running (pc, r, m, sb, ms) ))> -->i_ ds ^^ os <(( S_Running (pc', r', m', sb', ms') ))>) :
+  exists n', r' ! sp = N n'.
+Proof.
+  inv STEP; try (exists n; assumption); try (eexists; rewrite t_update_eq; reflexivity).
+  all: exploit unused_prog_lookup; try eapply UNUSED; eauto; intros U; ss; des.
+  all: exists n; rewrite t_update_neq; auto.
+Qed.
+
+Lemma ideal_step_misspec_fetch p pc r m sb ms ds os pc' r' m' sb'
+  (WFP: wf_prog p)
+  (STEP: p |- <(( S_Running (pc, r, m, sb, ms) ))> -->i_ ds ^^ os <(( S_Running (pc', r', m', sb', true) ))>) :
+  exists i, p[[pc']] = Some i.
+Proof.
+  inv STEP; try (eapply block_always_terminator_prog; eauto; intros X; inv X; fail).
+  - destruct b'; [|eapply block_always_terminator_prog; eauto; intros X; inv X].
+    exploit wf_prog_lookup; eauto. intros (_ & LBL). red in LBL.
+    destruct (nth_error p l) eqn:BLK; [|contradiction]. eapply wf_prog_entry_fetch; eauto.
+  - exploit wf_prog_lookup; eauto. intros LBL. simpl in LBL. red in LBL.
+    destruct (nth_error p l) eqn:BLK; [|contradiction]. eapply wf_prog_entry_fetch; eauto.
+  - destruct pc'; ss; subst. eapply wf_prog_entry_fetch; eauto.
+  - destruct pc'; ss; subst. eapply wf_prog_entry_fetch; eauto.
+  - match goal with H: wf_ret _ _ |- _ => destruct pc' as [l o]; destruct H as [RET _] end.
+    destruct (p[[(l, o)]]); eauto. congruence.
+  - match goal with H: wf_ret _ _ |- _ => destruct pc' as [l o]; destruct H as [RET _] end.
+    destruct (p[[(l, o)]]); eauto. congruence.
+  - destruct p as [|blk p']; [destruct WFP as [NE _]; red in NE; ss; lia|].
+    eapply (wf_prog_entry_fetch _ 0 blk); eauto.
+Qed.
+
+Lemma seq_step_ideal_step p pc r m sb os st
+  (STEP: p |- <(( S_Running (pc, r, m) ))> -->^ os <(( st ))>) :
+  exists ds os' st', p |- <(( S_Running (pc, r, m, sb, false) ))> -->i_ ds ^^ os' <(( st' ))>.
+Proof.
+  inv STEP; try (do 3 eexists; econs; eauto; fail).
+  match goal with H: context [wf_label] |- _ => unfold wf_label in H; des_ifs end.
+  destruct b; [|ss; clarify].
+  do 3 eexists. eapply ISMI_Call with (pc' := (fst l, 0)); eauto.
+  Unshelve. exact false.
+Qed.
+
+Lemma ideal_misspec_progress p pc r m sb n i
+  (NCT: no_ct_prog p)
+  (FST: first_blk_call p)
+  (FETCH: p[[pc]] = Some i)
+  (SP: r ! sp = N n) :
+  exists ds os st', p |- <(( S_Running (pc, r, m, sb, true) ))> -->i_ ds ^^ os <(( st' ))>.
+Proof.
+  destruct i; try (do 3 eexists; econs; eauto; fail).
+  all: try (exfalso; eapply no_ct_prog_src; eauto; fail).
+  all: try (do 3 eexists; eapply ISMI_Ret_Misspec_Step; eauto; fail).
+  red in FST. des_ifs. do 3 eexists. eapply ISMI_Call_Misspec with (pc' := (0, 0)); eauto.
+  Unshelve. exact false.
+Qed.
+
+Lemma ideal_safe_inv_step p st ds os st'
+  (WFP: wf_prog p)
+  (UNUSED: unused_prog sp p)
+  (INV: ideal_safe_inv p st)
+  (STEP: p |- <(( st ))> -->i_ ds ^^ os <(( st' ))>) :
+  ideal_safe_inv p st'.
+Proof.
+  destruct st as [ [ [ [ [pc r] m] sb] ms] | | | ]; try (inv STEP; fail).
+  destruct st' as [ [ [ [ [pc' r'] m'] sb'] ms'] | | | ]; ss; [|inv STEP].
+  destruct INV as [ [n SP] INV].
+  split; [eapply ideal_step_sp_N; eauto|].
+  destruct ms'; [eapply ideal_step_misspec_fetch; eauto|].
+  destruct ms; [discriminate (multi_ideal_ms_monotonic (sem_step1 (L := IdealLang) STEP))|].
+  eapply (sequential_safe_step (L := SeqLang) (ds := [])); [exact INV|].
+  exact (ideal_nonspec_seq _ _ _ _ _ _ _ _ _ _ _ STEP).
+Qed.
+
+Lemma ideal_safe_inv_sem p st ds os st'
+  (WFP: wf_prog p)
+  (UNUSED: unused_prog sp p)
+  (INV: ideal_safe_inv p st)
+  (RUN: p |- <(( st ))> -->i*_ ds ^^ os <(( st' ))>) :
+  ideal_safe_inv p st'.
+Proof.
+  revert INV. induction RUN; intros INV; [exact INV|].
+  apply IHRUN. eapply ideal_safe_inv_step; [exact WFP|exact UNUSED|exact INV|exact H].
+Qed.
+
+Lemma ideal_safe_inv_safe p st
+  (NCT: no_ct_prog p)
+  (FST: first_blk_call p)
+  (INV: ideal_safe_inv p st) :
+  safe_imm_ideal p st.
+Proof.
+  destruct st as [ [ [ [ [pc r] m] sb] ms] | | | ]; ss.
+  destruct INV as [ [n SP] INV]. destruct ms.
+  - destruct INV as [i FETCH]. eapply ideal_misspec_progress; eauto.
+  - destruct (INV [] [] _ (sem_refl (L := SeqLang) p _)) as (os & st' & STEP).
+    eapply seq_step_ideal_step; eauto.
+Qed.
+
+Lemma seq_safe_ideal_safe p pc r m sb n
+  (WFP: wf_prog p)
+  (NCT: no_ct_prog p)
+  (FST: first_blk_call p)
+  (UNUSED: unused_prog sp p)
+  (SP: r ! sp = N n)
+  (SAFE: sequential_safe (L := SeqLang) p (S_Running (pc, r, m))) :
+  sequential_safe (L := IdealLang) p (S_Running (pc, r, m, sb, false)).
+Proof.
+  intros ds os st' RUN.
+  eapply ideal_safe_inv_safe; eauto.
+  eapply ideal_safe_inv_sem; eauto. ss. eauto.
+Qed.
+
 Lemma spec_eval_relative_secure
   (p : prog)
   (r1 r2 : reg)
@@ -4329,6 +4461,15 @@ Lemma spec_eval_relative_secure
   relative_secure (Ls := SeqLang) (Lt := SpecLang) 
     uslh_full_compiler (uslh_sync initial_sp) p (uslh_prog p) (r1, m1) (r2, m2).
 Proof.
-  apply obs_eq_safe_bw_relsec; eauto.
-  (* TODO: write composition lemmas for "has_safe_bw_simulation" *)
-Admitted.
+  intros inp1' inp2' SAME SYNC1 SYNC2 [p_i <- COMP].
+  pose proof SYNC1 as (_ & _ & SP1 & _). pose proof SYNC2 as (_ & _ & SP2 & _).
+  simpl in SP1, SP2.
+  eapply (obs_eq_safe_bw_relsec (Ls := IdealLang) (Lt := SpecLang) (p_s := p) (p_t := uslh_prog p) (inp1 := (r1, m1)) (inp2 := (r2, m2))
+            (ultimate_slh_safe_bw_simulation initial_sp)); [| | |exact SYNC1|exact SYNC2|exact COMP].
+  - exact (seq_safe_ideal_safe p (0, 0) r1 m1 spec_mem_init initial_sp WFP NCT FST UNUSED3 SP1 SAFE1).
+  - exact (seq_safe_ideal_safe p (0, 0) r2 m2 spec_mem_init initial_sp WFP NCT FST UNUSED3 SP2 SAFE2).
+  - intros ds os1 os2 c1 c2 RUN1 RUN2.
+    eapply (ideal_eval_relative_secure p (0, 0) r1 r2 m1 m2 spec_mem_init spec_mem_init);
+      [|exact SAFE1|exact SAFE2|congruence|exact UNUSED3|exact RUN1|exact RUN2].
+    intros os1' os2' c1' c2' S1 S2. exact (SAME [] os1' os2' c1' c2' S1 S2).
+Qed.
