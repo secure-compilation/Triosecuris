@@ -4471,3 +4471,168 @@ Proof.
       [|exact SAFE1|exact SAFE2|congruence|exact UNUSED3|exact RUN1|exact RUN2].
     intros os1' os2' c1' c2' S1 S2. exact (SAME [] os1' os2' c1' c2' S1 S2).
 Qed.
+
+(* -------------------------------------------------------------------------- *)
+(* Case study: Spectre 1.1 *)
+
+Definition cet_prog (p: prog) : prog :=
+  map (fun '((bl, is_proc) : list inst * bool) => (if is_proc then ICTarget :: bl else bl, is_proc)) p.
+
+Definition spectre11_prog : prog := [
+  (<{{ i[ call &(1,0); exit ] }}>, true);
+  (<{{ i[ branch (X < 1) to 2; ret ] }}>, true);
+  (<{{ i[ store[X] <- Y; ret ] }}>, false);
+  (<{{ i[ Z <- load[W]; exit ] }}>, false)
+].
+
+Definition spectre11_mem : mem :=
+  {| memory := [N 0; N 0; N 0];
+     stack_top := 3;
+     stack_base := 1;
+     stack_top_valid := ltac:(simpl; lia);
+     stack_base_valid := ltac:(lia) |}.
+
+Definition spectre11_regs (s: nat) : reg :=
+  (callee !-> FP (0, 0); sp !-> N 1; X !-> N 2; Y !-> FP (3, 0); W !-> N s; reg_init).
+
+Definition spectre11_input (s: nat) : input := (spectre11_regs s, spectre11_mem).
+
+Definition seq_bounded (p: prog) (st: state cfg) (T: obs) : Prop :=
+  forall ds os st', sem (L := SeqLang) p st ds os st' -> Utils.prefix os T /\ safe_imm_seq p st'.
+
+Lemma seq_bounded_term p T : seq_bounded p S_Term T.
+Proof.
+  intros ds os st' RUN. inv RUN; [split; [apply prefix_nil|ss]|]. inv H.
+Qed.
+
+Lemma seq_step_deterministic p st st1 st2 os1 os2
+  (STEP1: p |- <(( st ))> -->^ os1 <(( st1 ))>)
+  (STEP2: p |- <(( st ))> -->^ os2 <(( st2 ))>) :
+  os1 = os2 /\ st1 = st2.
+Proof.
+  inv STEP1; inv STEP2;
+    match goal with H1: fetch _ _ = Some _, H2: fetch _ _ = Some _ |- _ => rewrite H1 in H2; inv H2 end;
+    clarify.
+  all: repeat match goal with
+         | H1: ?a = ?b, H2: ?a = ?c |- _ => assert_fails (constr_eq b c); rewrite H1 in H2; inv H2
+         end; auto.
+Qed.
+
+Lemma seq_bounded_step p c st o T T'
+  (STEP: p |- <(( S_Running c ))> -->^ o <(( st ))>)
+  (EQ: T' = o ++ T)
+  (NEXT: seq_bounded p st T) :
+  seq_bounded p (S_Running c) T'.
+Proof.
+  subst. intros ds os st' RUN. inv RUN; [split; [apply prefix_nil|ss; eauto]|].
+  ss. exploit seq_step_deterministic; [exact STEP|exact H|]. intros [EQ1 EQ2]; subst.
+  exploit NEXT; eauto. intros [PRE SAFE]. destruct PRE as [zs PRE]. subst. split; auto.
+  exists zs. rewrite app_assoc. auto.
+Qed.
+
+Lemma spectre11_seq_bounded s :
+  seq_bounded spectre11_prog (initial_machine (L := SeqLang) spectre11_prog (spectre11_input s))
+    [OCall (1, 0) 1; OBranch false; ORet (0, 1) 2].
+Proof.
+  ss.
+  eapply seq_bounded_step; [eapply SSMI_Call with (sp_val := 1); ss|reflexivity|].
+  eapply seq_bounded_step; [eapply SSMI_Branch with (n := 0); ss|reflexivity|].
+  eapply seq_bounded_step; [eapply SSMI_Ret with (sp_val := 2); ss|reflexivity|].
+  eapply seq_bounded_step; [eapply SSMI_Term; ss|reflexivity|].
+  apply seq_bounded_term.
+Qed.
+
+Lemma spectre11_seq_safe s :
+  sequential_safe (L := SeqLang) spectre11_prog (initial_machine (L := SeqLang) spectre11_prog (spectre11_input s)).
+Proof. intros ds os st' RUN. eapply spectre11_seq_bounded; eauto. Qed.
+
+Lemma spectre11_seq_same_obs s1 s2 :
+  same_obs (L := SeqLang) spectre11_prog (spectre11_input s1) (spectre11_input s2).
+Proof.
+  intros ds os1 os2 st1 st2 RUN1 RUN2.
+  exploit spectre11_seq_bounded; [exact RUN1|]. intros [PRE1 _]. destruct PRE1 as [zs1 PRE1].
+  exploit spectre11_seq_bounded; [exact RUN2|]. intros [PRE2 _]. destruct PRE2 as [zs2 PRE2].
+  rewrite <- PRE2 in PRE1. exact (app_eq_prefix PRE1).
+Qed.
+
+Lemma sem_step_eq {inp: Type} {L: Language inp} p m m' m'' ds1 os1 ds2 os2 ds os
+  (STEP: step p m ds1 os1 m')
+  (RUN: sem p m' ds2 os2 m'')
+  (DS: ds = ds1 ++ ds2)
+  (OS: os = os1 ++ os2) :
+  sem p m ds os m''.
+Proof. subst. eapply sem_step; eauto. Qed.
+
+Lemma spectre11_cet_leak_run s :
+  exists st, sem_p (L := SpecLang) (cet_prog spectre11_prog) (spectre11_input s)
+    [DCall (1, 0); DBranch true; DRet None]
+    [OCall (1, 0) 1; OBranch false; OStore 2; ORet (3, 0) 2; OLoad s] st.
+Proof.
+  eexists. unfold sem_p. ss.
+  eapply sem_step_eq; [eapply SpecSMI_CTarget; ss| | |].
+  1: eapply sem_step_eq; [eapply SpecSMI_Call with (sp_val := 1) (pc' := (1, 0)); ss| | |].
+  1: eapply sem_step_eq; [eapply SpecSMI_CTarget; ss| | |].
+  1: eapply sem_step_eq; [eapply SpecSMI_Branch with (n := 0) (b' := true); ss| | |].
+  1: eapply sem_step_eq; [eapply SpecSMI_Store_Misspec with (n := 2); ss| | |].
+  1: eapply sem_step_eq; [eapply SpecSMI_Ret_Misspec_Step with (sp_val := 2) (pc' := (3, 0));
+                          try (rewrite t_update_eq; reflexivity); ss| | |].
+  1: eapply sem_step_eq; [eapply SpecSMI_Load_Misspec with (n := s); ss| | |].
+  1: eapply sem_refl.
+  all: reflexivity.
+Qed.
+
+Lemma spectre11_cet_leak s1 s2 (NEQ: s1 <> s2) :
+  ~ same_obs (L := SpecLang) (cet_prog spectre11_prog) (spectre11_input s1) (spectre11_input s2).
+Proof.
+  intros SAME.
+  destruct (spectre11_cet_leak_run s1) as [st1 RUN1].
+  destruct (spectre11_cet_leak_run s2) as [st2 RUN2].
+  exploit SAME; [exact RUN1|exact RUN2|]. intros CMP.
+  assert (EQ: [OCall (1, 0) 1; OBranch false; OStore 2; ORet (3, 0) 2; OLoad s1]
+            = [OCall (1, 0) 1; OBranch false; OStore 2; ORet (3, 0) 2; OLoad s2]).
+  { destruct CMP as [CMP|CMP]; [|symmetry]; eapply prefix_same_length; eauto. }
+  clarify.
+Qed.
+
+Theorem spectre11_unhardened_insecure s1 s2 (NEQ: s1 <> s2) :
+  ~ relative_secure (Ls := SeqLang) (Lt := SpecLang)
+      (fun p_s p_t => p_t = cet_prog p_s) (fun _ inp inp' => inp' = inp)
+      spectre11_prog (cet_prog spectre11_prog) (spectre11_input s1) (spectre11_input s2).
+Proof.
+  intros SEC. eapply (spectre11_cet_leak s1 s2 NEQ).
+  eapply SEC; [eapply spectre11_seq_same_obs|reflexivity|reflexivity|reflexivity].
+Qed.
+
+Lemma spectre11_compile :
+  uslh_full_compiler spectre11_prog (uslh_prog spectre11_prog).
+Proof.
+  exists spectre11_prog; [reflexivity|].
+  unfold uslh_compiler. splits; [reflexivity| | | | | |ss].
+  - unfold wf_prog, nonempty_program. split; [ss; lia|].
+    repeat econs; unfold nonempty_block, last_inst_terminator, wf_lbl; ss; lia.
+  - repeat econs.
+  - repeat econs; ss.
+  - repeat econs; ss.
+  - repeat econs; ss.
+Qed.
+
+Lemma spectre11_sync s :
+  uslh_sync 1 spectre11_prog (spectre11_input s) (spectre11_input s).
+Proof.
+  unfold uslh_sync, Rsync1, Msync. splits; ss.
+  - intros x _ _. unfold spectre11_regs, TotalMap.t_apply, TotalMap.t_update, Maps.t_update.
+    des_ifs; ss; auto.
+  - intros i. do 4 (destruct i as [|i]; ss).
+Qed.
+
+Theorem spectre11_hardened_secure s1 s2 :
+  relative_secure (Ls := SeqLang) (Lt := SpecLang) uslh_full_compiler (uslh_sync 1)
+    spectre11_prog (uslh_prog spectre11_prog) (spectre11_input s1) (spectre11_input s2).
+Proof. eapply spec_eval_relative_secure; eapply spectre11_seq_safe. Qed.
+
+Corollary spectre11_hardened_same_obs s1 s2 :
+  same_obs (L := SpecLang) (uslh_prog spectre11_prog) (spectre11_input s1) (spectre11_input s2).
+Proof.
+  eapply spectre11_hardened_secure;
+    [eapply spectre11_seq_same_obs|eapply spectre11_sync|eapply spectre11_sync|eapply spectre11_compile].
+Qed.
