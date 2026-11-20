@@ -67,6 +67,7 @@ Inductive seq_eval_small_step_inst (p: prog) :
       to_fp (eval r e) = Some l ->
       (* Call should lead to the procedure entry *)
       wf_label p true (fst l) ->
+      snd l = 0 ->
       r ! sp = N sp_val ->
       S sp_val < stack_top m ->
       p |- <(( S_Running (pc, r, m) ))> -->^[OCall l sp_val] <(( S_Running (l, sp !-> N (S sp_val); r, upd_mem (S sp_val) m (FP (pc + 1)))))>
