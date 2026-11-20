@@ -37,7 +37,8 @@ Inductive observation : Type :=
 | OBranch (b:bool)
 | OLoad (n:nat)
 | OStore (n:nat)
-| OCall (l: nat).
+| OCall (l: nat) (sp: nat)
+| ORet (l: nat) (sp: nat).
 
 Definition obs := list observation.
 
@@ -168,12 +169,12 @@ Qed.
 Definition prog := list inst.
 
 Definition fetch (p: prog) (len: nat) (pc: nat) : option inst :=
-  nth_error p (pc - len).
+  if (pc <? len)%nat then None else nth_error p (pc - len).
 
 Inductive direction : Type :=
 | DBranch (b':bool)
 | DCall (l:nat)
-| DRet (l:nat).
+| DRet (l: option nat).
 
 Definition dirs := list direction.
 
@@ -225,13 +226,13 @@ Definition reg_init := @M.init string val UV.
 Definition dir := direction.
 Definition dirs := dirs.
 Definition pc := nat.
-Definition cfg : Type := ((pc * reg)* mem) * list pc.
-Definition spec_cfg : Type := ((cfg * bool) * bool).
-Definition ideal_cfg : Type := (cfg * bool)%type.
+Definition spec_mem : Type := M.t nat val.
+Definition cfg : Type := ((pc * reg)* mem).
+Definition spec_cfg : Type := (((cfg * spec_mem) * bool) * bool).
+Definition ideal_cfg : Type := (cfg * spec_mem * bool)%type.
 Definition ipc: pc := 0.
-Definition istk: list pc := [].
-Definition icfg (ipc : pc) (ireg : reg) (mem : mem) (istk : list pc): cfg :=
-  (ipc, ireg, mem, istk).
+Definition icfg (ipc : pc) (ireg : reg) (mem : mem) : cfg :=
+  (ipc, ireg, mem).
 
 Definition fetch := MoreLinear.fetch.
 
